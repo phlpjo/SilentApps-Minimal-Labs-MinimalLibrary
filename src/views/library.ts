@@ -5,6 +5,7 @@ import { store } from "../store";
 import { TrackList } from "../tracklist";
 import { fmtDuration, h, holdButton, reportErrors, sheet, toast, type MenuItem } from "../ui";
 import { analyzeIds, newPlaylistFromIds, nav } from "../main";
+import { moveTracksPick, renameFileDialog } from "../fileops";
 
 type Filter = "all" | "unanalyzed" | "notags" | "nocover" | "errors";
 
@@ -33,7 +34,11 @@ export function trackMenu(ids: number[], extra: MenuItem[] = []): MenuItem[] {
     { label: "", sep: true },
     { label: "Neu analysieren", action: () => analyzeIds(ids) },
     { label: "BPM + Tonart in Datei schreiben", action: async () => { reportErrors(await api.writeAnalysisToTags(ids), "Geschrieben"); store.refreshTracks(ids); } },
-    { label: "Sortieren …", action: () => nav("organize", ids) },
+    { label: "In Ordner verschieben …", action: () => moveTracksPick(ids) },
+    { label: "In Ordner kopieren …", action: () => moveTracksPick(ids, true) },
+    ...(one ? [{ label: "Datei umbenennen …", hint: "F2", action: () => renameFileDialog(one.id) }] : []),
+    { label: "Nach Muster sortieren …", action: () => nav("organize", ids) },
+    ...(one ? [{ label: "Ordner in der Ordneransicht", action: () => nav("folders", undefined, one.path) }] : []),
     ...(one ? [{ label: "Im Explorer zeigen", action: () => revealItemInDir(one.path) }] : []),
     ...extra,
     { label: "", sep: true },

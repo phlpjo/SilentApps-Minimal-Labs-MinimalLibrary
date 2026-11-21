@@ -3,6 +3,7 @@
 
 pub mod analysis;
 pub mod db;
+pub mod dirs;
 pub mod duplicates;
 pub mod export;
 pub mod musicbrainz;

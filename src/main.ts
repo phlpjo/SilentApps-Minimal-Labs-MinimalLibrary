@@ -10,12 +10,13 @@ import { clear, contextMenu, fmtTime, h, sheet, toast } from "./ui";
 import { drawWave, waveElement } from "./waveform";
 import { duplicatesView } from "./views/duplicates";
 import { libraryView } from "./views/library";
+import { foldersView } from "./views/folders";
 import { organizeView } from "./views/organize";
 import { exportDialog, playlistView, smartEditor } from "./views/playlist";
 import { settingsView } from "./views/settings";
 import logo from "./logo.svg";
 
-type ViewName = "library" | "playlist" | "duplicates" | "organize" | "settings";
+type ViewName = "library" | "folders" | "playlist" | "duplicates" | "organize" | "settings";
 
 const app = document.getElementById("app")!;
 const side = h("nav", { id: "side" });
@@ -27,21 +28,22 @@ new Inspector(insp);
 
 let current: { name: ViewName; arg?: number[]; destroy: () => void } | null = null;
 
-export function nav(name: ViewName, arg?: number[]) {
+export function nav(name: ViewName, arg?: number[], path?: string) {
   current?.destroy();
   clear(main);
   let v: { el: HTMLElement; destroy: () => void };
-  if (name !== "playlist" && name !== "library") store.selection.clear();
+  if (name !== "library") store.selection.clear();
   switch (name) {
     case "library": v = libraryView(); break;
-    case "playlist": store.selection.clear(); v = playlistView(arg![0]); break;
+    case "folders": v = foldersView(path); break;
+    case "playlist": v = playlistView(arg![0]); break;
     case "duplicates": v = duplicatesView(); break;
     case "organize": v = organizeView(arg); break;
     case "settings": v = settingsView(); break;
   }
   main.appendChild(v.el);
   current = { name, arg, destroy: v.destroy };
-  app.classList.toggle("no-insp", !(name === "library" || name === "playlist"));
+  app.classList.toggle("no-insp", !(name === "library" || name === "playlist" || name === "folders"));
   store.emit("selection");
   renderSide();
 }
@@ -73,6 +75,7 @@ function renderSide() {
   const mainnav = side.querySelector("#mainnav")!;
   mainnav.replaceChildren(
     navItem("Bibliothek", n === "library", () => nav("library"), store.tracks.size.toLocaleString("de")),
+    navItem("Ordner", n === "folders", () => nav("folders")),
     navItem("Duplikate", n === "duplicates", () => nav("duplicates")),
     navItem("Sortieren", n === "organize", () => nav("organize", n === "library" ? [...store.selection] : undefined)),
     navItem("Einstellungen", n === "settings", () => nav("settings")),

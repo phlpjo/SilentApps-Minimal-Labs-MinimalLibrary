@@ -57,6 +57,8 @@ export interface Candidate {
   trackNo: number | null; discNo: number | null; genre: string | null; releaseId: string | null; length: number | null;
 }
 
+export interface DirEntry { name: string; path: string; hasChildren: boolean; tracks: number }
+
 export type Layout = "numbered" | "flat" | "structured";
 export interface ExportReport { copied: number; skipped: number; bytes: number; playlists: string[]; errors: string[] }
 
@@ -98,5 +100,13 @@ export const api = {
   exportPlaylists: (ids: number[], dest: string, layout: Layout) => invoke<ExportReport>("export_playlists", { ids, dest, layout }),
   playlistSaveM3u8: (id: number, file: string) => invoke<void>("playlist_save_m3u8", { id, file }),
   syncPlaylistFolder: () => invoke<number>("sync_playlist_folder"),
+  dirList: (path: string) => invoke<DirEntry[]>("dir_list", { path }),
+  dirImportUntracked: (path: string) => invoke<number[]>("dir_import_untracked", { path }),
+  dirCreate: (parent: string, name: string) => invoke<string>("dir_create", { parent, name }),
+  dirRename: (path: string, name: string) => invoke<string>("dir_rename", { path, name }),
+  dirMove: (path: string, target: string) => invoke<string>("dir_move", { path, target }),
+  dirTrash: (path: string) => invoke<number>("dir_trash", { path }),
+  moveTracksTo: (ids: number[], dir: string, copy: boolean) => invoke<ApplyReport>("move_tracks_to", { ids, dir, copy }),
+  renameTrack: (id: number, name: string) => invoke<ApplyReport>("rename_track", { id, name }),
   version: () => invoke<string>("app_version"),
 };

@@ -7,6 +7,7 @@ Musikbibliothek für Windows im SilentApps-Minimal-Stil – sortieren, taggen, D
 | Bereich | Was es kann |
 |---|---|
 | **Bibliothek** | Musikordner scannen (MP3, FLAC, M4A/AAC, OGG, Opus, WAV, AIFF), Suche, Filter (nicht analysiert, fehlende Tags, ohne Cover), Sortierung nach Titel/Künstler/Album/Genre/BPM/Tonart/Dauer, Dateien per Drag & Drop hinzufügen |
+| **Ordner** | Ordneransicht wie im Explorer: Baum + Unterordner-Kacheln + Titelliste mit Wellenform und Tag-Editor. Titel per Drag & Drop in Ordner verschieben (Strg = kopieren), Ordner anlegen, umbenennen, verschieben, in den Papierkorb. Dateien umbenennen mit F2. Im Explorer hinzugefügte Dateien werden beim Öffnen des Ordners automatisch aufgenommen |
 | **Wellenform** | Wird einmal pro Titel berechnet und gespeichert. Klick in die Wellenform startet sofort an dieser Stelle (in der Liste, bei Duplikaten und im Player) |
 | **Tags** | Einzel- und Mehrfachbearbeitung, Cover setzen/entfernen, Dateiname → Tags per Muster, Online-Suche (MusicBrainz + Cover Art Archive, nur auf Klick) |
 | **Analyse** | BPM, Tonart (mit Camelot-Notation), Audio-Fingerabdruck (Chromaprint), parallel im Hintergrund, abbrechbar |

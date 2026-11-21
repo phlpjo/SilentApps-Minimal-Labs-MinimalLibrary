@@ -3,10 +3,11 @@ import { player } from "./player";
 import { store } from "./store";
 import { drawWave, waveElement } from "./waveform";
 import { camelot, fmtTime, h, keyLabel, keyOrder, ext, type MenuItem, contextMenu } from "./ui";
+import { renameFileDialog } from "./fileops";
 
 export type SortKey = "pos" | "title" | "artist" | "album" | "genre" | "bpm" | "key" | "duration" | "added" | "year";
 
-interface Col { key: SortKey | "wave"; label: string; width: string; render: (t: Track, pos: number) => Node | string; num?: boolean }
+interface Col { key: SortKey | "wave"; label: string; width: string; render: (t: Track, pos: number) => Node | string; num?: boolean; hideBelow?: number }
 
 const ROW_H = 48;
 
@@ -21,7 +22,8 @@ export class TrackList {
   desc = false;
   private anchor = -1;
   private rows = new Map<number, { row: HTMLElement; canvas: HTMLCanvasElement; idx: number }>();
-  private cols: Col[];
+  private allCols: Col[];
+  private cols: Col[] = [];
   private unsub: (() => void)[] = [];
   private dropIndex = -1;
 
@@ -32,33 +34,35 @@ export class TrackList {
       menu?: (ids: number[]) => MenuItem[];
       onReorder?: (ids: number[]) => void;
       onDelete?: (ids: number[]) => void;
+      onRename?: (id: number) => void;
       emptyText?: Node | string;
     } = {},
   ) {
     this.sort = opts.defaultSort ?? "pos";
-    this.cols = [
+    this.allCols = [
       ...(opts.reorderable ? [{ key: "pos" as const, label: "#", width: "34px", num: true, render: (_t: Track, p: number) => String(p + 1) }] : []),
       {
-        key: "title", label: "Titel", width: "minmax(180px, 2fr)",
+        key: "title", label: "Titel", width: "minmax(150px, 2fr)",
         render: (t) => h("div", { style: { minWidth: "0" } }, h("div", { class: "t1" }, store.label(t)), h("div", { class: "t2" }, t.artist ?? "Unbekannter Künstler")),
       },
-      { key: "album", label: "Album", width: "minmax(100px, 1.2fr)", render: (t) => t.album ?? "" },
-      { key: "genre", label: "Genre", width: "minmax(70px, 0.7fr)", render: (t) => t.genre ?? "" },
+      { key: "album", label: "Album", width: "minmax(100px, 1.2fr)", hideBelow: 700, render: (t) => t.album ?? "" },
+      { key: "genre", label: "Genre", width: "minmax(70px, 0.7fr)", hideBelow: 860, render: (t) => t.genre ?? "" },
       { key: "bpm", label: "BPM", width: "52px", num: true, render: (t) => (t.bpm ? t.bpm.toFixed(t.bpm % 1 ? 1 : 0) : "") },
       { key: "key", label: "Tonart", width: "74px", render: (t) => h("span", { title: keyLabel(t.key) }, t.key ? `${camelot(t.key) || ""} ${t.key}`.trim() : "") },
       { key: "duration", label: "Zeit", width: "50px", num: true, render: (t) => fmtTime(t.duration) },
-      { key: "wave", label: "Wellenform", width: "minmax(200px, 2.4fr)", render: () => "" },
+      { key: "wave", label: "Wellenform", width: "minmax(140px, 2.4fr)", render: () => "" },
     ];
     this.head = h("div", { class: "list-head" });
     this.spacer = h("div", { style: { height: "0px" } });
     this.body = h("div", { class: "list-body", tabindex: "0" }, this.spacer);
     this.el = h("div", { class: "list" }, this.head, this.body);
-    const tpl = this.cols.map((c) => c.width).join(" ");
-    this.head.style.gridTemplateColumns = tpl;
-    this.renderHead();
+    this.updateCols();
     this.body.addEventListener("scroll", () => this.renderRows());
     this.body.addEventListener("keydown", (e) => this.onKey(e));
-    new ResizeObserver(() => this.renderRows(true)).observe(this.body);
+    new ResizeObserver(() => {
+      this.updateCols();
+      this.renderRows(true);
+    }).observe(this.body);
     this.unsub.push(store.on("peaks", () => this.redrawWaves()));
     this.unsub.push(store.on("player", () => this.renderRows(true)));
     this.unsub.push(player.onPos((id, f) => {
@@ -71,6 +75,16 @@ export class TrackList {
     this.body.addEventListener("dragover", (e) => this.onDragOver(e));
     this.body.addEventListener("dragleave", () => this.setDrop(-1));
     this.body.addEventListener("drop", (e) => this.onDrop(e));
+  }
+
+  /** Spalten an die Breite anpassen (schmale Ansicht: Album/Genre ausblenden) */
+  private updateCols() {
+    const w = this.body.clientWidth || 1200;
+    const cols = this.allCols.filter((c) => !c.hideBelow || w >= c.hideBelow);
+    if (cols.map((c) => c.key).join() === this.cols.map((c) => c.key).join()) return;
+    this.cols = cols;
+    this.head.style.gridTemplateColumns = cols.map((c) => c.width).join(" ");
+    this.renderHead();
   }
 
   destroy() {
@@ -293,6 +307,9 @@ export class TrackList {
     } else if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       this.selectAll();
+    } else if (e.key === "F2") {
+      const s = this.selectedIds();
+      if (s.length === 1) (this.opts.onRename ?? renameFileDialog)(s[0]);
     } else if (e.key === "Delete" && this.opts.onDelete) {
       const s = this.selectedIds();
       if (s.length) this.opts.onDelete(s);

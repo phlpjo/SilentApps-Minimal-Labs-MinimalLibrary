@@ -125,6 +125,43 @@ pub fn plan(tracks: &[Track], target_root: &Path, pattern: &str) -> Vec<PlannedM
     out
 }
 
+/// Plan für manuelles Verschieben: Dateien behalten ihren Namen und landen direkt in `dir`.
+/// `new_names` (optional, gleiche Reihenfolge) benennt dabei um (ohne Endung).
+pub fn plan_to_folder(tracks: &[Track], dir: &Path, new_names: Option<&[String]>) -> Vec<PlannedMove> {
+    let key = |p: &Path| p.to_string_lossy().to_lowercase();
+    let sources: HashSet<String> = tracks.iter().map(|t| t.path.to_lowercase()).collect();
+    let mut taken: HashSet<String> = HashSet::new();
+    let mut out = Vec::new();
+    for (i, t) in tracks.iter().enumerate() {
+        let src = Path::new(&t.path);
+        let ext = src.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+        let stem = match new_names.and_then(|n| n.get(i)) {
+            Some(n) if !n.trim().is_empty() => sanitize(n.trim()),
+            _ => src.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+        };
+        let dst = dir.join(format!("{stem}{ext}"));
+        if paths::same_path(src, &dst) && src.to_string_lossy() == dst.to_string_lossy() {
+            taken.insert(key(&dst));
+            out.push(PlannedMove { track_id: t.id, from: t.path.clone(), to: t.path.clone(), renamed: false, unchanged: true });
+            continue;
+        }
+        let is_taken = |p: &Path| {
+            let k = key(p);
+            taken.contains(&k) || (p.exists() && !paths::same_path(p, src) && !sources.contains(&k))
+        };
+        let final_dst = paths::unique_path(&dst, &is_taken);
+        taken.insert(key(&final_dst));
+        out.push(PlannedMove {
+            track_id: t.id,
+            from: t.path.clone(),
+            to: final_dst.to_string_lossy().to_string(),
+            renamed: final_dst != dst,
+            unchanged: false,
+        });
+    }
+    out
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyReport {

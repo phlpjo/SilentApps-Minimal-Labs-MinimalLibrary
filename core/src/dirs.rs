@@ -138,11 +138,11 @@ mod tests {
     fn rename_and_move() {
         let base = std::env::temp_dir().join(format!("mldirs{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(base.join("A/Sub")).unwrap();
+        std::fs::create_dir_all(base.join("A").join("Sub")).unwrap();
         std::fs::create_dir_all(base.join("B")).unwrap();
-        std::fs::write(base.join("A/Sub/x.mp3"), b"x").unwrap();
+        std::fs::write(base.join("A").join("Sub").join("x.mp3"), b"x").unwrap();
         let conn = crate::db::open(&base.join("t.db")).unwrap();
-        conn.execute("INSERT INTO tracks(path) VALUES(?1)", [base.join("A/Sub/x.mp3").to_string_lossy()]).unwrap();
+        conn.execute("INSERT INTO tracks(path) VALUES(?1)", [base.join("A").join("Sub").join("x.mp3").to_string_lossy()]).unwrap();
         let l = list(&conn, &base).unwrap();
         assert_eq!(l.iter().find(|d| d.name == "A").unwrap().tracks, 1);
         let new = rename(&conn, &base.join("A"), "Alt").unwrap();

@@ -2,6 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, type Candidate, type TagUpdate, type Track } from "./api";
 import { store } from "./store";
+import { player } from "./player";
 import { basename, clear, ext, fmtSize, fmtTime, h, holdButton, keyLabel, reportErrors, sheet, toast } from "./ui";
 
 type FieldKey = keyof TagUpdate;
@@ -112,6 +113,7 @@ export class Inspector {
       h("div", { class: "field-row" }, mk(byKey("year")), mk(byKey("trackNo"))),
       h("div", { class: "field-row" }, mk(byKey("discNo")), mk(byKey("bpm"))),
       mk(byKey("key")), mk(byKey("comment")),
+      this.filenameBox(tracks),
       h("button", { class: "btn primary", style: { width: "100%", marginTop: "4px" }, onclick: () => this.save() }, "Speichern  (Strg+S)"),
     );
 
@@ -144,6 +146,55 @@ export class Inspector {
     }
   }
 
+  // ---------- Dateiname nach Muster ----------
+  private renameOn = localStorage.getItem("ml.renameOn") === "1";
+  private namePattern = localStorage.getItem("ml.namePattern") ?? "{track} - {artist} - {title}";
+
+  private filenameBox(tracks: Track[]): HTMLElement {
+    const box = h("input", { type: "checkbox", checked: this.renameOn });
+    const pat = h("input", { type: "text", value: this.namePattern, spellcheck: false, style: { fontFamily: "var(--mono)", fontSize: "12px" } });
+    const prev = h("div", { class: "path", style: { margin: "6px 0 0" } });
+    const chips = h("div", { class: "chips", style: { margin: "6px 0" } },
+      ...["{artist}", "{title}", "{album}", "{albumartist}", "{track}", "{disc}", "{year}", "{genre}", "{bpm}", "{key}"].map((c) =>
+        h("span", { class: "chip", onclick: () => { insertAtCursor(pat, c); update(); } }, c)),
+    );
+    const current = tracks.length === 1 ? basename(tracks[0].path) : `${tracks.length} Dateien`;
+    const update = () => {
+      this.namePattern = pat.value;
+      localStorage.setItem("ml.namePattern", pat.value);
+      const t = tracks[0];
+      // Vorschau mit den (evtl. noch ungespeicherten) Feldwerten
+      const val = (k: FieldKey, fallback: string | null) => {
+        const inp = this.inputs.get(k);
+        if (!inp) return fallback;
+        if (inp.value === "" && this.original.get(k) === null) return fallback; // ‹verschieden›
+        return inp.value || null;
+      };
+      const name = renderName(pat.value, {
+        artist: val("artist", t.artist), title: val("title", t.title), album: val("album", t.album),
+        albumartist: val("albumArtist", t.albumArtist), genre: val("genre", t.genre), year: val("year", t.year),
+        track: val("trackNo", t.trackNo?.toString() ?? null), disc: val("discNo", t.discNo?.toString() ?? null),
+        bpm: val("bpm", t.bpm ? String(Math.round(t.bpm)) : null), key: val("key", t.key),
+      }, t.path);
+      prev.textContent = box.checked ? `${current}  →  ${name}${tracks.length > 1 ? "  (1. Datei, alle nach diesem Muster)" : ""}` : `Aktuell: ${current}`;
+      pat.style.opacity = box.checked ? "1" : "0.55";
+    };
+    box.addEventListener("change", () => {
+      this.renameOn = box.checked;
+      localStorage.setItem("ml.renameOn", box.checked ? "1" : "0");
+      update();
+    });
+    pat.addEventListener("input", update);
+    pat.addEventListener("keydown", (e) => e.key === "Enter" && this.save());
+    for (const inp of this.inputs.values()) inp.addEventListener("input", update);
+    setTimeout(update);
+    return h("div", { class: "field", style: { marginTop: "6px" } },
+      h("label", {}, "Dateiname"),
+      h("label", { class: "check", style: { fontSize: "13px", margin: "2px 0 6px" } }, box, "Beim Speichern Datei umbenennen"),
+      pat, chips, prev,
+    );
+  }
+
   private collect(): TagUpdate {
     const u: TagUpdate = {};
     for (const [k, inp] of this.inputs) {
@@ -158,7 +209,8 @@ export class Inspector {
     const u = this.collect();
     const ids = this.ids;
     const release = this.pendingCoverRelease;
-    if (!Object.keys(u).length && !release) {
+    const rename = this.renameOn && this.namePattern.trim() !== "";
+    if (!Object.keys(u).length && !release && !rename) {
       toast("Keine Änderungen");
       return;
     }
@@ -169,6 +221,12 @@ export class Inspector {
     if (release) {
       const errs = await api.mbCover(ids, release).catch((e) => [String(e)]);
       reportErrors(errs, "Cover übernommen");
+    }
+    if (rename) {
+      player.release(ids);
+      const r = await api.renameByPattern(ids, this.namePattern).catch((e) => ({ moved: 0, errors: [String(e)], batchId: 0 }));
+      reportErrors(r.errors, r.moved ? `${r.moved} Datei${r.moved === 1 ? "" : "en"} umbenannt` : undefined);
+      store.emit("dirs");
     }
     this.original.clear();
     await store.refreshTracks(ids);
@@ -259,7 +317,7 @@ export class Inspector {
         results.replaceChildren(
           ...(list.length
             ? list.map((c) =>
-                h("div", { class: "option", onclick: () => { this.applyCandidate(c, withCover.checked); s.close(); } },
+                h("div", { class: "option", onclick: () => this.pickFields(c, withCover.checked, s, results, run) },
                   h("div", {}, h("div", { class: "t1" }, `${c.artist} – ${c.title}`), h("div", { class: "t2" }, [c.album, c.year, c.trackNo ? `Track ${c.trackNo}` : null, c.genre].filter(Boolean).join(" · "))),
                   h("small", {}, `${c.length ? fmtTime(c.length) + " · " : ""}${c.score} %`),
                 ),
@@ -284,27 +342,104 @@ export class Inspector {
     run();
   }
 
-  private applyCandidate(c: Candidate, cover: boolean) {
-    const set = (k: FieldKey, v: string | number | null | undefined) => {
+  /** Treffer gewählt → pro Feld entscheiden, was übernommen wird */
+  private pickFields(c: Candidate, withCover: boolean, s: { close: () => void }, results: HTMLElement, back: () => void) {
+    const multi = this.ids.length > 1;
+    const rows: { key: FieldKey; label: string; val: string; box: HTMLInputElement }[] = [];
+    const add = (key: FieldKey, label: string, v: string | number | null | undefined) => {
       if (v === null || v === undefined || v === "") return;
-      const inp = this.inputs.get(k);
-      if (!inp) return;
-      // Bei Mehrfachauswahl Titel/Track nicht überschreiben
-      if (this.ids.length > 1 && (k === "title" || k === "trackNo")) return;
-      inp.value = String(v);
-      inp.dispatchEvent(new Event("input"));
+      const inp = this.inputs.get(key);
+      const cur = inp?.value ?? "";
+      const val = String(v);
+      const isVarious = this.original.get(key) === null && cur === "";
+      // Vorauswahl: nur wo neu und anders; Titel/Track bei Mehrfachauswahl aus
+      const pre = val !== cur && !(multi && (key === "title" || key === "trackNo"));
+      rows.push({ key, label, val, box: h("input", { type: "checkbox", checked: pre }) });
+      rows[rows.length - 1].box.dataset.cur = isVarious ? "‹verschieden›" : cur;
     };
-    set("title", c.title);
-    set("artist", c.artist);
-    set("album", c.album);
-    set("albumArtist", c.albumArtist);
-    set("year", c.year);
-    set("trackNo", c.trackNo);
-    set("discNo", c.discNo);
-    set("genre", c.genre);
-    if (cover && c.releaseId) this.pendingCoverRelease = c.releaseId;
-    toast("Werte übernommen – mit Speichern in die Datei schreiben");
+    add("title", "Titel", c.title);
+    add("artist", "Künstler", c.artist);
+    add("album", "Album", c.album);
+    add("albumArtist", "Albumkünstler", c.albumArtist);
+    add("year", "Jahr", c.year);
+    add("trackNo", "Track", c.trackNo);
+    add("discNo", "Disc", c.discNo);
+    add("genre", "Genre", c.genre);
+    const coverBox = h("input", { type: "checkbox", checked: withCover && !!c.releaseId });
+    const all = h("input", { type: "checkbox", checked: false });
+    all.addEventListener("change", () => rows.forEach((r) => (r.box.checked = all.checked)));
+    results.replaceChildren(
+      h("table", { class: "grid" },
+        h("thead", {}, h("tr", {}, h("th", {}, all), h("th", {}, "Feld"), h("th", {}, "Aktuell"), h("th", {}, "MusicBrainz"))),
+        h("tbody", {},
+          ...rows.map((r) => {
+            const tr = h("tr", { style: { cursor: "pointer" } },
+              h("td", {}, r.box), h("td", {}, r.label),
+              h("td", { style: { color: "var(--weak)" } }, r.box.dataset.cur || "–"),
+              h("td", { style: { color: "var(--ink)" } }, r.val),
+            );
+            tr.addEventListener("click", (e) => { if (e.target !== r.box) r.box.checked = !r.box.checked; });
+            return tr;
+          }),
+          c.releaseId ? h("tr", {}, h("td", {}, coverBox), h("td", {}, "Cover"), h("td", { style: { color: "var(--weak)" } }, "–"), h("td", {}, "Front-Cover aus dem Cover Art Archive")) : "",
+        ),
+      ),
+      multi ? h("div", { class: "note", style: { marginTop: "8px" } }, "Mehrfachauswahl: Titel und Track sind nicht vorausgewählt, damit nicht alle Dateien denselben Titel bekommen.") : "",
+      h("div", { class: "foot" },
+        h("button", { class: "btn", onclick: back }, "‹ Andere Treffer"),
+        h("span", { class: "spacer" }),
+        h("button", {
+          class: "btn primary",
+          onclick: () => {
+            let n = 0;
+            for (const r of rows) {
+              if (!r.box.checked) continue;
+              const inp = this.inputs.get(r.key);
+              if (!inp) continue;
+              inp.value = r.val;
+              inp.dispatchEvent(new Event("input"));
+              n++;
+            }
+            if (coverBox.checked && c.releaseId) this.pendingCoverRelease = c.releaseId;
+            s.close();
+            toast(n || coverBox.checked ? `${n} Feld${n === 1 ? "" : "er"}${coverBox.checked ? " + Cover" : ""} übernommen – mit Speichern in die Datei schreiben` : "Nichts übernommen");
+          },
+        }, "Auswahl übernehmen"),
+      ),
+    );
   }
+}
+
+function insertAtCursor(inp: HTMLInputElement, text: string) {
+  const a = inp.selectionStart ?? inp.value.length;
+  const b = inp.selectionEnd ?? a;
+  inp.value = inp.value.slice(0, a) + text + inp.value.slice(b);
+  inp.focus();
+  inp.setSelectionRange(a + text.length, a + text.length);
+}
+
+const BAD = /[<>:"/\\|?*\u0000-\u001f]/g;
+/** Vorschau – gleiche Regeln wie der Rust-Kern (organize::render) */
+export function renderName(pattern: string, v: Record<string, string | null>, path: string): string {
+  const stem = basename(path).replace(/\.[^.]+$/, "");
+  const extn = (basename(path).match(/\.[^.]+$/) ?? [""])[0].toLowerCase();
+  const pad = (n: string | null) => (n && /^\d+/.test(n) ? String(parseInt(n, 10)).padStart(2, "0") : "");
+  const map: Record<string, string> = {
+    artist: v.artist ?? "Unbekannter Künstler",
+    albumartist: v.albumartist ?? v.artist ?? "Unbekannter Künstler",
+    album: v.album ?? "Unbekanntes Album",
+    title: v.title ?? stem,
+    genre: v.genre ?? "Unbekanntes Genre",
+    year: v.year ? v.year.slice(0, 4) : "0000",
+    track: pad(v.track),
+    disc: v.disc ?? "1",
+    "disc-": v.disc && parseInt(v.disc, 10) > 1 ? `${parseInt(v.disc, 10)}-` : "",
+    bpm: v.bpm ?? "",
+    key: v.key ?? "",
+  };
+  let out = pattern.replace(/[\\/]/g, "-").replace(/\{([a-z-]+)\}/g, (m, k) => (k in map ? map[k].replace(/[\\/]/g, "_") : m));
+  out = out.replace(BAD, "_").replace(/\s+/g, " ").trim().replace(/^[-\s]+/, "").replace(/[.\s]+$/, "");
+  return (out || "_") + extn;
 }
 
 function kv(k: string, v: string) {

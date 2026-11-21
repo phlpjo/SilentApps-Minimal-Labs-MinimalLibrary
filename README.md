@@ -9,13 +9,15 @@ Musikbibliothek für Windows im SilentApps-Minimal-Stil – sortieren, taggen, D
 | **Bibliothek** | Musikordner scannen (MP3, FLAC, M4A/AAC, OGG, Opus, WAV, AIFF), Suche, Filter (nicht analysiert, fehlende Tags, ohne Cover), Sortierung nach Titel/Künstler/Album/Genre/BPM/Tonart/Dauer, Dateien per Drag & Drop hinzufügen |
 | **Ordner** | Ordneransicht wie im Explorer: Baum + Unterordner-Kacheln + Titelliste mit Wellenform und Tag-Editor. Titel per Drag & Drop in Ordner verschieben (Strg = kopieren), Ordner anlegen, umbenennen, verschieben, in den Papierkorb. Dateien umbenennen mit F2. Im Explorer hinzugefügte Dateien werden beim Öffnen des Ordners automatisch aufgenommen |
 | **Wellenform** | Wird einmal pro Titel berechnet und gespeichert. Klick in die Wellenform startet sofort an dieser Stelle (in der Liste, bei Duplikaten und im Player) |
-| **Tags** | Einzel- und Mehrfachbearbeitung, Cover setzen/entfernen, Dateiname → Tags per Muster, Online-Suche (MusicBrainz + Cover Art Archive, nur auf Klick) |
+| **Tags** | Einzel- und Mehrfachbearbeitung, Cover setzen/entfernen, Dateiname → Tags per Muster, Tags → Dateiname per Muster (Checkbox „Beim Speichern umbenennen“), Online-Suche (MusicBrainz + Cover Art Archive, nur auf Klick) mit Auswahl pro Feld |
 | **Analyse** | BPM, Tonart (mit Camelot-Notation), Audio-Fingerabdruck (Chromaprint), parallel im Hintergrund, abbrechbar |
 | **Duplikate** | Drei Arten kombinierbar: Metadaten, Dateiname, Audio-Inhalt. Vorschlag „beste Version behalten“ (verlustfrei > Bitrate > Tags), Rest in den Papierkorb, Playlisten zeigen danach auf die behaltene Datei |
 | **Sortieren** | Muster wie `{albumartist}/{album}/{disc-}{track} - {title}`, Vorschau, verschieben oder kopieren, leere Ordner werden aufgeräumt, jeder Vorgang rückgängig machbar |
 | **Playlisten** | Normale (Drag & Drop, umsortieren) und smarte (Regeln: Genre, BPM-Bereich, Tonart, Jahr, zuletzt hinzugefügt …). Import von M3U/M3U8 |
 | **Minimal Player** | Playlist-Ordner: alle Playlisten werden automatisch als `.m3u8` mit relativen Pfaden aktuell gehalten |
 | **Export** | Playlisten samt Original-Dateien + M3U8 kopieren (nummeriert / flach / gemeinsamer Musikordner), erneuter Export kopiert nur Fehlendes |
+
+Hell/Dunkel: Schalter oben links oder Einstellungen → Darstellung (Wie Windows / Dunkel / Hell).
 
 Riskante Aktionen (Papierkorb, Löschen, Rückgängig) werden **gedrückt gehalten** statt per Rückfrage bestätigt.
 

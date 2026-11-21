@@ -2,8 +2,9 @@ import { api, type DupGroup } from "../api";
 import { player } from "../player";
 import { store } from "../store";
 import { drawWave, waveElement } from "../waveform";
-import { basename, clear, ext, fmtSize, fmtTime, h, holdButton, reportErrors, toast } from "../ui";
-import { analyzeIds } from "../main";
+import { clear, contextMenu, ext, fmtSize, fmtTime, h, holdButton, reportErrors, toast } from "../ui";
+import { analyzeIds, nav } from "../main";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
 const REASON: Record<string, string> = { metadata: "Metadaten", filename: "Dateiname", audio: "Audio" };
 
@@ -96,7 +97,7 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
     out.replaceChildren(
       ...groups.slice(0, 400).map(([g, gi]) => {
         const k = keep.get(gi)!;
-        const reasons = g.reasons.map((r) => REASON[r] ?? r).join(" · ") + (g.audioSimilarity ? ` ${Math.round(g.audioSimilarity * 100)} %` : "");
+        const reasons = g.reasons.map((r) => (r === "audio" && g.audioSimilarity ? `Audio ${Math.round(g.audioSimilarity * 100)} %` : REASON[r] ?? r)).join(" · ");
         const rows = g.trackIds.filter((id) => store.tracks.has(id)).map((id) => {
           const t = store.tracks.get(id)!;
           const box = h("input", { type: "checkbox", checked: k.has(id), title: "Behalten" });
@@ -104,7 +105,7 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
           canvases.push({ id, c: canvas });
           const tr = h("tr", { class: k.has(id) ? "keep" : "drop" },
             h("td", {}, box),
-            h("td", {}, h("div", { class: "t1" }, `${t.artist ?? "?"} – ${store.label(t)}`), h("div", { class: "t2", title: t.path }, basename(t.path))),
+            h("td", {}, h("div", { class: "t1" }, `${t.artist ?? "?"} – ${store.label(t)}`), h("div", { class: "path", style: { margin: "3px 0 0" }, title: "Rechtsklick: Im Explorer zeigen" }, t.path)),
             h("td", {}, `${ext(t.path)}${t.bitrate ? " " + t.bitrate : ""}`),
             h("td", {}, fmtTime(t.duration)),
             h("td", {}, fmtSize(t.size)),
@@ -117,12 +118,20 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
             renderFooter();
           });
           tr.addEventListener("dblclick", () => player.play(id, 0, g.trackIds));
+          tr.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+            contextMenu(e.clientX, e.clientY, [
+              { label: "Abspielen", action: () => player.play(id, 0, g.trackIds) },
+              { label: "Im Explorer zeigen", action: () => revealItemInDir(t.path) },
+              { label: "Ordner in der Ordneransicht", action: () => nav("folders", undefined, t.path) },
+            ]);
+          });
           return tr;
         });
         return h("div", { class: "group" },
           h("div", { class: "gh" }, h("span", {}, reasons), h("span", {}, "Haken = behalten")),
           h("table", { class: "grid fixed" },
-            h("colgroup", {}, h("col", { style: { width: "34px" } }), h("col", {}), h("col", { style: { width: "90px" } }), h("col", { style: { width: "56px" } }), h("col", { style: { width: "76px" } }), h("col", { style: { width: "34%" } })),
+            h("colgroup", {}, h("col", { style: { width: "34px" } }), h("col", {}), h("col", { style: { width: "90px" } }), h("col", { style: { width: "56px" } }), h("col", { style: { width: "76px" } }), h("col", { style: { width: "30%" } })),
             h("tbody", {}, ...rows)),
         );
       }),

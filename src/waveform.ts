@@ -1,9 +1,10 @@
 import { h, fmtTime } from "./ui";
+import { isLight } from "./theme";
 
 let colors = { ink: "#fff", dim: "#d2d2d8", weak: "#a8a8b1", faint: "rgba(255,255,255,0.18)" };
 function readColors() {
   const cs = getComputedStyle(document.documentElement);
-  const light = window.matchMedia("(prefers-color-scheme: light)").matches;
+  const light = isLight();
   colors = {
     ink: cs.getPropertyValue("--ink").trim() || "#fff",
     dim: cs.getPropertyValue("--dim").trim() || "#d2d2d8",
@@ -12,10 +13,8 @@ function readColors() {
   };
 }
 readColors();
-window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
-  readColors();
-  document.dispatchEvent(new Event("themechange"));
-});
+// Farben vor allen anderen Listenern neu lesen
+document.addEventListener("themechange", readColors, true);
 
 /**
  * Zeichnet die Wellenform. peaks = [spitze, rms, spitze, rms, …] (je 0–255).

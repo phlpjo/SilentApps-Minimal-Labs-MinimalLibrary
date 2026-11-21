@@ -1,4 +1,5 @@
 import "./style.css";
+import { applyTheme, isLight } from "./theme";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -60,7 +61,7 @@ function renderSide() {
   const n = current?.name;
   if (!side.firstChild) {
     side.append(
-      h("div", { class: "brand" }, h("img", { src: logo, alt: "" }), h("span", {}, "Minimal Library")),
+      h("div", { class: "brand" }, h("div", { class: "bl" }, h("img", { src: logo, alt: "" }), h("span", {}, "Minimal Library")), darkSwitch()),
       h("div", { class: "nav", id: "mainnav" }),
       h("div", { class: "section" }, "Playlisten"),
       h("div", { class: "section", style: { padding: "0 20px 8px", justifyContent: "flex-start", gap: "14px" } },
@@ -111,6 +112,16 @@ function renderSide() {
       return it;
     }),
   );
+}
+
+/** Dunkelmodus-Schalter (überschreibt die Windows-Einstellung) */
+function darkSwitch() {
+  const sw = h("div", { class: "switch", title: "Dunkelmodus" }, h("span", { class: "track" }));
+  const upd = () => sw.classList.toggle("on", !isLight());
+  sw.addEventListener("click", () => applyTheme(isLight() ? "dark" : "light"));
+  document.addEventListener("themechange", upd);
+  upd();
+  return sw;
 }
 
 async function importPlaylist() {

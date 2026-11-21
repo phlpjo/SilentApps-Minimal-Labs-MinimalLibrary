@@ -108,5 +108,7 @@ export const api = {
   dirTrash: (path: string) => invoke<number>("dir_trash", { path }),
   moveTracksTo: (ids: number[], dir: string, copy: boolean) => invoke<ApplyReport>("move_tracks_to", { ids, dir, copy }),
   renameTrack: (id: number, name: string) => invoke<ApplyReport>("rename_track", { id, name }),
+  renamePreview: (ids: number[], pattern: string) => invoke<[number, string][]>("rename_preview", { ids, pattern }),
+  renameByPattern: (ids: number[], pattern: string) => invoke<ApplyReport>("rename_by_pattern", { ids, pattern }),
   version: () => invoke<string>("app_version"),
 };

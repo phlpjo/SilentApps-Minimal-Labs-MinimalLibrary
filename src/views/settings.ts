@@ -4,6 +4,7 @@ import { api } from "../api";
 import { store } from "../store";
 import { clear, h, holdButton, toast } from "../ui";
 import { analyzeIds, scanNow } from "../main";
+import { applyTheme, themeMode, type ThemeMode } from "../theme";
 
 export function settingsView(): { el: HTMLElement; destroy: () => void } {
   const body = h("div", { class: "view-scroll" });
@@ -27,7 +28,11 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
     const auto = h("input", { type: "checkbox", checked: s.autoAnalyze });
     auto.addEventListener("change", () => store.saveSettings({ autoAnalyze: auto.checked }));
 
+    const theme = h("select", {}, ...([["system", "Wie Windows"], ["dark", "Dunkel"], ["light", "Hell"]] as const).map(([v, l]) => h("option", { value: v, selected: themeMode() === v }, l)));
+    theme.addEventListener("change", () => applyTheme(theme.value as ThemeMode));
     body.append(
+      h("div", { class: "card" }, h("h3", {}, "Darstellung"), h("div", { class: "setting" }, h("span", {}, "Farbschema"), theme),
+        h("div", { class: "note" }, "Der Schalter oben links wechselt direkt zwischen Hell und Dunkel.")),
       h("div", { class: "card" }, h("h3", {}, "Musikordner"), roots,
         h("div", { class: "line" },
           h("button", { class: "btn primary", onclick: async () => {

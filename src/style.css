@@ -19,8 +19,9 @@
   --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
   color-scheme: dark;
 }
+/* Hell: Systemeinstellung oder Schalter (data-theme) */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
     --bg: #ffffff;
     --ink: #000000;
     --dim: #38383f;
@@ -35,6 +36,21 @@
     color-scheme: light;
   }
 }
+:root[data-theme="light"] {
+    --bg: #ffffff;
+    --ink: #000000;
+    --dim: #38383f;
+    --weak: #595962;
+    --panel: #f3f3f6;
+    --panel2: #e9e9ee;
+    --line: rgba(0, 0, 0, 0.28);
+    --line-soft: rgba(0, 0, 0, 0.12);
+    --hover: rgba(0, 0, 0, 0.05);
+    --sel: rgba(0, 0, 0, 0.1);
+    --glow: none;
+    color-scheme: light;
+}
+
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 14px; overflow: hidden; user-select: none; }
@@ -58,8 +74,8 @@ input, select, textarea, button { font: inherit; color: inherit; }
 #side { grid-area: side; display: flex; flex-direction: column; border-right: 1px solid var(--line-soft); min-height: 0; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 18px 18px 14px; }
 .brand img { width: 28px; height: 28px; }
-@media (prefers-color-scheme: light) { .brand img { filter: invert(1); } }
-.brand span { font-weight: 300; font-size: 19px; letter-spacing: 0.5px; text-shadow: var(--glow); }
+.light .brand img { filter: invert(1); }
+.brand span { font-weight: 300; font-size: 17px; white-space: nowrap; letter-spacing: 0.5px; text-shadow: var(--glow); }
 .nav { padding: 4px 8px; }
 .nav-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-radius: 10px; cursor: pointer; color: var(--dim); }
 .nav-item:hover { background: var(--hover); color: var(--ink); }
@@ -238,3 +254,16 @@ table.grid td.mono { font-family: var(--mono); font-size: 11px; word-break: brea
 .crumb:hover { color: var(--ink); background: var(--hover); }
 .crumb.last { color: var(--ink); }
 .csep { color: var(--weak); }
+
+/* Schalter */
+.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: var(--dim); font-size: 12px; }
+.switch:hover { color: var(--ink); }
+.switch .track { width: 30px; height: 16px; border-radius: 8px; background: var(--line-soft); position: relative; transition: background 0.15s; }
+.switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--weak); transition: transform 0.15s, background 0.15s; }
+.switch.on .track { background: var(--line); }
+.switch.on .track::after { transform: translateX(14px); background: var(--ink); }
+.brand { justify-content: space-between; }
+.brand .bl { display: flex; align-items: center; gap: 10px; }
+.field input[type="checkbox"] { width: 15px; flex: none; }
+.field label.check { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 13px; color: var(--dim); }
+.field label.check:hover { color: var(--ink); }

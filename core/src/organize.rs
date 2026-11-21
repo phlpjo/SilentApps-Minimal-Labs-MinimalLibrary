@@ -90,6 +90,12 @@ pub fn render(pattern: &str, t: &Track) -> PathBuf {
     p
 }
 
+/// Dateiname (ohne Endung) aus einem Muster wie "{artist} - {title}". Schrägstriche werden zu "-".
+pub fn filename_from_pattern(pattern: &str, t: &Track) -> String {
+    let p = pattern.replace(['/', '\\'], "-");
+    render(&p, t).to_string_lossy().to_string()
+}
+
 pub fn plan(tracks: &[Track], target_root: &Path, pattern: &str) -> Vec<PlannedMove> {
     let mut taken: HashSet<String> = HashSet::new();
     let key = |p: &Path| p.to_string_lossy().to_lowercase();
@@ -312,5 +318,9 @@ mod tests {
         };
         assert_eq!(render(DEFAULT_PATTERN, &t), PathBuf::from("AC_DC/Back in Black/01 - Hells Bells"));
         assert_eq!(render("{initial}/{artist}", &t), PathBuf::from("A/AC_DC"));
+        assert_eq!(filename_from_pattern("{track} - {artist} - {title}", &t), "01 - AC_DC - Hells Bells");
+        let mut u = t.clone();
+        u.track_no = None;
+        assert_eq!(filename_from_pattern("{track} - {title}", &u), "Hells Bells");
     }
 }

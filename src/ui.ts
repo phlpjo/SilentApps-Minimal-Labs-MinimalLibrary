@@ -221,7 +221,7 @@ export function normKey(k: string | null): string | null {
   let s = k.trim().replace("♯", "#").replace("♭", "b");
   const cam = Object.entries(CAMELOT).find(([, v]) => v.toLowerCase() === s.toLowerCase());
   if (cam) return cam[0];
-  const m = s.match(/^([A-Ga-g])([#b]?)\s*(m|min|minor|moll)?\b/i);
+  const m = s.match(/^([A-Ga-g])([#b]?)\s*(m|min|minor|moll)?(?:\s*(?:maj|major|dur))?$/i);
   if (!m) return s;
   let root = m[1].toUpperCase() + (m[2] || "");
   root = FLAT[root] ?? root;

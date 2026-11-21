@@ -633,6 +633,42 @@ async fn rename_track(state: State<'_, AppState>, id: i64, name: String) -> R<or
 }
 
 #[tauri::command]
+fn rename_preview(state: State<AppState>, ids: Vec<i64>, pattern: String) -> R<Vec<(i64, String)>> {
+    let tracks = db::tracks_by_ids(&state.db.lock().unwrap(), &ids).map_err(err)?;
+    Ok(tracks
+        .iter()
+        .map(|t| {
+            let ext = Path::new(&t.path).extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+            (t.id, format!("{}{ext}", organize::filename_from_pattern(&pattern, t)))
+        })
+        .collect())
+}
+
+/// Dateien nach Muster aus den Tags umbenennen (bleiben im selben Ordner).
+#[tauri::command]
+async fn rename_by_pattern(state: State<'_, AppState>, ids: Vec<i64>, pattern: String) -> R<organize::ApplyReport> {
+    let db = state.db.clone();
+    blocking(move || {
+        let tracks = db::tracks_by_ids(&db.lock().unwrap(), &ids)?;
+        let mut plan = Vec::new();
+        // pro Ordner planen, damit Namenskonflikte erkannt werden
+        let mut by_dir: std::collections::BTreeMap<PathBuf, Vec<db::Track>> = Default::default();
+        for t in tracks {
+            by_dir.entry(Path::new(&t.path).parent().map(Path::to_path_buf).unwrap_or_default()).or_default().push(t);
+        }
+        for (dir, ts) in by_dir {
+            let names: Vec<String> = ts.iter().map(|t| organize::filename_from_pattern(&pattern, t)).collect();
+            plan.extend(organize::plan_to_folder(&ts, &dir, Some(&names)));
+        }
+        let n = plan.iter().filter(|m| !m.unchanged).count();
+        let r = organize::apply(&db, &plan, false, &format!("Umbenannt nach {pattern}: {n} Dateien"), &[], &|_, _, _| {})?;
+        sync_playlists(&db.lock().unwrap());
+        Ok(r)
+    })
+    .await
+}
+
+#[tauri::command]
 fn app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
 }
@@ -697,6 +733,8 @@ pub fn run() {
             dir_trash,
             move_tracks_to,
             rename_track,
+            rename_preview,
+            rename_by_pattern,
             app_version,
         ])
         .run(tauri::generate_context!())

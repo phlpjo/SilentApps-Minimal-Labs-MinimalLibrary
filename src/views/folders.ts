@@ -6,7 +6,7 @@ import { TrackList } from "../tracklist";
 import { basename, clear, contextMenu, dirname, fmtDuration, h, holdButton, reportErrors, sheet, toast, type MenuItem } from "../ui";
 import { moveTracksTo } from "../fileops";
 import { analyzeIds } from "../main";
-import { trackMenu } from "./library";
+import { textMatches, trackMenu } from "./library";
 
 const norm = (p: string) => p.replace(/[\\/]+$/, "").replace(/\//g, "\\").toLowerCase();
 const DIR_MIME = "application/x-ml-dir";
@@ -28,6 +28,20 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
   const crumbs = h("div", { class: "crumbs" });
   const info = h("span", { class: "sub" });
   const tiles = h("div", { class: "tiles" });
+  let query = "";
+  const search = h("input", { type: "search", placeholder: "In diesem Ordner suchen …", style: { width: "210px", flex: "none" } });
+  search.addEventListener("input", () => {
+    query = search.value;
+    showTracks();
+    renderTiles();
+  });
+  search.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      search.value = query = "";
+      showTracks();
+      renderTiles();
+    }
+  });
   const recBox = h("input", { type: "checkbox", checked: recursive });
   recBox.addEventListener("change", () => {
     recursive = recBox.checked;
@@ -148,6 +162,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
 
   // ---------- Ordner öffnen ----------
   const openFolder = async (path: string) => {
+    if (norm(path) !== norm(current)) search.value = query = "";
     current = path;
     localStorage.setItem("ml.folder", path);
     store.selection.clear();
@@ -204,7 +219,8 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
 
   const renderTiles = () => {
     clear(tiles);
-    const subs = children.get(norm(current)) ?? [];
+    const q = query.toLowerCase().trim();
+    const subs = (children.get(norm(current)) ?? []).filter((d) => !q || q.split(/\s+/).every((w) => d.name.toLowerCase().includes(w)));
     const isRoot = roots().some((r) => norm(r) === norm(current));
     if (!isRoot && current) {
       const up = h("div", { class: "tile up", title: "Übergeordneter Ordner" }, "‹ Zurück");
@@ -229,17 +245,21 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     const c = norm(current);
     const ids: number[] = [];
     let dur = 0;
+    let total = 0;
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
     for (const t of store.tracks.values()) {
       const p = norm(t.path);
       const inside = recursive ? p.startsWith(c + "\\") : norm(dirname(t.path)) === c;
-      if (inside) {
+      if (inside) total++;
+      // Suche nur im aktuellen Ordner (mit Unterordnern, wenn eingeschaltet)
+      if (inside && textMatches(t, words, true)) {
         ids.push(t.id);
         dur += t.duration;
       }
     }
     list.setIds(ids);
     player.queue = list.visibleIds;
-    info.textContent = `${ids.length} Titel · ${fmtDuration(dur)}`;
+    info.textContent = words.length ? `${ids.length} von ${total} Titeln · ${fmtDuration(dur)}` : `${ids.length} Titel · ${fmtDuration(dur)}`;
   };
 
   // ---------- Ordner-Aktionen ----------
@@ -330,6 +350,12 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
   };
 
   const onKey = (e: KeyboardEvent) => {
+    if (e.key === "f" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      search.focus();
+      search.select();
+      return;
+    }
     const tag = (e.target as HTMLElement).tagName;
     if (tag === "INPUT" || document.querySelector(".sheet-bg")) return;
     if (e.key === "Backspace" && current && !roots().some((r) => norm(r) === norm(current))) openFolder(dirname(current));
@@ -343,9 +369,10 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
   ];
 
   const el = h("div", { style: { display: "contents" } },
-    h("div", { class: "head" }, h("h1", {}, "Ordner"), crumbs, info, h("div", { class: "spacer" }),
-      h("label", { class: "check" }, recBox, "Unterordner einbeziehen"),
-      h("button", { class: "btn", onclick: () => current && revealItemInDir(current) }, "Im Explorer"),
+    h("div", { class: "head nowrap" }, h("h1", {}, "Ordner"), crumbs, info,
+      search,
+      h("label", { class: "check", title: "Titel aus allen Unterordnern mit anzeigen und durchsuchen" }, recBox, "Unterordner"),
+      h("button", { class: "btn", onclick: () => current && revealItemInDir(current) }, "Explorer"),
     ),
     h("div", { class: "folders" },
       tree,

@@ -77,6 +77,16 @@ export function trackMenu(ids: number[], extra: MenuItem[] = []): MenuItem[] {
   ];
 }
 
+/** Suchwörter gegen Tags, Tonart, BPM und Pfad (bzw. nur Dateiname) prüfen */
+export function textMatches(t: Track, words: string[], fileNameOnly = false): boolean {
+  if (!words.length) return true;
+  const where = fileNameOnly ? t.path.split(/[\\/]/).pop() : t.path;
+  const hay = [t.title, t.artist, t.album, t.albumArtist, t.genre, t.year, t.comment, where, t.key, t.bpm ? String(Math.round(t.bpm)) : ""]
+    .join(" ")
+    .toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
 export function libraryView(): { el: HTMLElement; destroy: () => void } {
   let filter: Filter = (sessionStorage.getItem("ml.filter") as Filter) ?? "all";
   let query = sessionStorage.getItem("ml.query") ?? "";
@@ -95,11 +105,7 @@ export function libraryView(): { el: HTMLElement; destroy: () => void } {
     if (filter === "notags" && t.title && t.artist && t.album && t.genre) return false;
     if (filter === "nocover" && t.hasCover) return false;
     if (filter === "errors" && !t.analysisError) return false;
-    if (!words.length) return true;
-    const hay = [t.title, t.artist, t.album, t.albumArtist, t.genre, t.year, t.comment, t.path, t.key, t.bpm ? String(Math.round(t.bpm)) : ""]
-      .join(" ")
-      .toLowerCase();
-    return words.every((w) => hay.includes(w));
+    return textMatches(t, words);
   };
   const refresh = () => {
     const words = query.toLowerCase().split(/\s+/).filter(Boolean);

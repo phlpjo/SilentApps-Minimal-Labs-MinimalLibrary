@@ -1,5 +1,5 @@
 use base64::Engine;
-use musiccore::{analysis, db, duplicates, export, musicbrainz, organize, playlists, scanner, tags};
+use musiccore::{analysis, db, dirs, duplicates, export, musicbrainz, organize, playlists, scanner, tags};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -530,6 +530,108 @@ fn sync_playlist_folder(state: State<AppState>) -> R<usize> {
     }
 }
 
+// ---------- Ordneransicht ----------
+
+#[tauri::command]
+async fn dir_list(state: State<'_, AppState>, path: String) -> R<Vec<dirs::DirEntry>> {
+    let db = state.db.clone();
+    blocking(move || dirs::list(&db.lock().unwrap(), Path::new(&path))).await
+}
+
+/// Audiodateien im Ordner, die noch nicht in der Bibliothek sind, aufnehmen.
+#[tauri::command]
+async fn dir_import_untracked(state: State<'_, AppState>, path: String) -> R<Vec<i64>> {
+    let db = state.db.clone();
+    blocking(move || {
+        let files = dirs::untracked_files(&db.lock().unwrap(), Path::new(&path))?;
+        scanner::add_files(&db, &files)
+    })
+    .await
+}
+
+#[tauri::command]
+fn dir_create(app: AppHandle, parent: String, name: String) -> R<String> {
+    let p = dirs::create(Path::new(&parent), &name).map_err(err)?;
+    let _ = app.asset_protocol_scope().allow_directory(&p, true);
+    Ok(p.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn dir_rename(app: AppHandle, state: State<'_, AppState>, path: String, name: String) -> R<String> {
+    let db = state.db.clone();
+    let p = blocking(move || {
+        let c = db.lock().unwrap();
+        let p = dirs::rename(&c, Path::new(&path), &name)?;
+        sync_playlists(&c);
+        Ok(p)
+    })
+    .await?;
+    let _ = app.asset_protocol_scope().allow_directory(&p, true);
+    Ok(p.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn dir_move(app: AppHandle, state: State<'_, AppState>, path: String, target: String) -> R<String> {
+    let db = state.db.clone();
+    let p = blocking(move || {
+        let c = db.lock().unwrap();
+        let p = dirs::move_into(&c, Path::new(&path), Path::new(&target))?;
+        sync_playlists(&c);
+        Ok(p)
+    })
+    .await?;
+    let _ = app.asset_protocol_scope().allow_directory(&p, true);
+    Ok(p.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn dir_trash(state: State<'_, AppState>, path: String) -> R<usize> {
+    let db = state.db.clone();
+    blocking(move || {
+        trash::delete(&path)?;
+        let c = db.lock().unwrap();
+        let n = dirs::remove_tracks_under(&c, Path::new(&path))?;
+        sync_playlists(&c);
+        Ok(n)
+    })
+    .await
+}
+
+/// Titel manuell in einen Ordner verschieben/kopieren (mit Verlauf + Rückgängig).
+#[tauri::command]
+async fn move_tracks_to(app: AppHandle, state: State<'_, AppState>, ids: Vec<i64>, dir: String, copy: bool) -> R<organize::ApplyReport> {
+    let db = state.db.clone();
+    let prog = emitter(&app, "organize");
+    let _ = app.asset_protocol_scope().allow_directory(&dir, true);
+    blocking(move || {
+        let tracks = db::tracks_by_ids(&db.lock().unwrap(), &ids)?;
+        let plan = organize::plan_to_folder(&tracks, Path::new(&dir), None);
+        let stops = stop_dirs(&db.lock().unwrap());
+        let name = Path::new(&dir).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let desc = format!("{} {} Datei{} nach „{name}“", if copy { "Kopiert:" } else { "Verschoben:" }, tracks.len(), if tracks.len() == 1 { "" } else { "en" });
+        let r = organize::apply(&db, &plan, copy, &desc, &stops, &prog)?;
+        sync_playlists(&db.lock().unwrap());
+        Ok(r)
+    })
+    .await
+}
+
+/// Datei umbenennen (Name ohne Endung), mit Verlauf + Rückgängig.
+#[tauri::command]
+async fn rename_track(state: State<'_, AppState>, id: i64, name: String) -> R<organize::ApplyReport> {
+    let db = state.db.clone();
+    blocking(move || {
+        let tracks = db::tracks_by_ids(&db.lock().unwrap(), &[id])?;
+        let t = tracks.first().ok_or_else(|| anyhow::anyhow!("Titel nicht gefunden"))?;
+        let dir = Path::new(&t.path).parent().map(Path::to_path_buf).unwrap_or_default();
+        let plan = organize::plan_to_folder(&tracks, &dir, Some(&[name.clone()]));
+        let r = organize::apply(&db, &plan, false, &format!("Umbenannt: {name}"), &[], &|_, _, _| {})?;
+        sync_playlists(&db.lock().unwrap());
+        Ok(r)
+    })
+    .await
+}
+
 #[tauri::command]
 fn app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
@@ -587,6 +689,14 @@ pub fn run() {
             export_size,
             export_playlists,
             sync_playlist_folder,
+            dir_list,
+            dir_import_untracked,
+            dir_create,
+            dir_rename,
+            dir_move,
+            dir_trash,
+            move_tracks_to,
+            rename_track,
             app_version,
         ])
         .run(tauri::generate_context!())

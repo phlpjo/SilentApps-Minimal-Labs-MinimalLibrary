@@ -267,3 +267,6 @@ table.grid td.mono { font-family: var(--mono); font-size: 11px; word-break: brea
 .field input[type="checkbox"] { width: 15px; flex: none; }
 .field label.check { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 13px; color: var(--dim); }
 .field label.check:hover { color: var(--ink); }
+.head.nowrap { flex-wrap: nowrap; }
+.head.nowrap .crumbs { flex: 1 1 auto; }
+.head.nowrap .sub { white-space: nowrap; flex: none; }

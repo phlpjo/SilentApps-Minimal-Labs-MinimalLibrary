@@ -1,12 +1,12 @@
 //! Bibliothek fürs Handy (Minimal Player Connected): solange Minimal Library läuft, sieht die App
 //! alle Ordner und Playlisten, spielt Titel direkt ab (Streaming im Heimnetz), bearbeitet Playlisten
-//! und lässt Dateien sortieren. Zugriff nur nach einmaligem Koppeln mit dem Code aus den Einstellungen.
+//! Zugriff nur nach einmaligem Koppeln mit dem Code aus den Einstellungen.
 //!
 //! - Finden: UDP-Broadcast „MLPCDISCOVER1“ an Port 47831 → Antwort mit Name, Kennung und Port
-//! - HTTP (Port 47830, sonst frei gewählt): /pair, /state, /lib, /a/<id>, /c/<id>, /pl…, /organize
+//! - HTTP (Port 47830, sonst frei gewählt): /pair, /state, /lib, /a/<id>, /c/<id>, /pl…
 
-use crate::db::{self, Track};
-use crate::{organize, playlists, tags};
+use crate::db;
+use crate::{playlists, tags};
 use anyhow::{Result, anyhow};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -295,15 +295,6 @@ fn handle(host: &Host, mut req: tiny_http::Request) -> std::io::Result<()> {
                 (host.changed)(Changed::Playlists);
                 Some((200, "{}".into()))
             }
-            (tiny_http::Method::Post, "/organize") => {
-                let v: serde_json::Value = serde_json::from_str(&body)?;
-                let ids: Vec<i64> = v["ids"]
-                    .as_array()
-                    .map(|a| a.iter().filter_map(|x| x.as_i64()).collect())
-                    .unwrap_or_default();
-                let r = organize_ids(host, &s, &ids)?;
-                Some((200, r.to_string()))
-            }
             _ => Some((404, String::new())),
         })
     })();
@@ -462,38 +453,6 @@ fn library(c: &Connection, roots: &[String]) -> Result<String> {
         "playlists": pls
     })
     .to_string())
-}
-
-fn organize_ids(host: &Host, s: &HostSettings, ids: &[i64]) -> Result<serde_json::Value> {
-    let tracks: Vec<Track> = db::tracks_by_ids(&host.db.lock().unwrap(), ids)?;
-    let roots = roots_of(&s.roots);
-    let mut plan = Vec::new();
-    match s.organize_target.as_deref().filter(|t| !t.is_empty()) {
-        Some(target) => plan.extend(organize::plan(&tracks, Path::new(target), &s.pattern)),
-        None => {
-            // je Musikordner in sich selbst sortieren
-            for r in &roots {
-                let mine: Vec<Track> = tracks
-                    .iter()
-                    .filter(|t| crate::dirs::under_any(&t.path, std::slice::from_ref(r)))
-                    .cloned()
-                    .collect();
-                if !mine.is_empty() {
-                    plan.extend(organize::plan(&mine, r, &s.pattern));
-                }
-            }
-        }
-    }
-    let rep = organize::apply(
-        &host.db,
-        &plan,
-        false,
-        "Vom Handy sortiert",
-        &roots,
-        &|_, _, _| {},
-    )?;
-    (host.changed)(Changed::Files(rep.moved));
-    Ok(serde_json::json!({ "moved": rep.moved, "errors": rep.errors }))
 }
 
 fn serve_file(req: tiny_http::Request, path: &Path) -> std::io::Result<()> {

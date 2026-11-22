@@ -148,7 +148,7 @@ function phoneCard() {
   return h("div", { class: "card" }, h("h3", {}, "Minimal Player Connected (Handy im WLAN)"),
     h("div", { class: "setting" }, h("label", { class: "check" }, box, "Bibliothek fürs Handy freigeben, solange Minimal Library läuft"), h("span", {})),
     body,
-    h("div", { class: "note" }, "In Minimal Player Connected unter „Bibliothek“ diesen Computer wählen und einmal den Code eingeben. Danach siehst du am Handy alle Ordner und Playlisten, spielst direkt ab, bearbeitest Playlisten, sortierst Dateien und machst Ordner oder Playlisten offline verfügbar. Nur im eigenen WLAN; Windows fragt beim ersten Mal evtl. nach der Firewall-Freigabe – bitte „Private Netzwerke“ erlauben."),
+    h("div", { class: "note" }, "In Minimal Player Connected unter „Bibliothek“ diesen Computer wählen und einmal den Code eingeben. Danach siehst du am Handy alle Ordner und Playlisten, spielst direkt ab, bearbeitest Playlisten und machst Ordner oder Playlisten offline verfügbar. Nur im eigenen WLAN; Windows fragt beim ersten Mal evtl. nach der Firewall-Freigabe – bitte „Private Netzwerke“ erlauben."),
   );
 }
 

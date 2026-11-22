@@ -3,12 +3,12 @@ import { api, type Track } from "../api";
 import { player } from "../player";
 import { store } from "../store";
 import { TrackList } from "../tracklist";
-import { fmtDuration, h, holdButton, reportErrors, sheet, toast, type MenuItem } from "../ui";
+import { fmtDuration, searchNorm, h, holdButton, reportErrors, sheet, toast, type MenuItem } from "../ui";
 import { analyzeIds, newPlaylistFromIds, nav } from "../main";
 import { moveTracksPick, renameFileDialog } from "../fileops";
 import { SHOW_IN, TRASH } from "../platform";
 
-type Filter = "all" | "unanalyzed" | "notags" | "nocover" | "errors";
+type Filter = "all" | "artist" | "title" | "album" | "genre" | "unanalyzed" | "notags" | "nocover" | "errors";
 
 /** Gemeinsames Kontextmenü für Titel */
 export function trackMenu(ids: number[], extra: MenuItem[] = []): MenuItem[] {
@@ -79,14 +79,21 @@ export function trackMenu(ids: number[], extra: MenuItem[] = []): MenuItem[] {
 }
 
 /** Suchwörter gegen Tags, Tonart, BPM und Pfad (bzw. nur Dateiname) prüfen */
-export function textMatches(t: Track, words: string[], fileNameOnly = false): boolean {
+export function textMatches(t: Track, words: string[], fileNameOnly = false, field?: "artist" | "title" | "album" | "genre"): boolean {
   if (!words.length) return true;
   const where = fileNameOnly ? t.path.split(/[\\/]/).pop() : t.path;
-  const hay = [t.title, t.artist, t.album, t.albumArtist, t.genre, t.year, t.comment, where, t.key, t.bpm ? String(Math.round(t.bpm)) : ""]
-    .join(" ")
-    .toLowerCase();
+  const parts =
+    field === "artist" ? [t.artist, t.albumArtist]
+    : field === "title" ? [t.title ?? store.label(t)]
+    : field === "album" ? [t.album]
+    : field === "genre" ? [t.genre]
+    : [t.title, t.artist, t.album, t.albumArtist, t.genre, t.year, t.comment, where, t.key, t.bpm ? String(Math.round(t.bpm)) : ""];
+  const hay = searchNorm(parts.join(" "));
   return words.every((w) => hay.includes(w));
 }
+
+/** Suchtext in Wörter zerlegen ("A&B" = "A & B") */
+export const searchWords = (q: string) => searchNorm(q).split(/\s+/).filter(Boolean);
 
 export function libraryView(): { el: HTMLElement; destroy: () => void } {
   let filter: Filter = (sessionStorage.getItem("ml.filter") as Filter) ?? "all";
@@ -96,7 +103,7 @@ export function libraryView(): { el: HTMLElement; destroy: () => void } {
   const info = h("span", { class: "sub" });
   const search = h("input", { type: "search", placeholder: "Suchen …  (Strg+F)", value: query, style: { width: "260px" } });
   const sel = h("select", {},
-    ...([["all", "Alle Titel"], ["unanalyzed", "Nicht analysiert"], ["notags", "Fehlende Tags"], ["nocover", "Ohne Cover"], ["errors", "Analysefehler"]] as const).map(
+    ...([["all", "Alle Titel"], ["artist", "Interpret"], ["title", "Titel"], ["album", "Album"], ["genre", "Genre"], ["unanalyzed", "Nicht analysiert"], ["notags", "Fehlende Tags"], ["nocover", "Ohne Cover"], ["errors", "Analysefehler"]] as const).map(
       ([v, l]) => h("option", { value: v, selected: v === filter }, l),
     ),
   );
@@ -106,10 +113,11 @@ export function libraryView(): { el: HTMLElement; destroy: () => void } {
     if (filter === "notags" && t.title && t.artist && t.album && t.genre) return false;
     if (filter === "nocover" && t.hasCover) return false;
     if (filter === "errors" && !t.analysisError) return false;
-    return textMatches(t, words);
+    const field = filter === "artist" || filter === "title" || filter === "album" || filter === "genre" ? filter : undefined;
+    return textMatches(t, words, false, field);
   };
   const refresh = () => {
-    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const words = searchWords(query);
     const ids: number[] = [];
     let dur = 0;
     for (const t of store.tracks.values()) {

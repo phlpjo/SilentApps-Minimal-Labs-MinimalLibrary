@@ -6,8 +6,8 @@ import { TrackList } from "../tracklist";
 import { basename, clear, contextMenu, dirname, fmtDuration, h, holdButton, reportErrors, sheet, toast, type MenuItem } from "../ui";
 import { moveTracksTo } from "../fileops";
 import { beginDrag, dragging, dropTarget } from "../dnd";
-import { analyzeIds } from "../main";
-import { textMatches, trackMenu } from "./library";
+import { analyzeIds, recordNav, setViewPath } from "../main";
+import { searchWords, textMatches, trackMenu } from "./library";
 import { SHOW_IN, TRASH, FILE_MANAGER } from "../platform";
 
 const norm = (p: string) => p.replace(/[\\/]+$/, "").replace(/\//g, "\\").toLowerCase();
@@ -20,7 +20,9 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
   const saveExpanded = () => localStorage.setItem("ml.expanded", JSON.stringify([...expanded.values()]));
   const expand = (p: string) => expanded.set(norm(p), p);
   const children = new Map<string, DirEntry[]>();
-  let current = startPath ? dirname(startPath) : localStorage.getItem("ml.folder") ?? roots()[0] ?? "";
+  // startPath: Datei (→ ihr Ordner, Titel markieren) oder Ordner (z. B. beim Zurückgehen)
+  const startTrack = startPath ? [...store.tracks.values()].find((t) => norm(t.path) === norm(startPath)) : undefined;
+  let current = startTrack ? dirname(startTrack.path) : startPath ?? localStorage.getItem("ml.folder") ?? roots()[0] ?? "";
   if (current && !roots().some((r) => norm(current).startsWith(norm(r)))) current = roots()[0] ?? "";
   let recursive = localStorage.getItem("ml.recursive") === "1";
 
@@ -154,7 +156,10 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
   }
 
   // ---------- Ordner öffnen ----------
+  let ready = false;
   const openFolder = async (path: string) => {
+    if (ready && norm(path) !== norm(current)) recordNav(); // jeder Ordnerwechsel ist ein Schritt für „Zurück“
+    setViewPath(path);
     if (norm(path) !== norm(current)) search.value = query = "";
     current = path;
     localStorage.setItem("ml.folder", path);
@@ -239,7 +244,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     const ids: number[] = [];
     let dur = 0;
     let total = 0;
-    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const words = searchWords(query);
     for (const t of store.tracks.values()) {
       const p = norm(t.path);
       const inside = recursive ? p.startsWith(c + "\\") : norm(dirname(t.path)) === c;
@@ -376,6 +381,8 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     await Promise.all([...roots(), ...expanded.values()].map((p) => load(p)));
     if (current) await openFolder(current);
     else renderTree();
+    ready = true;
+    if (startTrack) requestAnimationFrame(() => list.reveal(startTrack.id));
   })();
 
   return { el, destroy: () => { localStorage.setItem("ml.folderSort", list.sort); unsubs.forEach((u) => u()); list.destroy(); document.removeEventListener("keydown", onKey); } };

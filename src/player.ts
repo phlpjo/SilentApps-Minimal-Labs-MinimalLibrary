@@ -53,13 +53,17 @@ class Player {
       if (a !== this.audio || !this.current || !a.getAttribute("src")) return;
       // WebView lässt Web Audio (crossOrigin) nicht zu → ohne Equalizer weiter abspielen
       if (a.crossOrigin && !corsOk && eq.enabled) {
+        // Nur wenn es ohne crossOrigin klappt, liegt es an Web Audio – sonst ist die Datei das Problem
         eq.enabled = false;
-        try { localStorage.setItem("ml.audioGraph", "0"); } catch {}
         const src = a.getAttribute("src")!;
         a.removeAttribute("crossorigin");
+        a.addEventListener("loadedmetadata", () => {
+          try { localStorage.setItem("ml.audioGraph", "0"); } catch {}
+          toast("Equalizer ist auf diesem System nicht verfügbar – Wiedergabe läuft ohne.");
+        }, { once: true });
+        a.addEventListener("error", () => (eq.enabled = true), { once: true });
         a.src = src;
         a.play().catch(() => {});
-        toast("Equalizer ist auf diesem System nicht verfügbar – Wiedergabe läuft ohne.");
         return;
       }
       const ext = this.current.path.split(".").pop()?.toUpperCase();

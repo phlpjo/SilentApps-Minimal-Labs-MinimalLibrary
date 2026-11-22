@@ -361,3 +361,4 @@ body.is-dragging .pl-new-drop { display: block; }
 
 /* macOS: native Ampel-Knöpfe links, eigene Fensterknöpfe ausgeblendet */
 html.mac #titlebar { padding-left: 78px; }
+.adv-rules { padding: 0 20px 12px; border-bottom: 1px solid var(--line-soft); max-height: 40vh; overflow: auto; flex: none; }

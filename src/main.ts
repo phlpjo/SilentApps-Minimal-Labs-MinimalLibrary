@@ -8,7 +8,7 @@ import { api, type LibraryChange } from "./api";
 import { Inspector } from "./inspector";
 import { player } from "./player";
 import { store } from "./store";
-import { artistLinks, clear, contextMenu, fmtTime, h, onArtistClick, sheet, toast } from "./ui";
+import { albumLink, artistLinks, onAlbumClick, clear, contextMenu, fmtTime, h, onArtistClick, sheet, toast } from "./ui";
 import { drawWave, waveElement } from "./waveform";
 import { beginDrag, dragging, dropTarget } from "./dnd";
 import { duplicatesView } from "./views/duplicates";
@@ -18,6 +18,8 @@ import { historyView, undo } from "./views/history";
 import { ripperView } from "./views/ripper";
 import { syncView, startSyncWatch, syncReadyCount } from "./views/sync";
 import { equalizerView } from "./views/equalizer";
+import { searchView } from "./views/search";
+import { startUpdater, updater } from "./updater";
 import { currentOutputLabel, outputPopup, restoreOutput } from "./outputs";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { organizeView } from "./views/organize";
@@ -25,7 +27,7 @@ import { exportDialog, playlistView, smartEditor } from "./views/playlist";
 import { settingsView } from "./views/settings";
 import logo from "./logo.svg";
 
-type ViewName = "library" | "folders" | "history" | "ripper" | "sync" | "equalizer" | "playlist" | "duplicates" | "organize" | "settings";
+type ViewName = "library" | "search" | "folders" | "history" | "ripper" | "sync" | "equalizer" | "playlist" | "duplicates" | "organize" | "settings";
 
 const app = document.getElementById("app")!;
 const win = getCurrentWindow();
@@ -77,7 +79,29 @@ app.append(titlebar, side, main, insp, playerBar);
 new Inspector(insp);
 
 let current: { name: ViewName; arg?: number[]; path?: string; destroy: () => void } | null = null;
-const backStack: { name: ViewName; arg?: number[]; scroll: number[] }[] = [];
+type HistEntry = { name: ViewName; arg?: number[]; path?: string; scroll: number[]; session: Record<string, string | null> };
+const backStack: HistEntry[] = [];
+/** Ansichts-Zustand, der beim Zurückgehen wiederhergestellt wird (Suche, Filter, Sortierung, erweiterte Suche) */
+const SESSION_KEYS = ["ml.query", "ml.filter", "ml.sort", "ml.adv"];
+
+/** Aktuellen Stand auf den Zurück-Stapel legen – vor jeder Bewegung (Ansicht, Ordner, Suche per Klick) */
+export function recordNav() {
+  if (!current) return;
+  backStack.push({
+    name: current.name,
+    arg: current.arg,
+    path: current.path,
+    scroll: captureScroll(),
+    session: Object.fromEntries(SESSION_KEYS.map((k) => [k, sessionStorage.getItem(k)])),
+  });
+  if (backStack.length > 80) backStack.shift();
+  updateBack();
+}
+
+/** Ansicht meldet ihren Ort (z. B. aktueller Ordner), damit „Zurück“ genau dorthin führt */
+export function setViewPath(path: string) {
+  if (current) current.path = path;
+}
 
 /** Scrollpositionen der Ansicht merken (Liste, Baum, Inhalt) */
 function captureScroll(): number[] {
@@ -104,17 +128,15 @@ function restoreScroll(pos: number[]) {
 export function goBack() {
   const prev = backStack.pop();
   if (prev) {
-    nav(prev.name, prev.arg, undefined, true);
+    for (const [k, v] of Object.entries(prev.session)) v === null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v);
+    nav(prev.name, prev.arg, prev.path, true);
     restoreScroll(prev.scroll);
   }
   updateBack();
 }
 
 export function nav(name: ViewName, arg?: number[], path?: string, fromBack = false) {
-  if (current && !fromBack && !(current.name === name && JSON.stringify(current.arg ?? null) === JSON.stringify(arg ?? null) && !path)) {
-    backStack.push({ name: current.name, arg: current.arg, scroll: captureScroll() });
-    if (backStack.length > 50) backStack.shift();
-  }
+  if (current && !fromBack && !(current.name === name && JSON.stringify(current.arg ?? null) === JSON.stringify(arg ?? null) && !path)) recordNav();
   current?.destroy();
   clear(main);
   let v: { el: HTMLElement; destroy: () => void };
@@ -122,6 +144,7 @@ export function nav(name: ViewName, arg?: number[], path?: string, fromBack = fa
   switch (name) {
     case "library": v = libraryView(); break;
     case "folders": v = foldersView(path); break;
+    case "search": v = searchView(); break;
     case "history": v = historyView(); break;
     case "ripper": v = ripperView(); break;
     case "sync": v = syncView(); break;
@@ -134,18 +157,28 @@ export function nav(name: ViewName, arg?: number[], path?: string, fromBack = fa
   main.appendChild(v.el);
   current = { name, arg, path, destroy: v.destroy };
   updateBack();
-  app.classList.toggle("no-insp", !(name === "library" || name === "playlist" || name === "folders"));
+  app.classList.toggle("no-insp", !(name === "library" || name === "search" || name === "playlist" || name === "folders"));
   store.emit("selection");
   renderSide();
 }
 
-/** Klick auf einen Interpreten: Bibliothek nach diesem Namen durchsuchen */
-export function searchArtist(name: string) {
-  sessionStorage.setItem("ml.query", name);
-  sessionStorage.setItem("ml.filter", "all");
-  nav("library");
+/** Klick auf Interpret/Album: Bibliothek in diesem Feld durchsuchen (Zurück führt an die alte Stelle) */
+function searchField(field: "artist" | "album", text: string) {
+  recordNav();
+  sessionStorage.setItem("ml.query", text);
+  sessionStorage.setItem("ml.filter", field);
+  nav("library", undefined, undefined, true);
 }
+export const searchArtist = (name: string) => searchField("artist", name);
 onArtistClick(searchArtist);
+onAlbumClick((name) => searchField("album", name));
+
+/** Laufenden Titel an seinem Speicherort zeigen (Ordneransicht, markiert und hingescrollt) */
+function showPlaying() {
+  const t = player.current;
+  if (!t || dragging) return;
+  nav("folders", undefined, t.path);
+}
 
 // ---------- Seitenleiste ----------
 const plList = h("div", { class: "pl-list" });
@@ -210,6 +243,7 @@ function renderSide() {
   const mainnav = side.querySelector("#mainnav")!;
   mainnav.replaceChildren(
     navItem("Bibliothek", n === "library", () => nav("library"), store.tracks.size.toLocaleString("de")),
+    navItem("Erweiterte Suche", n === "search", () => nav("search")),
     springLoaded(navItem("Ordner", n === "folders", () => nav("folders")), "folders"),
     navItem("Sync", n === "sync", () => nav("sync"), syncBadge()),
     navItem("Equalizer", n === "equalizer", () => nav("equalizer")),
@@ -217,7 +251,7 @@ function renderSide() {
     navItem("Sortieren", n === "organize", () => nav("organize", n === "library" ? [...store.selection] : undefined)),
     navItem("Duplikate", n === "duplicates", () => nav("duplicates")),
     navItem("Verlauf", n === "history", () => nav("history")),
-    navItem("Einstellungen", n === "settings", () => nav("settings")),
+    navItem("Einstellungen", n === "settings", () => nav("settings"), updater.state === "available" ? "● Update" : undefined),
   );
   plList.replaceChildren(
     ...store.playlists.map((p) => {
@@ -421,14 +455,11 @@ function buildPlayer() {
       if (t) contextMenu(e.clientX, e.clientY - 40, trackMenu([t.id]));
     });
   }
-  t1.addEventListener("click", () => {
-    // Klick auf den Titel: in der Bibliothek zeigen
-    const t = player.current;
-    if (!t || dragging) return;
-    store.selection.clear();
-    store.selection.add(t.id);
-    store.emit("selection");
-  });
+  // Klick auf Cover oder Titel: zum Speicherort des laufenden Titels
+  for (const el of [cover, t1]) {
+    el.addEventListener("click", showPlaying);
+    el.title = "Klicken: Speicherort zeigen";
+  }
   playerBar.append(
     cover,
     nowInfo,
@@ -446,7 +477,7 @@ function buildPlayer() {
     const t = player.current;
     playBtn.textContent = player.playing ? "Pause" : "Abspielen";
     t1.textContent = t ? store.label(t) : "–";
-    if (t) t2.replaceChildren(artistLinks(t.artist, "Unbekannter Künstler"), t.album ? ` · ${t.album}` : "");
+    if (t) t2.replaceChildren(artistLinks(t.artist, "Unbekannter Künstler"), t.album ? " · " : "", albumLink(t.album));
     else t2.textContent = "Doppelklick oder Klick in eine Wellenform";
     tDur.textContent = fmtTime(player.duration);
     if (t && coverFor !== t.id) {
@@ -498,6 +529,7 @@ document.addEventListener("contextmenu", (e) => {
 
 store.on("playlists", renderSide);
 store.on("sync", renderSide);
+store.on("update", renderSide);
 store.on("tracks", renderSide);
 
 async function start() {
@@ -515,6 +547,7 @@ async function start() {
   // Alter Playlist-Ordner (nur .m3u8) ist durch Sync ersetzt
   if (store.settings.playlistDir) store.saveSettings({ playlistDir: null });
   startSyncWatch();
+  startUpdater();
   restoreOutput();
 }
 start();

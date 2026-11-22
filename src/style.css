@@ -270,3 +270,10 @@ table.grid td.mono { font-family: var(--mono); font-size: 11px; word-break: brea
 .head.nowrap { flex-wrap: nowrap; }
 .head.nowrap .crumbs { flex: 1 1 auto; }
 .head.nowrap .sub { white-space: nowrap; flex: none; }
+
+/* Ziehen */
+.drag-ghost { position: fixed; left: 0; top: 0; z-index: 100; pointer-events: none; background: var(--ink); color: var(--bg); padding: 6px 12px; border-radius: 10px; font-size: 12px; white-space: nowrap; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); }
+.drag-ghost.none { opacity: 0.55; }
+body.is-dragging, body.is-dragging * { cursor: grabbing !important; }
+.nav-item.drop { outline: 1px solid var(--ink); background: var(--sel); color: var(--ink); }
+.list-body.drop { outline: none; }

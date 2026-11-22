@@ -5,12 +5,11 @@ import { store } from "../store";
 import { TrackList } from "../tracklist";
 import { basename, clear, contextMenu, dirname, fmtDuration, h, holdButton, reportErrors, sheet, toast, type MenuItem } from "../ui";
 import { moveTracksTo } from "../fileops";
+import { beginDrag, dragging, dropTarget } from "../dnd";
 import { analyzeIds } from "../main";
 import { textMatches, trackMenu } from "./library";
 
 const norm = (p: string) => p.replace(/[\\/]+$/, "").replace(/\//g, "\\").toLowerCase();
-const DIR_MIME = "application/x-ml-dir";
-const IDS_MIME = "application/x-ml-ids";
 
 /** Ordner wie im Windows-Explorer – mit Wellenformen, Tags, Analyse. */
 export function foldersView(startPath?: string): { el: HTMLElement; destroy: () => void } {
@@ -81,14 +80,13 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
       class: "tnode" + (norm(current) === key ? " active" : ""),
       style: { paddingLeft: 8 + depth * 14 + "px" },
       title: path,
-      draggable: isRoot ? "false" : "true",
     }, caret, h("span", { class: "tname" }, name), count ? h("span", { class: "count" }, String(count)) : "");
     caret.addEventListener("click", (e) => { e.stopPropagation(); toggle(path); });
-    row.addEventListener("click", () => openFolder(path));
+    row.addEventListener("click", () => !dragging && openFolder(path));
     row.addEventListener("dblclick", () => toggle(path));
     row.addEventListener("contextmenu", (e) => { e.preventDefault(); contextMenu(e.clientX, e.clientY, folderMenu(path, isRoot)); });
-    if (!isRoot) row.addEventListener("dragstart", (e) => { e.dataTransfer!.setData(DIR_MIME, path); e.dataTransfer!.effectAllowed = "move"; });
-    dropTarget(row, path, () => { if (hasChildren && !open) toggle(path); });
+    if (!isRoot) row.addEventListener("pointerdown", (e) => beginDrag(e, () => ({ kind: "dir", path })));
+    folderDrop(row, path, () => { if (hasChildren && !expanded.has(key)) toggle(path); });
     const out: HTMLElement[] = [row];
     if (open) for (const c of children.get(key) ?? []) out.push(...node(c.name, c.path, depth + 1, c.hasChildren, c.tracks, false));
     return out;
@@ -120,43 +118,36 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
 
   // Ziehen auf einen Ordner: Titel verschieben (Strg = kopieren) oder Ordner verschieben
   let hoverTimer = 0;
-  function dropTarget(el: HTMLElement, path: string, onHover?: () => void) {
-    el.addEventListener("dragover", (e) => {
-      const types = e.dataTransfer?.types ?? [];
-      if (!types.includes(IDS_MIME) && !types.includes(DIR_MIME)) return;
-      e.preventDefault();
-      e.dataTransfer!.dropEffect = e.ctrlKey && types.includes(IDS_MIME) ? "copy" : "move";
-      if (!el.classList.contains("drop")) {
-        el.classList.add("drop");
+  function folderDrop(el: HTMLElement, path: string, onHover?: () => void) {
+    dropTarget(el, {
+      accepts: (p) => p.kind === "ids" || (p.kind === "dir" && norm(p.path) !== norm(path) && !norm(path).startsWith(norm(p.path) + "\\")),
+      enter: () => {
         clearTimeout(hoverTimer);
         if (onHover) hoverTimer = window.setTimeout(onHover, 800); // aufklappen beim Drüberhalten
-      }
-    });
-    el.addEventListener("dragleave", () => { el.classList.remove("drop"); clearTimeout(hoverTimer); });
-    el.addEventListener("drop", async (e) => {
-      e.preventDefault();
-      el.classList.remove("drop");
-      clearTimeout(hoverTimer);
-      const dir = e.dataTransfer!.getData(DIR_MIME);
-      if (dir) {
-        if (norm(dir) === norm(path)) return;
-        try {
-          const np = await api.dirMove(dir, path);
-          if (norm(current).startsWith(norm(dir))) current = np + current.slice(dir.length);
-          toast(`„${basename(dir)}“ → ${basename(path)}`);
-          await store.loadTracks();
-          store.loadPlaylists();
-          expand(path);
-          saveExpanded();
-          await reloadAll();
-          showTracks();
-        } catch (err) {
-          toast(String(err));
+      },
+      leave: () => clearTimeout(hoverTimer),
+      drop: async (p, { copy }) => {
+        clearTimeout(hoverTimer);
+        if (p.kind === "dir") {
+          const dir = p.path;
+          try {
+            const np = await api.dirMove(dir, path);
+            if (norm(current).startsWith(norm(dir))) current = np + current.slice(dir.length);
+            toast(`„${basename(dir)}“ → ${basename(path)}`);
+            await store.loadTracks();
+            store.loadPlaylists();
+            expand(path);
+            saveExpanded();
+            await reloadAll();
+            renderCrumbs();
+            showTracks();
+          } catch (err) {
+            toast(String(err));
+          }
+          return;
         }
-        return;
-      }
-      const ids: number[] = JSON.parse(e.dataTransfer!.getData(IDS_MIME) || "[]");
-      await moveTracksTo(ids, path, e.ctrlKey);
+        await moveTracksTo(p.ids, path, copy);
+      },
     });
   }
 
@@ -212,7 +203,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
       if (i) crumbs.append(h("span", { class: "csep" }, "/"));
       const c = h("span", { class: "crumb" + (i === segs.length - 1 ? " last" : "") }, name);
       c.addEventListener("click", () => openFolder(path));
-      dropTarget(c, path);
+      folderDrop(c, path);
       crumbs.append(c);
     });
   };
@@ -225,15 +216,15 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     if (!isRoot && current) {
       const up = h("div", { class: "tile up", title: "Übergeordneter Ordner" }, "‹ Zurück");
       up.addEventListener("click", () => openFolder(dirname(current)));
-      dropTarget(up, dirname(current));
+      folderDrop(up, dirname(current));
       tiles.append(up);
     }
     for (const d of subs) {
-      const t = h("div", { class: "tile", title: d.path, draggable: "true" }, h("span", { class: "tname" }, d.name), d.tracks ? h("span", { class: "count" }, String(d.tracks)) : "");
-      t.addEventListener("click", () => openFolder(d.path));
+      const t = h("div", { class: "tile", title: d.path }, h("span", { class: "tname" }, d.name), d.tracks ? h("span", { class: "count" }, String(d.tracks)) : "");
+      t.addEventListener("click", () => !dragging && openFolder(d.path));
       t.addEventListener("contextmenu", (e) => { e.preventDefault(); contextMenu(e.clientX, e.clientY, folderMenu(d.path, false)); });
-      t.addEventListener("dragstart", (e) => { e.dataTransfer!.setData(DIR_MIME, d.path); e.dataTransfer!.effectAllowed = "move"; });
-      dropTarget(t, d.path);
+      t.addEventListener("pointerdown", (e) => beginDrag(e, () => ({ kind: "dir", path: d.path })));
+      folderDrop(t, d.path);
       tiles.append(t);
     }
     const nf = h("div", { class: "tile new" }, "+ Neuer Ordner");

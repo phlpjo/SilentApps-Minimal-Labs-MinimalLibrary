@@ -597,7 +597,7 @@ export const EN: Record<string, string> = {
   "Wie bei smarten Playlisten – aber nur zum Anzeigen. Es wird keine Playlist angelegt.": "Like smart playlists – but only for viewing. No playlist is created.",
   "Aus: Duplikate nur innerhalb dieses Ordners suchen": "Off: look for duplicates only within this folder",
   "Duplikate mit anderen Musikordnern finden": "Find duplicates with other music folders",
-  "Für Cloud-Laufwerke wie pCloud oder OneDrive: Titel und Tags werden gelesen, aber Wellenform, Tempo, Tonart und Fingerabdruck erst beim Abspielen oder Export – so lädt das Laufwerk nicht alles herunter. Wird automatisch erkannt.": "For cloud drives like pCloud or OneDrive: tracks and tags are read, but waveform, tempo, key and fingerprint only when playing or exporting – so the drive doesn't download everything. Detected automatically.",
+  "Spart Speicher bei Cloud-Laufwerken wie pCloud oder OneDrive: Titel und Tags werden gelesen, Wellenform, Tempo, Tonart, Qualität und Fingerabdruck aber erst beim Abspielen oder Export. Ohne Haken wird auch ein Cloud-Ordner komplett analysiert – Datei für Datei nacheinander.": "Saves space on cloud drives like pCloud or OneDrive: tracks and tags are read, but waveform, tempo, key, quality and fingerprint only when playing or exporting. Without the check mark a cloud folder is analyzed completely too \u2013 one file at a time.",
   "Nur bei Bedarf laden (Cloud)": "Load on demand only (cloud)",
   "Noch kein Musikordner. Füge den Ordner hinzu, in dem deine Musik liegt.": "No music folder yet. Add the folder where your music is.",
   "z. B. AbCdEf1234": "e.g. AbCdEf1234",

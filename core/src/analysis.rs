@@ -16,6 +16,9 @@ use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 
+/// Sperre für Dateien auf Cloud-Laufwerken (nacheinander statt parallel)
+static CLOUD_ONE: Mutex<()> = Mutex::new(());
+
 /// Anzahl Wellenform-Punkte pro Titel (je Punkt: Spitze + RMS als u8)
 pub const PEAK_BINS: usize = 1000;
 const FP_SECONDS: usize = 120;
@@ -250,24 +253,26 @@ impl Spectrum {
         let at = |f: f64| (f / band) as usize;
         let refl =
             db[at(1000.0)..at(5000.0)].iter().sum::<f64>() / (at(5000.0) - at(1000.0)) as f64;
-        // von oben: erstes Band, das noch deutlich über dem Grundrauschen liegt
-        let floor = refl - 75.0;
+        // relativ zum Mittenpegel
+        let rel: Vec<f64> = db.iter().map(|d| d - refl).collect();
+        let mean = |a: usize, b: usize| rel[a..=b].iter().sum::<f64>() / (b - a + 1) as f64;
         let top = (nb - 1).min(at(21900.0));
-        let mut c = top;
-        while c > at(5000.0) && db[c] < floor {
-            c -= 1;
-        }
-        if c >= top.saturating_sub(2) {
-            return Some(nyq as u32); // voller Frequenzgang
-        }
-        // Steilheit: 0,3–0,8 kHz oberhalb deutlich leiser als knapp unterhalb der Kante
-        let below = db[c.saturating_sub(5)..=c].iter().sum::<f64>() / 6.0;
-        let (a, b) = ((c + 3).min(nb - 1), (c + 8).min(nb - 1));
-        let above = db[a..=b].iter().sum::<f64>() / (b - a + 1) as f64;
-        if below - above >= 25.0 {
-            Some(((c + 1) as f64 * band) as u32)
-        } else {
-            Some(nyq as u32)
+        // Kante = steiler Abfall: 0,7 kHz unterhalb klar hörbarer Inhalt, 0,2–0,8 kHz oberhalb mindestens 18 dB leiser.
+        // Die tiefste solche Kante zählt – Rauschen/Dither oder ein späterer 320er-Tiefpass darüber ändern nichts.
+        let drop = |c: usize| mean(c - 6, c) - mean(c + 2, (c + 7).min(top));
+        let first = (at(10000.0)..top.saturating_sub(4))
+            .find(|&c| drop(c) >= 18.0 && mean(c - 6, c) > -65.0);
+        match first {
+            Some(c) => {
+                // innerhalb der Kante die steilste Stelle nehmen
+                let end = (c + 10).min(top.saturating_sub(4));
+                let best = (c..=end)
+                    .filter(|&k| mean(k - 6, k) > -65.0)
+                    .max_by(|&x, &y| drop(x).total_cmp(&drop(y)))
+                    .unwrap_or(c);
+                Some(((best + 1) as f64 * band) as u32)
+            }
+            None => Some(nyq as u32), // voller Frequenzgang
         }
     }
 }
@@ -910,6 +915,11 @@ pub fn analyze_pending_with(
         .build()?;
     pool.install(|| {
         jobs.par_iter().for_each(|(id, path)| {
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            // Cloud-Laufwerk: immer nur eine Datei gleichzeitig laden und analysieren
+            let _one = crate::paths::is_cloud(Path::new(path)).then(|| CLOUD_ONE.lock());
             if cancel.load(Ordering::Relaxed) {
                 return;
             }

@@ -32,13 +32,14 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
             od.addEventListener("change", () => {
               const on = new Set(s.onDemand ?? []);
               const off = new Set(s.onDemandOff ?? []);
-              if (od.checked) { on.add(r); off.delete(r); } else { on.delete(r); off.add(r); }
+              if (od.checked) on.add(r); else on.delete(r);
+              off.delete(r);
               store.saveSettings({ onDemand: [...on], onDemandOff: [...off] });
             });
             return h("div", { class: "setting", style: { flexWrap: "wrap", gap: "6px 14px" } },
               h("span", { style: { fontFamily: "var(--mono)", fontSize: "12px", flex: "1", minWidth: "220px", wordBreak: "break-all" } }, r),
               s.roots.length > 1 ? h("label", { class: "check", title: L("Aus: Duplikate nur innerhalb dieses Ordners suchen") }, cross, L("Duplikate mit anderen Musikordnern finden")) : "",
-              h("label", { class: "check", title: L("Für Cloud-Laufwerke wie pCloud oder OneDrive: Titel und Tags werden gelesen, aber Wellenform, Tempo, Tonart und Fingerabdruck erst beim Abspielen oder Export – so lädt das Laufwerk nicht alles herunter. Wird automatisch erkannt.") }, od, L("Nur bei Bedarf laden (Cloud)")),
+              h("label", { class: "check", title: L("Spart Speicher bei Cloud-Laufwerken wie pCloud oder OneDrive: Titel und Tags werden gelesen, Wellenform, Tempo, Tonart, Qualität und Fingerabdruck aber erst beim Abspielen oder Export. Ohne Haken wird auch ein Cloud-Ordner komplett analysiert – Datei für Datei nacheinander.") }, od, L("Nur bei Bedarf laden (Cloud)")),
               h("button", { class: "btn", onclick: async () => { await store.saveSettings({ roots: s.roots.filter((x) => x !== r), noCrossDup: (s.noCrossDup ?? []).filter((x) => x !== r), onDemand: (s.onDemand ?? []).filter((x) => x !== r), onDemandOff: (s.onDemandOff ?? []).filter((x) => x !== r) }); render(); scanNow(); } }, L("Entfernen")),
             );
           })

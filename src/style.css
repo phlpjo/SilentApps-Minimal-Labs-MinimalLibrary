@@ -303,6 +303,7 @@ body.is-resizing, body.is-resizing * { cursor: col-resize !important; user-selec
 #titlebar { grid-area: title; display: flex; align-items: center; background: var(--bg); border-bottom: 1px solid var(--line-soft); user-select: none; }
 #titlebar .tb-title { flex: 1; height: 100%; display: flex; align-items: center; padding-left: 8px; font-size: 12px; color: var(--weak); letter-spacing: 0.5px; }
 #titlebar .tb-ctrls { display: flex; height: 100%; }
+#titlebar .tb-theme { display: flex; align-items: center; height: 100%; padding: 0 14px 0 10px; flex: none; }
 .tb-btn { background: none; border: none; color: var(--dim); width: 46px; height: 100%; cursor: default; font-size: 13px; }
 .tb-btn:hover { background: var(--hover); color: var(--ink); }
 .tb-btn.close:hover { background: #c42b1c; color: #fff; }

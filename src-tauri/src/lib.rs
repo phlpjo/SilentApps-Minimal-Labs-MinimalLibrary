@@ -240,7 +240,7 @@ struct Settings {
     phone_dir: Option<String>,
     /// Musikordner, die nur bei Bedarf gelesen werden (Cloud-Laufwerk) – zusätzlich zur Erkennung
     on_demand: Vec<String>,
-    /// Musikordner, bei denen die Cloud-Erkennung ausgeschaltet wurde
+    /// (früher: Cloud-Erkennung ausgeschaltet – nicht mehr benutzt)
     on_demand_off: Vec<String>,
 }
 
@@ -249,11 +249,8 @@ impl Settings {
     fn on_demand_roots(&self) -> Vec<String> {
         self.roots
             .iter()
-            .filter(|r| {
-                !self.on_demand_off.contains(r)
-                    && (self.on_demand.contains(r)
-                        || musiccore::paths::is_cloud(Path::new(r.as_str())))
-            })
+            // nur wenn der Haken gesetzt ist – Cloud-Ordner werden sonst ganz normal (nacheinander) analysiert
+            .filter(|r| self.on_demand.contains(r))
             .cloned()
             .collect()
     }

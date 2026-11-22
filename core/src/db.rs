@@ -108,6 +108,12 @@ fn migrate(conn: &Connection) -> Result<()> {
     if !has("tracks", "cutoff") {
         conn.execute_batch("ALTER TABLE tracks ADD COLUMN cutoff INTEGER")?;
     }
+    // Messverfahren verbessert (Kante statt Rauschgrenze) → einmal neu messen
+    const CUTOFF_ALGO: &str = "2";
+    if get_setting(conn, "cutoff_algo")?.as_deref() != Some(CUTOFF_ALGO) {
+        conn.execute("UPDATE tracks SET cutoff = NULL", [])?;
+        set_setting(conn, "cutoff_algo", CUTOFF_ALGO)?;
+    }
     if !has("move_batches", "kind") {
         conn.execute_batch(
             "ALTER TABLE move_batches ADD COLUMN kind TEXT NOT NULL DEFAULT 'move'",

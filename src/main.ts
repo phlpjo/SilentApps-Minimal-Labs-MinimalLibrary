@@ -47,6 +47,8 @@ const titlebar = h("header", { id: "titlebar", "data-tauri-drag-region": "" },
   backBtn,
   tabStrip(),
   h("div", { class: "tb-title", "data-tauri-drag-region": "" }),
+  // Hell/Dunkel ganz rechts in der Titelleiste (Windows: vor den Fenstersymbolen)
+  h("div", { class: "tb-theme" }, darkSwitch()),
   IS_MAC ? null : h("div", { class: "tb-ctrls" },
     h("button", { class: "tb-btn", title: L("Minimieren"), onclick: () => win.minimize() }, "—"),
     maxBtn,
@@ -235,7 +237,7 @@ function renderSide() {
   const n = current?.name;
   if (!side.firstChild) {
     side.append(
-      h("div", { class: "brand" }, h("div", { class: "bl" }, h("img", { src: logo, alt: "" }), h("span", {}, "Minimal Library")), darkSwitch()),
+      h("div", { class: "brand" }, h("div", { class: "bl" }, h("img", { src: logo, alt: "" }), h("span", {}, "Minimal Library"))),
       h("div", { class: "nav", id: "mainnav" }),
       h("div", { class: "section" }, L("Playlisten")),
       h("div", { class: "section", style: { padding: "0 20px 8px", justifyContent: "flex-start", gap: "14px" } },

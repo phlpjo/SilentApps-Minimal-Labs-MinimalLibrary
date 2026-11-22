@@ -17,6 +17,7 @@ pub mod ripper;
 pub mod scanner;
 pub mod tags;
 pub mod watch;
+pub mod webcache;
 
 /// Fortschritt: (erledigt, gesamt, Text)
 pub type Progress<'a> = &'a (dyn Fn(usize, usize, &str) + Sync);

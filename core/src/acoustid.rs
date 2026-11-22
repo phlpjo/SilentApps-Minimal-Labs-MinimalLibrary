@@ -29,35 +29,56 @@ fn artists(v: &Value) -> String {
         .unwrap_or_default()
 }
 
-pub fn lookup(key: &str, fp: &[u32], duration: f64) -> Result<Vec<Candidate>> {
+fn error_text(v: &Value) -> String {
+    let code = v["error"]["code"].as_i64().unwrap_or(0);
+    let msg = v["error"]["message"].as_str().unwrap_or("unbekannter Fehler");
+    match code {
+        4 => "Ungültiger Schlüssel. Bitte den Anwendungs-Schlüssel (API key) von acoustid.org/new-application eintragen – nicht den Benutzer-Schlüssel aus dem Profil.".into(),
+        3 => "Fingerabdruck ungültig – Titel bitte neu analysieren.".into(),
+        14 => "Zu viele Anfragen – bitte kurz warten.".into(),
+        _ => format!("AcoustID: {msg} (Code {code})"),
+    }
+}
+
+pub fn lookup(cache: crate::webcache::Cache, key: &str, fp: &[u32], duration: f64) -> Result<Vec<Candidate>> {
     if key.trim().is_empty() {
         bail!("Kein AcoustID-Schlüssel eingetragen (Einstellungen → Online)");
     }
     if fp.len() < 40 {
         bail!("Kein Fingerabdruck – Titel zuerst analysieren");
     }
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(20)))
-        .user_agent("MinimalLibrary/1.0 ( apps@silentapps-minimal-labs.com )")
-        .build()
-        .into();
     let dur = (duration.round() as i64).max(1).to_string();
     let fpe = encode(fp);
-    let v: Value = agent
-        .post("https://api.acoustid.org/v2/lookup")
-        .send_form([
-            ("client", key.trim()),
-            ("duration", dur.as_str()),
-            ("fingerprint", fpe.as_str()),
-            ("meta", "recordings releasegroups releases tracks compress"),
-            ("format", "json"),
-        ])
-        .map_err(|e| anyhow!("AcoustID nicht erreichbar: {e}"))?
-        .body_mut()
-        .read_json()?;
-    if v["status"] != "ok" {
-        bail!("AcoustID: {}", v["error"]["message"].as_str().unwrap_or("unbekannter Fehler"));
-    }
+    let cache_key = format!("acoustid:{}:{dur}:{}", fpe.len(), &fpe[..fpe.len().min(400)]);
+    let body = match crate::webcache::get(cache, &cache_key) {
+        Some(b) => b,
+        None => {
+            let agent: ureq::Agent = ureq::Agent::config_builder()
+                .timeout_global(Some(Duration::from_secs(20)))
+                .user_agent("MinimalLibrary/1.0 ( apps@silentapps-minimal-labs.com )")
+                .http_status_as_error(false) // Fehlertext steht im JSON
+                .build()
+                .into();
+            let mut resp = agent
+                .post("https://api.acoustid.org/v2/lookup")
+                .send_form([
+                    ("client", key.trim()),
+                    ("duration", dur.as_str()),
+                    ("fingerprint", fpe.as_str()),
+                    ("meta", "recordings releasegroups releases tracks compress"),
+                    ("format", "json"),
+                ])
+                .map_err(|e| anyhow!("AcoustID nicht erreichbar: {e}"))?;
+            let b = resp.body_mut().read_to_vec()?;
+            let v: Value = serde_json::from_slice(&b).map_err(|_| anyhow!("AcoustID: Antwort {}", resp.status()))?;
+            if v["status"] != "ok" {
+                bail!("{}", error_text(&v));
+            }
+            crate::webcache::put(cache, &cache_key, &b);
+            b
+        }
+    };
+    let v: Value = serde_json::from_slice(&body)?;
     let mut out = Vec::new();
     for res in v["results"].as_array().into_iter().flatten() {
         let score = (res["score"].as_f64().unwrap_or(0.0) * 100.0).round() as u32;

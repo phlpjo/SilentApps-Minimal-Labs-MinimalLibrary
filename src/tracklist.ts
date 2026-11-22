@@ -2,7 +2,7 @@ import type { Track } from "./api";
 import { player } from "./player";
 import { store } from "./store";
 import { drawWave, waveElement } from "./waveform";
-import { camelot, fmtTime, h, keyLabel, keyOrder, ext, type MenuItem, contextMenu } from "./ui";
+import { artistLinks, camelot, fmtTime, h, keyLabel, keyOrder, ext, type MenuItem, contextMenu } from "./ui";
 import { renameFileDialog } from "./fileops";
 import { beginDrag, dropTarget } from "./dnd";
 
@@ -22,11 +22,11 @@ const COLUMNS: Col[] = [
   { key: "trackNo", label: "Nr.", width: "44px", num: true, render: (t) => (t.trackNo ? (t.discNo && t.discNo > 1 ? `${t.discNo}-` : "") + t.trackNo : "") },
   {
     key: "title", label: "Titel", width: "minmax(150px, 2fr)",
-    render: (t) => h("div", { style: { minWidth: "0" } }, h("div", { class: "t1" }, store.label(t)), h("div", { class: "t2" }, t.artist ?? "Unbekannter Künstler")),
+    render: (t) => h("div", { style: { minWidth: "0" } }, h("div", { class: "t1" }, store.label(t)), h("div", { class: "t2" }, artistLinks(t.artist, "Unbekannter Künstler"))),
   },
-  { key: "artist", label: "Künstler", width: "minmax(100px, 1fr)", render: (t) => t.artist ?? "" },
+  { key: "artist", label: "Künstler", width: "minmax(100px, 1fr)", render: (t) => artistLinks(t.artist) },
   { key: "album", label: "Album", width: "minmax(100px, 1.2fr)", hideBelow: 700, render: (t) => t.album ?? "" },
-  { key: "albumartist", label: "Albumkünstler", width: "minmax(100px, 1fr)", render: (t) => t.albumArtist ?? "" },
+  { key: "albumartist", label: "Albumkünstler", width: "minmax(100px, 1fr)", render: (t) => artistLinks(t.albumArtist) },
   { key: "genre", label: "Genre", width: "minmax(70px, 0.7fr)", hideBelow: 860, render: (t) => t.genre ?? "" },
   { key: "year", label: "Jahr", width: "52px", num: true, render: (t) => t.year?.slice(0, 4) ?? "" },
   { key: "bpm", label: "BPM", width: "52px", num: true, render: (t) => (t.bpm ? t.bpm.toFixed(t.bpm % 1 ? 1 : 0) : "") },

@@ -250,3 +250,38 @@ export function keyOrder(k: string | null): number {
   if (!c) return 999;
   return parseInt(c, 10) * 2 + (c.endsWith("B") ? 1 : 0);
 }
+
+// ---------- Klickbare Interpreten ----------
+/** Trennt "A, B & C und D u. E feat. F" in einzelne Namen (Trenner bleiben sichtbar). */
+const ARTIST_SEP = /(\s*,\s*|\s*&\s*|\s+und\s+|\s+u\.\s*|\s+(?:feat\.?|ft\.|featuring)\s+)/i;
+
+let artistHandler: ((name: string) => void) | null = null;
+export function onArtistClick(fn: (name: string) => void) {
+  artistHandler = fn;
+}
+
+export function artistLinks(text: string | null, fallback = ""): HTMLElement {
+  const span = h("span", { class: "artists" });
+  if (!text) {
+    span.textContent = fallback;
+    return span;
+  }
+  text.split(ARTIST_SEP).forEach((part, i) => {
+    if (!part) return;
+    if (i % 2 === 1) {
+      span.append(part); // Trenner
+      return;
+    }
+    const name = part.trim();
+    if (!name) return;
+    const a = h("span", { class: "artist-link", title: `Nach „${name}“ suchen` }, part);
+    a.addEventListener("pointerdown", (e) => e.stopPropagation());
+    a.addEventListener("dblclick", (e) => e.stopPropagation());
+    a.addEventListener("click", (e) => {
+      e.stopPropagation();
+      artistHandler?.(name);
+    });
+    span.append(a);
+  });
+  return span;
+}

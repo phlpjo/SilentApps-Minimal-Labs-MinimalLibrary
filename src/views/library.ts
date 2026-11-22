@@ -1,3 +1,4 @@
+import { isStarred, toggleStar } from "../star";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, type Track } from "../api";
 import { player } from "../player";
@@ -13,8 +14,10 @@ type Filter = "all" | "artist" | "title" | "album" | "genre" | "unanalyzed" | "n
 /** Gemeinsames Kontextmenü für Titel */
 export function trackMenu(ids: number[], extra: MenuItem[] = []): MenuItem[] {
   const one = ids.length === 1 ? store.tracks.get(ids[0]) : undefined;
+  const allStarred = ids.every((id) => isStarred(id));
   return [
     { label: "Abspielen", action: () => player.play(ids[0], 0, ids) },
+    { label: allStarred ? "Stern entfernen" : "★ Stern setzen", action: () => toggleStar(ids) },
     {
       label: "Zu Playlist hinzufügen",
       sub: [

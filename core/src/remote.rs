@@ -39,6 +39,8 @@ pub struct HostSettings {
 pub enum Changed {
     Playlists,
     Files(usize),
+    /// Vom Handy hochgeladene Titel (neu in der Bibliothek)
+    Added(i64),
 }
 
 static CODE: Mutex<String> = Mutex::new(String::new());
@@ -162,7 +164,7 @@ pub fn start(host: Host) {
                 continue;
             }
             let id = machine_id(&host.db.lock().unwrap());
-            let reply = serde_json::json!({ "id": id, "name": crate::wlan::computer_name(), "port": port, "app": "Minimal Library" });
+            let reply = serde_json::json!({ "id": id, "name": computer_name(), "port": port, "app": "Minimal Library" });
             let _ = sock.send_to(reply.to_string().as_bytes(), from);
         }
     });
@@ -200,7 +202,8 @@ fn handle(host: &Host, mut req: tiny_http::Request) -> std::io::Result<()> {
     let path = path.to_string();
     let method = req.method().clone();
     let mut body = String::new();
-    if matches!(method, tiny_http::Method::Post | tiny_http::Method::Put) {
+    let upload = method == tiny_http::Method::Put && path.starts_with("/up/");
+    if !upload && matches!(method, tiny_http::Method::Post | tiny_http::Method::Put) {
         let _ = req
             .as_reader()
             .take(16 * 1024 * 1024)
@@ -221,12 +224,18 @@ fn handle(host: &Host, mut req: tiny_http::Request) -> std::io::Result<()> {
                 .find_map(|kv| kv.strip_prefix("t=").map(str::to_string))
         })
         .unwrap_or_default();
-    if token.is_empty()
-        || !paired(&host.db.lock().unwrap())
-            .iter()
-            .any(|p| p.token == token)
-    {
+    let Some(client) = paired(&host.db.lock().unwrap())
+        .into_iter()
+        .find(|p| !token.is_empty() && p.token == token)
+        .map(|p| p.name)
+    else {
         return text(req, 401, "nicht gekoppelt".into(), false);
+    };
+    if upload {
+        return match receive_upload(host, &s, &client, &path, &mut req) {
+            Ok(id) => text(req, 200, serde_json::json!({ "id": id }).to_string(), true),
+            Err(e) => text(req, 400, e.to_string(), false),
+        };
     }
     let id_of = |p: &str| {
         p.rsplit('/')
@@ -244,6 +253,15 @@ fn handle(host: &Host, mut req: tiny_http::Request) -> std::io::Result<()> {
             }
             (tiny_http::Method::Get | tiny_http::Method::Head, p) if p.starts_with("/a/") => None,
             (tiny_http::Method::Get, p) if p.starts_with("/c/") => None,
+            (tiny_http::Method::Post, "/have") => Some((
+                200,
+                have(&host.db.lock().unwrap(), &s.roots, &body)?.to_string(),
+            )),
+            (tiny_http::Method::Post, "/plsync") => {
+                plsync(&host.db, &body)?;
+                (host.changed)(Changed::Playlists);
+                Some((200, "{}".into()))
+            }
             (tiny_http::Method::Post, "/pl") => {
                 let v: serde_json::Value = serde_json::from_str(&body)?;
                 let name = v["name"]
@@ -362,8 +380,7 @@ fn pair(host: &Host, req: tiny_http::Request, body: &str) -> std::io::Result<()>
     text(
         req,
         200,
-        serde_json::json!({ "token": token, "id": id, "name": crate::wlan::computer_name() })
-            .to_string(),
+        serde_json::json!({ "token": token, "id": id, "name": computer_name() }).to_string(),
         true,
     )
 }
@@ -446,13 +463,243 @@ fn library(c: &Connection, roots: &[String]) -> Result<String> {
         .collect();
     let v = state(c, roots)?;
     Ok(serde_json::json!({
-        "name": crate::wlan::computer_name(),
+        "name": computer_name(),
         "version": v["version"],
         "roots": names,
         "tracks": tracks,
         "playlists": pls
     })
     .to_string())
+}
+
+/// Name dieses Computers (zeigt das Handy an)
+pub fn computer_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            std::process::Command::new("hostname")
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| "Computer".into())
+}
+
+fn norm(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+/// Welche Titel vom Handy gibt es am PC schon? Gleich = gleicher Dateiname und Größe
+/// oder gleicher Interpret + Titel (Länge ±3 s). → {"found": {key: id}, "missing": [key]}
+fn have(c: &Connection, roots: &[String], body: &str) -> Result<serde_json::Value> {
+    let items: Vec<serde_json::Value> = serde_json::from_str(body)?;
+    let rp = roots_of(roots);
+    let all: Vec<db::Track> = db::all_tracks(c)?
+        .into_iter()
+        .filter(|t| crate::dirs::under_any(&t.path, &rp))
+        .collect();
+    let mut by_file = std::collections::HashMap::new();
+    let mut by_tag: std::collections::HashMap<String, Vec<(i64, f64)>> =
+        std::collections::HashMap::new();
+    for t in &all {
+        let name = Path::new(&t.path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        by_file.insert((name, t.size), t.id);
+        if let (Some(a), Some(ti)) = (&t.artist, &t.title) {
+            by_tag
+                .entry(format!("{}|{}", norm(a), norm(ti)))
+                .or_default()
+                .push((t.id, t.duration));
+        }
+    }
+    let mut found = serde_json::Map::new();
+    let mut missing = Vec::new();
+    for it in items {
+        let k = it["k"].as_str().unwrap_or_default().to_string();
+        let name = it["name"].as_str().unwrap_or_default().to_lowercase();
+        let size = it["size"].as_i64().unwrap_or(-1);
+        let ms = it["ms"].as_i64().unwrap_or(0) as f64;
+        let mut hit = by_file.get(&(name, size)).copied();
+        if hit.is_none() {
+            let (a, t) = (
+                norm(it["artist"].as_str().unwrap_or_default()),
+                norm(it["title"].as_str().unwrap_or_default()),
+            );
+            if !a.is_empty() && !t.is_empty() {
+                hit = by_tag.get(&format!("{a}|{t}")).and_then(|v| {
+                    v.iter()
+                        .find(|(_, d)| ms <= 0.0 || (d * 1000.0 - ms).abs() < 3000.0)
+                        .map(|x| x.0)
+                });
+            }
+        }
+        match hit {
+            Some(id) => {
+                found.insert(k, id.into());
+            }
+            None => missing.push(k),
+        }
+    }
+    Ok(serde_json::json!({ "found": found, "missing": missing }))
+}
+
+fn decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+fn clean(part: &str) -> String {
+    let c: String = part
+        .chars()
+        .map(|c| {
+            if "<>:\"/\\|?*".contains(c) || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    c.trim().trim_end_matches('.').to_string()
+}
+
+/// Titel vom Handy speichern: <erster Musikordner>/Vom Handy/<Handy>/<Ordner>/<Datei>
+fn receive_upload(
+    host: &Host,
+    s: &HostSettings,
+    client: &str,
+    path: &str,
+    req: &mut tiny_http::Request,
+) -> Result<i64> {
+    let root = s
+        .roots
+        .first()
+        .ok_or_else(|| anyhow!("In Minimal Library ist kein Musikordner eingerichtet"))?;
+    let rel: Vec<String> = decode(path.trim_start_matches("/up/"))
+        .split('/')
+        .map(clean)
+        .filter(|p| !p.is_empty() && p != "..")
+        .collect();
+    if rel.is_empty() {
+        return Err(anyhow!("Dateiname fehlt"));
+    }
+    let mut dest = PathBuf::from(root).join("Vom Handy").join(clean(client));
+    for p in &rel {
+        dest.push(p);
+    }
+    if !crate::is_audio(&dest) {
+        return Err(anyhow!("Keine Audiodatei"));
+    }
+    std::fs::create_dir_all(dest.parent().unwrap_or(Path::new(root)))?;
+    let tmp = dest.with_file_name(format!(
+        "{}.part",
+        dest.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default()
+    ));
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        std::io::copy(req.as_reader(), &mut f)?;
+    }
+    if dest.exists() {
+        let _ = std::fs::remove_file(&tmp);
+    } else {
+        std::fs::rename(&tmp, &dest)?;
+    }
+    let ids = crate::scanner::add_files(&host.db, std::slice::from_ref(&dest))?;
+    let id = ids.first().copied().or_else(|| {
+        host.db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM tracks WHERE path = ?1",
+                [dest.to_string_lossy()],
+                |r| r.get(0),
+            )
+            .ok()
+    });
+    let id = id.ok_or_else(|| anyhow!("Datei nicht lesbar"))?;
+    (host.changed)(Changed::Added(id));
+    Ok(id)
+}
+
+/// Playlisten vom Handy: {"prefix", "playlists": [{"uid", "name", "items": [ids]}]} – Zuordnung Handy→PC gemerkt
+fn plsync(db_: &Mutex<Connection>, body: &str) -> Result<()> {
+    let v: serde_json::Value = serde_json::from_str(body)?;
+    let prefix = v["prefix"].as_str().unwrap_or_default();
+    if prefix.is_empty() {
+        return Err(anyhow!("prefix fehlt"));
+    }
+    let mut c = db_.lock().unwrap();
+    let mut map: std::collections::HashMap<String, i64> = db::get_setting(&c, "remote_plmap")
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let existing: std::collections::HashSet<i64> =
+        playlists::list(&c)?.into_iter().map(|p| p.id).collect();
+    let mut seen = std::collections::HashSet::new();
+    for p in v["playlists"].as_array().cloned().unwrap_or_default() {
+        let uid = p["uid"].as_str().unwrap_or_default().to_string();
+        if !uid.starts_with(prefix) {
+            continue;
+        }
+        let name = p["name"].as_str().unwrap_or("Playlist").trim().to_string();
+        let ids: Vec<i64> = p["items"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|x| x.as_i64()).collect())
+            .unwrap_or_default();
+        // „Stern“ vom Handy → Stern-Playlist am PC (zusammenführen, nichts entfernen)
+        if p["star"].as_bool() == Some(true) {
+            if let Some(sid) = playlists::star(&c, true)? {
+                playlists::add_items(&mut c, sid, &ids)?;
+            }
+            continue;
+        }
+        let id = match map.get(&uid).copied().filter(|id| existing.contains(id)) {
+            Some(id) => {
+                playlists::update(&c, id, &name, None)?;
+                id
+            }
+            None => playlists::create(&c, &name, None)?,
+        };
+        playlists::set_items(&mut c, id, &ids)?;
+        map.insert(uid.clone(), id);
+        seen.insert(uid);
+    }
+    // am Handy gelöschte Playlisten auch hier entfernen
+    let gone: Vec<String> = map
+        .keys()
+        .filter(|k| k.starts_with(prefix) && !seen.contains(*k))
+        .cloned()
+        .collect();
+    for k in gone {
+        if let Some(id) = map.remove(&k) {
+            let _ = playlists::delete(&c, id);
+        }
+    }
+    db::set_setting(&c, "remote_plmap", &serde_json::to_string(&map)?)?;
+    Ok(())
 }
 
 fn serve_file(req: tiny_http::Request, path: &Path) -> std::io::Result<()> {

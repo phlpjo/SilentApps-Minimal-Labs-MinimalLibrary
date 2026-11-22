@@ -344,65 +344,6 @@ trait Dest {
     }
 }
 
-/// Handy im WLAN (Minimal Player Connected, auf Windows und Mac)
-struct WlanDest {
-    c: crate::wlan::Client,
-    files: HashMap<String, u64>,
-    free: Option<u64>,
-    prefix: String,
-}
-
-impl Dest for WlanDest {
-    fn has(&mut self, rel: &str, size: u64) -> bool {
-        self.files.get(&rel.to_lowercase()) == Some(&size)
-    }
-    fn exists(&mut self, rel: &str) -> bool {
-        self.files.contains_key(&rel.to_lowercase())
-    }
-    fn free(&mut self) -> Option<u64> {
-        self.free
-    }
-    fn put(&mut self, src: &Path, rel: &str, size: u64, cancel: &AtomicBool) -> Result<()> {
-        let mut f = std::io::BufReader::with_capacity(1 << 20, std::fs::File::open(src)?);
-        self.c.put(rel, &mut f, cancel)?;
-        self.files.insert(
-            rel.to_lowercase(),
-            std::fs::metadata(src).map(|m| m.len()).unwrap_or(size),
-        );
-        Ok(())
-    }
-    fn write(&mut self, rel: &str, data: &[u8]) -> Result<()> {
-        self.c.put(
-            rel,
-            &mut std::io::Cursor::new(data),
-            &AtomicBool::new(false),
-        )?;
-        self.files.insert(rel.to_lowercase(), data.len() as u64);
-        Ok(())
-    }
-    fn remove(&mut self, rel: &str) -> bool {
-        let ok = self.c.delete(rel).unwrap_or(false);
-        if ok {
-            self.files.remove(&rel.to_lowercase());
-        }
-        ok
-    }
-    fn tidy(&mut self, _rel: &str) {} // räumt das Handy selbst auf
-    fn begin(&mut self, copies: usize) {
-        let _ = self.c.begin(copies);
-    }
-    fn finish(&mut self, lists: &[(i64, String, Vec<String>)]) -> Result<()> {
-        let pl: Vec<serde_json::Value> = lists
-            .iter()
-            .map(|(pid, name, files)| serde_json::json!({ "uid": format!("{}-{pid}", self.prefix), "name": name, "files": files }))
-            .collect();
-        self.c.done(
-            &serde_json::json!({ "prefix": format!("{}-", self.prefix), "playlists": pl })
-                .to_string(),
-        )
-    }
-}
-
 struct FsDest {
     root: PathBuf,
 }
@@ -700,11 +641,8 @@ pub fn device_folders(device: &str, path: &str) -> Result<Vec<String>> {
 }
 
 fn device_status(t: &Target) -> (bool, Option<u64>) {
-    if let Some(id) = t.wlan_id() {
-        return match crate::wlan::seen(id) {
-            Some(p) => (true, p.free),
-            None => (false, None),
-        };
+    if t.wlan_id().is_some() {
+        return (false, None); // WLAN-Ziele gibt es nicht mehr (ersetzt durch „offline verfügbar“ in der App)
     }
     #[cfg(windows)]
     {
@@ -725,25 +663,11 @@ fn open_dest(t: &Target) -> Result<Box<dyn Dest>> {
         }
         return Ok(Box::new(FsDest { root }));
     }
-    if let Some(id) = t.wlan_id() {
-        if t.token.is_empty() {
-            return Err(anyhow!(
-                "„{}“ ist noch nicht gekoppelt – Ziel bearbeiten und den Code vom Handy eingeben",
-                t.name
-            ));
-        }
-        let phone = crate::wlan::seen(id)
-            .or_else(|| crate::wlan::phones().into_iter().find(|p| p.id == id))
-            .ok_or_else(|| anyhow!("„{}“ nicht gefunden – in Minimal Player Connected „Von Minimal Library empfangen“ öffnen (gleiches WLAN)", t.name))?;
-        let c = crate::wlan::Client::new(&phone.addr, &t.token);
-        let files = c.list()?;
-        let prefix = format!("ml{}", t.token.chars().take(8).collect::<String>());
-        return Ok(Box::new(WlanDest {
-            c,
-            files,
-            free: phone.free,
-            prefix,
-        }));
+    if t.wlan_id().is_some() {
+        return Err(anyhow!(
+            "„{}“: Handy im WLAN gibt es als Sync-Ziel nicht mehr – in Minimal Player Connected unter „PC“ Ordner oder Playlisten offline verfügbar machen. Ziel bitte löschen.",
+            t.name
+        ));
     }
     #[cfg(windows)]
     {

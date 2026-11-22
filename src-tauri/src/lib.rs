@@ -306,6 +306,34 @@ fn sync_playlists(conn: &Connection) {
     }
 }
 
+// ---------- Stern (wie in Minimal Player) ----------
+
+#[tauri::command]
+async fn star_ids(state: Tab) -> R<Vec<i64>> {
+    let c = state.db.lock().unwrap();
+    match playlists::star(&c, false).map_err(err)? {
+        Some(id) => playlists::track_ids(&c, id).map_err(err),
+        None => Ok(vec![]),
+    }
+}
+
+/// Stern setzen/entfernen: sind alle schon markiert → entfernen, sonst hinzufügen. Ergebnis: jetzt markiert?
+#[tauri::command]
+async fn star_toggle(state: Tab, ids: Vec<i64>) -> R<bool> {
+    let mut c = state.db.lock().unwrap();
+    let id = playlists::star(&c, true).map_err(err)?.ok_or("Stern")?;
+    let cur = playlists::track_ids(&c, id).map_err(err)?;
+    let all = ids.iter().all(|i| cur.contains(i));
+    if all {
+        let rest: Vec<i64> = cur.into_iter().filter(|i| !ids.contains(i)).collect();
+        playlists::set_items(&mut c, id, &rest).map_err(err)?;
+    } else {
+        playlists::add_items(&mut c, id, &ids).map_err(err)?;
+    }
+    sync_playlists(&c);
+    Ok(!all)
+}
+
 // ---------- Bibliothek fürs Handy (Minimal Player Connected) ----------
 
 fn start_remote(app: &AppHandle, main: &AppState) {
@@ -328,6 +356,16 @@ fn start_remote(app: &AppHandle, main: &AppState) {
             remote::Changed::Playlists => {
                 sync_playlists(&db_c.lock().unwrap());
                 let _ = app.emit_to("main", "playlists-changed", ());
+            }
+            remote::Changed::Added(id) => {
+                let _ = app.emit_to(
+                    "main",
+                    "library-changed",
+                    watch::Change {
+                        added: vec![id],
+                        ..Default::default()
+                    },
+                );
             }
             remote::Changed::Files(n) => {
                 let _ = app.emit_to(
@@ -361,7 +399,7 @@ async fn remote_info(app: AppHandle) -> R<RemoteInfo> {
         code: remote::code(),
         port: remote::port(),
         paired,
-        name: musiccore::wlan::computer_name(),
+        name: remote::computer_name(),
     })
 }
 
@@ -1732,18 +1770,6 @@ async fn sync_devices() -> R<Vec<PhoneDevice>> {
     .await
 }
 
-/// Handys im WLAN mit Minimal Player Connected („Von Minimal Library empfangen“ offen)
-#[tauri::command]
-async fn sync_phones() -> R<Vec<musiccore::wlan::Phone>> {
-    blocking(|| Ok(musiccore::wlan::phones())).await
-}
-
-/// Mit dem Code vom Handy koppeln → Schlüssel fürs Sync-Ziel
-#[tauri::command]
-async fn sync_pair(addr: String, code: String) -> R<String> {
-    blocking(move || musiccore::wlan::pair(&addr, &code, &musiccore::wlan::computer_name())).await
-}
-
 #[tauri::command]
 async fn sync_device_folders(device: String, path: String) -> R<Vec<String>> {
     blocking(move || sync::device_folders(&device, &path)).await
@@ -2286,10 +2312,10 @@ pub fn run() {
             sync_eject,
             sync_devices,
             sync_device_folders,
-            sync_phones,
             remote_info,
+            star_ids,
+            star_toggle,
             remote_unpair,
-            sync_pair,
             rip_tools,
             rip_install,
             rip_update,

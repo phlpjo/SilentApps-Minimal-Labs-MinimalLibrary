@@ -398,3 +398,4 @@ html.mac #titlebar { padding-left: 78px; }
 #titlebar .tab-add:hover { color: var(--ink); background: var(--panel); }
 .dup-hit { padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
 #titlebar .tab.drop { background: var(--ink); color: var(--bg); }
+.ibtn.star.on::after { display: none; }

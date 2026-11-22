@@ -143,7 +143,7 @@ export function syncView(): { el: HTMLElement; destroy: () => void } {
             h("button", { class: "btn", onclick: () => editTarget(t) }, "Bearbeiten"),
           ),
           t.device?.startsWith("wlan:")
-            ? h("div", { class: "kv" }, h("span", {}, "Handy"), h("span", {}, h("b", {}, t.deviceName || "Handy"), " · im WLAN · Minimal Player Connected"))
+            ? h("div", { class: "kv" }, h("span", {}, "Handy"), h("span", {}, h("b", {}, t.deviceName || "Handy"), " · WLAN-Ziel gibt es nicht mehr – bitte löschen (in Minimal Player Connected: „PC“ → offline verfügbar)"))
             : t.device
             ? h("div", { class: "kv" }, h("span", {}, "Handy"), h("span", {}, h("b", {}, t.deviceName || "Handy"), " · ", h("span", { style: { fontFamily: "var(--mono)" } }, t.path)))
             : h("div", { class: "kv" }, h("span", {}, "Ordner"), h("span", { style: { fontFamily: "var(--mono)" } }, t.path)),
@@ -169,7 +169,7 @@ export function syncView(): { el: HTMLElement; destroy: () => void } {
       h("div", { class: "note", style: { marginTop: "6px", lineHeight: "1.6" } },
         "Auf dem Ziel landen die Titel in der gewählten Ablage und je Playlist eine .m3u8 – so findet Minimal Player Lieder und Playlisten. Kopiert wird nur, was fehlt. ",
         "„Aufräumen“ löscht ausschließlich Dateien, die die App selbst dorthin kopiert hat. ",
-        "Handy im WLAN: in Minimal Player Connected unter Einstellungen „Von Minimal Library empfangen“ öffnen – das Handy erscheint dann hier als verbunden, Playlisten landen direkt in der App. ",
+        "Minimal Player Connected braucht kein Sync-Ziel: Die App sieht die Bibliothek im WLAN direkt (Einstellungen → Minimal Player Connected). ",
         IS_MAC
           ? `Hinweis: Android-Handys am Kabel erscheinen unter ${OS} nicht als Laufwerk (MTP) – dafür SD-Karte oder USB-Stick nutzen.`
           : "Handy am Kabel: per USB-Kabel anschließen, entsperren und in der Benachrichtigung „Dateiübertragung“ wählen. Über das Kabel (MTP) kopiert Windows deutlich langsamer als auf einen Stick – der erste Sync dauert entsprechend."),
@@ -220,59 +220,9 @@ function editTarget(t: SyncTargetState | null) {
   const m3u = h("input", { type: "checkbox", checked: !v.noPlaylistFiles });
   const sizeInfo = h("div", { class: "note", style: { color: "var(--ink)" } });
   const name = h("input", { type: "text", value: v.name, placeholder: "z. B. USB-Stick Auto", style: { width: "100%" } });
-  // Handy im WLAN (Minimal Player Connected)
-  let wlanId = v.device?.startsWith("wlan:") ? v.device.slice(5) : "";
-  let wlanName = wlanId ? v.deviceName ?? "" : "";
-  let token = wlanId ? v.token ?? "" : "";
-  let phones: { id: string; name: string; addr: string; ready: boolean }[] = [];
-  const wSel = h("select", { style: { width: "100%" } }) as HTMLSelectElement;
-  const wNote = h("div", { class: "note" });
-  const code = h("input", { type: "text", placeholder: "Code vom Handy, z. B. 482 913", inputmode: "numeric", style: { width: "100%" } }) as HTMLInputElement;
-  const pairState = h("div", { class: "note", style: { color: "var(--ink)" } });
-  const showPair = () => (pairState.textContent = token ? `✓ gekoppelt mit „${wlanName || "Handy"}“` : "noch nicht gekoppelt");
-  const loadPhones = async () => {
-    wSel.replaceChildren(h("option", { value: "" }, "suche im WLAN …"));
-    phones = await api.syncPhones().catch(() => []);
-    const opts = phones.map((p) => h("option", { value: p.id, selected: p.id === wlanId || (!wlanId && phones.length === 1) }, p.name + (p.ready ? "" : " (Empfangsordner fehlt)")));
-    if (wlanId && !phones.some((p) => p.id === wlanId)) opts.unshift(h("option", { value: wlanId, selected: true }, `${wlanName || "Handy"} (gerade nicht sichtbar)`));
-    wSel.replaceChildren(...(opts.length ? opts : [h("option", { value: "" }, "kein Handy gefunden")]));
-    wNote.textContent = phones.length ? "" : "Auf dem Handy in Minimal Player Connected: Einstellungen → „Von Minimal Library empfangen“ öffnen. Handy und Computer im selben WLAN – dann „Neu suchen“.";
-    pickPhone();
-  };
-  const pickPhone = () => {
-    const id = wSel.value;
-    if (!id) return;
-    if (id !== wlanId) token = "";
-    wlanId = id;
-    wlanName = phones.find((p) => p.id === id)?.name ?? wlanName;
-    if (!name.value.trim()) name.value = wlanName;
-    showPair();
-  };
-  wSel.addEventListener("change", pickPhone);
-  const doPair = async () => {
-    const p = phones.find((x) => x.id === wlanId);
-    if (!p) return toast("Handy gerade nicht sichtbar – „Von Minimal Library empfangen“ auf dem Handy öffnen und neu suchen");
-    try {
-      token = await api.syncPair(p.addr, code.value);
-      code.value = "";
-      showPair();
-      toast("Gekoppelt");
-    } catch (e) {
-      toast(String(e), 6000);
-    }
-  };
-  code.addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") doPair(); });
-  const wlanBox = h("div", {},
-    h("div", { class: "field" }, h("label", {}, "Handy im WLAN"),
-      h("div", { class: "line", style: { margin: "0" } }, h("div", { class: "grow" }, wSel), h("button", { class: "btn", onclick: loadPhones }, "Neu suchen")), wNote),
-    h("div", { class: "field" }, h("label", {}, "Koppeln (einmalig)"),
-      h("div", { class: "line", style: { margin: "0" } }, h("div", { class: "grow" }, code), h("button", { class: "btn", onclick: doPair }, "Koppeln")), pairState,
-      h("div", { class: "note" }, "Den 6-stelligen Code zeigt das Handy unter „Von Minimal Library empfangen“. Die Musik landet im Empfangsordner, den du dort gewählt hast; Playlisten erscheinen direkt in der App. Während des Syncs den Bildschirm auf dem Handy offen lassen.")),
-  );
-  showPair();
   const path = h("input", { type: "text", value: v.device ? "" : v.path, placeholder: "Ordner auf dem Gerät, z. B. E:\\", style: { width: "100%" } });
   // Handy (MTP, nur Windows)
-  let kind: "folder" | "phone" | "wlan" = v.device?.startsWith("wlan:") ? "wlan" : v.device ? "phone" : "folder";
+  let kind: "folder" | "phone" = v.device && !v.device.startsWith("wlan:") ? "phone" : "folder";
   let device = v.device ?? "";
   let deviceName = v.deviceName ?? "";
   const phonePath = h("input", { type: "text", value: v.device ? v.path : "", placeholder: "z. B. Interner gemeinsamer Speicher/Music", style: { width: "100%" } }) as HTMLInputElement;
@@ -324,19 +274,14 @@ function editTarget(t: SyncTargetState | null) {
   const showKind = () => {
     folderBox.style.display = kind === "folder" ? "" : "none";
     phoneBox.style.display = kind === "phone" ? "" : "none";
-    wlanBox.style.display = kind === "wlan" ? "" : "none";
     if (kind === "phone" && !devSel.options.length) loadDevices();
-    if (kind === "wlan" && !wSel.options.length) loadPhones();
   };
-  const kindRadio = (k: "folder" | "phone" | "wlan", label: string) => {
+  const kindRadio = (k: "folder" | "phone", label: string) => {
     const r = h("input", { type: "radio", name: "synckind", checked: kind === k });
     r.addEventListener("change", () => { kind = k; showKind(); });
     return h("label", { class: "check", style: { marginRight: "18px" } }, r, label);
   };
-  const kindRow = h("div", { class: "line", style: { flexWrap: "wrap" } },
-    kindRadio("folder", "Ordner / Laufwerk"),
-    IS_MAC ? "" : kindRadio("phone", "Handy am USB-Kabel"),
-    kindRadio("wlan", "Handy im WLAN (Minimal Player Connected)"));
+  const kindRow = IS_MAC ? "" : h("div", { class: "line" }, kindRadio("folder", "Ordner / Laufwerk (Stick, Karte, Festplatte)"), kindRadio("phone", "Handy am USB-Kabel"));
   showKind();
   const auto = h("input", { type: "checkbox", checked: v.auto });
   const mirror = h("input", { type: "checkbox", checked: v.mirror });
@@ -368,7 +313,6 @@ function editTarget(t: SyncTargetState | null) {
     kindRow,
     folderBox,
     phoneBox,
-    wlanBox,
     h("div", { class: "card", style: { marginTop: "10px" } }, h("h3", {}, "Playlisten für dieses Ziel"), plBox),
     h("div", { class: "card" }, h("h3", {}, "Ganze Ordner"), fBox,
       h("div", { class: "note" }, "Nur in eine Richtung: Quellordner → Ziel. Auf dem Ziel als „Ordnername/…“ mit denselben Unterordnern.")),
@@ -385,16 +329,11 @@ function editTarget(t: SyncTargetState | null) {
       h("button", {
         class: "btn primary",
         onclick: async () => {
-          if (kind === "wlan") {
-            if (!wlanId) return toast("Bitte ein Handy wählen");
-            if (!token) return toast("Bitte erst mit dem Code vom Handy koppeln");
-          }
-          const wl = kind === "wlan";
-          const phone = kind === "phone";
+                    const phone = kind === "phone";
           const dest = (phone ? phonePath.value : path.value).trim().replace(/^[\\/]+|[\\/]+$/g, phone ? "" : "$&");
           if (phone && !device) return toast("Bitte ein Handy wählen");
-          if (!dest && !wl) return toast("Bitte einen Ordner wählen");
-          const id = await api.syncSave({ ...v, device: wl ? `wlan:${wlanId}` : phone ? device : "", deviceName: wl ? wlanName : phone ? deviceName : "", token: wl ? token : "", name: name.value.trim() || (wl ? wlanName : phone ? deviceName : dest), path: wl ? "" : dest, playlists: [...chosen], auto: auto.checked, mirror: mirror.checked, layout, noPlaylistFiles: !m3u.checked, folders: v.folders, ignoreSpace: ignoreSpace.checked });
+          if (!dest) return toast("Bitte einen Ordner wählen");
+          const id = await api.syncSave({ ...v, device: phone ? device : "", deviceName: phone ? deviceName : "", token: "", name: name.value.trim() || (phone ? deviceName : dest), path: dest, playlists: [...chosen], auto: auto.checked, mirror: mirror.checked, layout, noPlaylistFiles: !m3u.checked, folders: v.folders, ignoreSpace: ignoreSpace.checked });
           s.close();
           await poll();
           const nt = targets.find((x) => x.id === id);

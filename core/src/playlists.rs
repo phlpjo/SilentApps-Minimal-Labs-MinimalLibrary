@@ -230,6 +230,32 @@ pub fn update(conn: &Connection, id: i64, name: &str, rules: Option<&SmartRules>
     Ok(())
 }
 
+/// Playlist „Stern“ (wie in Minimal Player): gemerkte ID, bei Bedarf neu anlegen
+pub fn star(conn: &Connection, create: bool) -> Result<Option<i64>> {
+    let id: Option<i64> =
+        crate::db::get_setting(conn, "star_playlist")?.and_then(|s| s.parse().ok());
+    if let Some(id) = id {
+        let exists: bool = conn.query_row(
+            "SELECT COUNT(*) FROM playlists WHERE id = ?1 AND rules IS NULL",
+            [id],
+            |r| r.get::<_, i64>(0),
+        )? > 0;
+        if exists {
+            return Ok(Some(id));
+        }
+    }
+    if !create {
+        return Ok(None);
+    }
+    let id = create_plain(conn, "Stern")?;
+    crate::db::set_setting(conn, "star_playlist", &id.to_string())?;
+    Ok(Some(id))
+}
+
+fn create_plain(conn: &Connection, name: &str) -> Result<i64> {
+    create(conn, name, None)
+}
+
 pub fn delete(conn: &Connection, id: i64) -> Result<()> {
     conn.execute("DELETE FROM playlists WHERE id = ?1", [id])?;
     Ok(())

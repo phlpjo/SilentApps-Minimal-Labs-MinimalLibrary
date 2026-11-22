@@ -188,9 +188,8 @@ export const api = {
   syncEject: (path: string) => invoke<void>("sync_eject", { path }),
   /** Handys/Player am USB-Kabel (MTP, nur Windows) */
   syncDevices: () => invoke<{ id: string; name: string }[]>("sync_devices"),
-  /** Handys im WLAN (Minimal Player Connected, „Von Minimal Library empfangen“ offen) */
-  syncPhones: () => invoke<{ id: string; name: string; addr: string; ready: boolean; free: number | null }[]>("sync_phones"),
-  syncPair: (addr: string, code: string) => invoke<string>("sync_pair", { addr, code }),
+  starIds: () => invoke<number[]>("star_ids"),
+  starToggle: (ids: number[]) => invoke<boolean>("star_toggle", { ids }),
   remoteInfo: () => invoke<{ code: string; port: number; paired: string[]; name: string }>("remote_info"),
   remoteUnpair: (name: string) => invoke<void>("remote_unpair", { name }),
   syncDeviceFolders: (device: string, path: string) => invoke<string[]>("sync_device_folders", { device, path }),

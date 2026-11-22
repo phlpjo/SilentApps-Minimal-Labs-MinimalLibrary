@@ -1,3 +1,4 @@
+import { isStarred, toggleStar } from "./star";
 import "./style.css";
 import { IS_MAC } from "./platform";
 import { applyTheme, isLight } from "./theme";
@@ -479,6 +480,7 @@ function buildPlayer() {
     vol.value = String(player.volumeLevel);
   }, { passive: false });
   const nowInfo = h("div", { style: { minWidth: "0" } }, t1, t2);
+  const starBtn = h("button", { class: "ibtn star", title: "Stern (Playlist „Stern“)", onclick: () => player.current && toggleStar([player.current.id]) }, icon("star"));
   // Rechtsklick auf den laufenden Titel: gleiches Menü wie in der Liste
   for (const el of [cover, nowInfo]) {
     // Laufenden Titel ziehen: auf Ordner (verschieben) oder Playlist (hinzufügen)
@@ -502,7 +504,7 @@ function buildPlayer() {
   }
   playerBar.append(
     cover,
-    nowInfo,
+    h("div", { style: { display: "flex", alignItems: "center", gap: "6px", minWidth: "0" } }, nowInfo, starBtn),
     h("div", { class: "ctrls" },
       shuffleBtn,
       h("button", { class: "ibtn", title: "Zurück", onclick: () => player.prev() }, icon("prev")),
@@ -532,12 +534,17 @@ function buildPlayer() {
     drawWave(canvas, t ? store.peaksFor(t.id) : undefined, t ? player.frac() : -1);
     tCur.textContent = fmtTime(player.currentTime);
     shuffleBtn.classList.toggle("on", player.shuffle);
+    const st = !!t && isStarred(t.id);
+    starBtn.replaceChildren(icon(st ? "starOn" : "star"));
+    starBtn.classList.toggle("on", st);
+    starBtn.style.visibility = t ? "visible" : "hidden";
     devBtn.textContent = (player.device ? "▸ " : "") + currentOutputLabel();
     devBtn.classList.toggle("on", !!player.device);
     if (document.activeElement !== vol) vol.value = String(player.volumeLevel);
   };
   store.on("player", update);
   store.on("peaks", update);
+  store.on("stars", update);
   document.addEventListener("themechange", update);
   new ResizeObserver(update).observe(canvas);
   player.onPos((id, f) => {

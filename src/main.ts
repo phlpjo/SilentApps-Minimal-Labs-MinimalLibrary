@@ -272,6 +272,21 @@ listen<number>("analyzed", (e) => {
 listen<{ task: string; done: number; total: number; message: string }>("progress", (e) => setStatus(e.payload.task, e.payload.done, e.payload.total, e.payload.message));
 store.on("tracks", () => store.emit("history"));
 
+// Infobereich (Tray): Steuerung + Titel im Tooltip
+listen<string>("tray", (e) => {
+  if (e.payload === "toggle") player.toggle();
+  else if (e.payload === "next") player.next();
+});
+let trayText = "";
+store.on("player", () => {
+  const t = player.current;
+  const text = t ? `${t.artist ? t.artist + " – " : ""}${store.label(t)}${player.playing ? "" : " (Pause)"}` : "";
+  if (text !== trayText) {
+    trayText = text;
+    api.setTrayTitle(text).catch(() => {});
+  }
+});
+
 // Musikordner-Überwachung: Änderungen aus dem Explorer sofort übernehmen
 listen<LibraryChange>("library-changed", async (e) => {
   const c = e.payload;

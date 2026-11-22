@@ -31,6 +31,12 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
     const t = await api.ripTools().catch(() => null);
     clear(toolsBox);
     if (t && t.ytdlp && t.ffmpeg) {
+      // yt-dlp einmal am Tag still aktualisieren (YouTube ändert sich ständig)
+      const last = Number(localStorage.getItem("ml.ytdlpUpdated") ?? "0");
+      if (Date.now() - last > 86_400_000) {
+        localStorage.setItem("ml.ytdlpUpdated", String(Date.now()));
+        api.ripUpdate().catch(() => {});
+      }
       toolsBox.append(
         h("div", { class: "line" },
           h("span", { class: "note" }, `yt-dlp ${t.ytdlp} · ffmpeg bereit`),

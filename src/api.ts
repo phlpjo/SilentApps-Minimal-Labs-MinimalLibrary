@@ -36,6 +36,7 @@ export interface Settings {
   acoustidKey: string;
   ripDir: string | null;
   ripFormat: "mp3" | "original";
+  closeToTray: boolean;
 }
 
 export interface ScanReport { found: number; added: number; updated: number; removed: number; errors: string[] }
@@ -136,5 +137,7 @@ export const api = {
   castSeek: (device: string, sec: number) => invoke<void>("cast_seek", { device, sec }),
   castVolume: (device: string, volume: number) => invoke<void>("cast_volume", { device, volume }),
   castStatus: (device: string) => invoke<CastStatus>("cast_status", { device }),
+  setTrayTitle: (text: string) => invoke<void>("set_tray_title", { text }),
+  quit: () => invoke<void>("quit_app"),
   version: () => invoke<string>("app_version"),
 };

@@ -242,6 +242,31 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Titel-Eintrag für eine Dateikopie anlegen (alle Tags/Analysen übernehmen, neuer Pfad).
+/// Gibt die neue ID zurück.
+pub fn clone_track(conn: &Connection, id: i64, new_path: &str) -> Result<i64> {
+    let cols: Vec<String> = {
+        let mut st = conn.prepare("PRAGMA table_info(tracks)")?;
+        st.query_map([], |r| r.get::<_, String>(1))?.collect::<rusqlite::Result<_>>()?
+    };
+    let cols: Vec<&String> = cols.iter().filter(|c| c.as_str() != "id").collect();
+    let names = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+    let values = cols.iter().map(|c| if c.as_str() == "path" { "?2".to_string() } else { format!("\"{c}\"") }).collect::<Vec<_>>().join(", ");
+    conn.execute(&format!("INSERT INTO tracks({names}) SELECT {values} FROM tracks WHERE id = ?1"), rusqlite::params![id, new_path])?;
+    let new_id = conn.last_insert_rowid();
+    // Beatgrid/Cues (Pioneer) mitnehmen
+    conn.execute(
+        "INSERT OR IGNORE INTO pioneer_analysis(track_id, bpm, downbeat_ms, grid_edited, frames, updated)
+         SELECT ?2, bpm, downbeat_ms, grid_edited, frames, updated FROM pioneer_analysis WHERE track_id = ?1",
+        rusqlite::params![id, new_id],
+    )?;
+    conn.execute(
+        "INSERT INTO cues(track_id, kind, start_ms, end_ms, color, comment) SELECT ?2, kind, start_ms, end_ms, color, comment FROM cues WHERE track_id = ?1",
+        rusqlite::params![id, new_id],
+    )?;
+    Ok(new_id)
+}
+
 pub fn remove_tracks(conn: &Connection, ids: &[i64]) -> Result<()> {
     let mut st = conn.prepare("DELETE FROM tracks WHERE id = ?1")?;
     for id in ids {

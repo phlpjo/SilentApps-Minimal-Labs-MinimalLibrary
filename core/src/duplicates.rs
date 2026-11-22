@@ -170,11 +170,24 @@ pub fn pair(a: i64, b: i64) -> (i64, i64) {
 }
 
 pub fn find(tracks: &[Track], fps: &HashMap<i64, Vec<u32>>, modes: Modes, ignored: &Ignored, progress: crate::Progress) -> Vec<DupGroup> {
+    find_scoped(tracks, fps, modes, ignored, &|_, _| true, progress)
+}
+
+/// Wie `find`, aber nur Paare (Index a, Index b), für die `scope` wahr ist, werden verglichen
+/// (z. B. nicht über Musikordner hinweg).
+pub fn find_scoped(
+    tracks: &[Track],
+    fps: &HashMap<i64, Vec<u32>>,
+    modes: Modes,
+    ignored: &Ignored,
+    scope: &(dyn Fn(usize, usize) -> bool + Sync),
+    progress: crate::Progress,
+) -> Vec<DupGroup> {
     let n = tracks.len();
     let mut uf = Uf::new(n);
     let mut reasons: HashMap<(usize, usize), BTreeSet<&'static str>> = HashMap::new();
     let mut audio_sim: HashMap<(usize, usize), f32> = HashMap::new();
-    let is_ignored = |a: usize, b: usize| ignored.contains(&pair(tracks[a].id, tracks[b].id));
+    let is_ignored = |a: usize, b: usize| !scope(a, b) || ignored.contains(&pair(tracks[a].id, tracks[b].id));
     let mut add = |uf: &mut Uf, a: usize, b: usize, why: &'static str| {
         if is_ignored(a, b) {
             return;
@@ -241,6 +254,9 @@ pub fn find(tracks: &[Track], fps: &HashMap<i64, Vec<u32>>, modes: Modes, ignore
                     if tracks[b].duration - tracks[a].duration > 8.0 {
                         break;
                     }
+                    if !scope(a, b) {
+                        continue;
+                    }
                     let sim = fp_similarity(fa, &fps[&tracks[b].id]);
                     if sim >= AUDIO_THRESHOLD {
                         out.push((a, b, sim));
@@ -294,6 +310,37 @@ pub fn find(tracks: &[Track], fps: &HashMap<i64, Vec<u32>>, modes: Modes, ignore
     out
 }
 
+/// Treffer beim Kopieren/Verschieben: Quell-Titel und gleiche Titel am Ziel
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DupHit {
+    pub track_id: i64,
+    pub matches: Vec<i64>,
+    pub reasons: Vec<String>,
+    pub audio_similarity: Option<f32>,
+}
+
+/// Haben die `src`-Titel schon Gegenstücke in `cand`? Verglichen wird nur Quelle ↔ Ziel
+/// (Metadaten, Dateiname, Audio). IDs in `cand` dürfen nicht mit `src` kollidieren.
+pub fn check_against(src: &[Track], cand: &[Track], fps: &HashMap<i64, Vec<u32>>, ignored: &Ignored) -> Vec<DupHit> {
+    let ns = src.len();
+    let all: Vec<Track> = src.iter().chain(cand.iter()).cloned().collect();
+    let modes = Modes { metadata: true, filename: true, audio: true };
+    let groups = find_scoped(&all, fps, modes, ignored, &|a, b| (a < ns) != (b < ns), &|_, _, _| {});
+    let src_ids: std::collections::HashSet<i64> = src.iter().map(|t| t.id).collect();
+    let mut out = Vec::new();
+    for g in groups {
+        let matches: Vec<i64> = g.track_ids.iter().copied().filter(|id| !src_ids.contains(id)).collect();
+        if matches.is_empty() {
+            continue;
+        }
+        for id in g.track_ids.iter().filter(|id| src_ids.contains(id)) {
+            out.push(DupHit { track_id: *id, matches: matches.clone(), reasons: g.reasons.clone(), audio_similarity: g.audio_similarity });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +352,24 @@ mod tests {
         assert_eq!(normalize_filename("C:/m/01 - Hey Jude (1).mp3"), "hey jude");
         assert_eq!(normalize_filename("/m/Hey Jude - Kopie.flac"), "hey jude");
         assert_eq!(normalize_filename("/m/1999.mp3"), "1999");
+    }
+
+    #[test]
+    fn check_against_only_compares_source_with_target() {
+        let mk = |id: i64, path: &str, artist: &str, title: &str| Track {
+            id,
+            path: path.into(),
+            artist: Some(artist.into()),
+            title: Some(title.into()),
+            duration: 200.0,
+            ..Default::default()
+        };
+        let src = vec![mk(1, "/a/Band - Lied.mp3", "Band", "Lied"), mk(2, "/a/Band - Lied (2).mp3", "Band", "Lied"), mk(3, "/a/x.mp3", "Andere", "Sache")];
+        let cand = vec![mk(10, "/b/Band - Lied.flac", "Band", "Lied"), mk(11, "/b/y.mp3", "Wer", "Was")];
+        let hits = check_against(&src, &cand, &HashMap::new(), &Ignored::default());
+        let mut ids: Vec<i64> = hits.iter().map(|h| h.track_id).collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2]);
+        assert!(hits.iter().all(|h| h.matches == vec![10]));
     }
 }

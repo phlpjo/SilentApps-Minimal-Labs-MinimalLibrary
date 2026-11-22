@@ -4,7 +4,11 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "./api";
 import { icon } from "./icons";
-import { contextMenu, h, holdButton, sheet, toast } from "./ui";
+import { open } from "@tauri-apps/plugin-dialog";
+import { dropTarget } from "./dnd";
+import { dupGate } from "./fileops";
+import { store } from "./store";
+import { basename, contextMenu, h, holdButton, reportErrors, sheet, toast } from "./ui";
 
 export const MY_TAB = getCurrentWindow().label;
 const OWNER = "ml.audioOwner";
@@ -107,6 +111,8 @@ function render() {
         t.label === owner && playingNow && tabs.length > 1 ? h("span", { class: "spk", title: "Hier läuft die Musik" }, icon("speaker", 13)) : "",
         h("span", { class: "tname" }, t.name),
       );
+      // Titel auf einen anderen Tab ziehen → dorthin kopieren/verschieben (mit Duplikatprüfung)
+      if (t.label !== MY_TAB) dropTarget(el, { accepts: (p) => p.kind === "ids", drop: (p) => p.kind === "ids" && transferDialog(t, p.ids) });
       el.addEventListener("click", () => t.label !== MY_TAB && api.tabShow(t.label).catch((e) => toast(String(e))));
       el.addEventListener("dblclick", () => rename(t.label, t.name));
       el.addEventListener("contextmenu", (e) => {
@@ -120,6 +126,67 @@ function render() {
     }),
     h("button", { class: "tab-add", title: "Neuer Tab – eine zweite, leere Bibliothek", onclick: () => api.tabCreate().catch((e) => toast(String(e))) }, "+"),
   );
+}
+
+/** Titel in die Bibliothek eines anderen Tabs übertragen */
+async function transferDialog(t: { label: string; name: string }, ids: number[]) {
+  const roots = await api.tabRoots(t.label).catch(() => [] as string[]);
+  let dir = roots[0] ?? "";
+  let copy = true;
+  const dirBox = h("div", {});
+  const renderDirs = () => {
+    dirBox.replaceChildren(
+      ...roots.map((r) => {
+        const rb = h("input", { type: "radio", name: "tdir", checked: r === dir }) as HTMLInputElement;
+        rb.addEventListener("change", () => (dir = r));
+        return h("div", {}, h("label", { class: "check", style: { padding: "3px 0", fontFamily: "var(--mono)", fontSize: "12px" } }, rb, r));
+      }),
+      !roots.includes(dir) && dir ? h("div", { class: "note", style: { fontFamily: "var(--mono)" } }, `→ ${dir} (wird dort Musikordner)`) : "",
+      h("button", { class: "btn", style: { marginTop: "6px" }, onclick: async () => {
+        const d = await open({ directory: true, defaultPath: dir || undefined });
+        if (d) {
+          dir = d as string;
+          renderDirs();
+        }
+      } }, roots.length ? "Unterordner oder anderer Ordner …" : "Ordner wählen …"),
+    );
+  };
+  renderDirs();
+  const modeBox = h("div", { class: "line" },
+    ...([[true, "Kopieren"], [false, "Verschieben"]] as const).map(([c, l]) => {
+      const rb = h("input", { type: "radio", name: "tmode", checked: c === copy }) as HTMLInputElement;
+      rb.addEventListener("change", () => (copy = c));
+      return h("label", { class: "check" }, rb, l);
+    }),
+  );
+  const s = sheet(`${ids.length} Titel nach „${t.name}“`, h("div", {},
+    h("div", { class: "card" }, h("h3", {}, "Zielordner"), dirBox),
+    modeBox,
+    h("div", { class: "note" }, "Vorher wird geprüft, ob es die Titel in der Bibliothek des anderen Tabs schon gibt."),
+    h("div", { class: "foot" },
+      h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"),
+      h("button", { class: "btn primary", onclick: async () => {
+        if (!dir) return toast("Zielordner wählen");
+        s.close();
+        const ok = await dupGate(ids, dir, t.label);
+        if (!ok) return;
+        if (!ok.length) return toast("Nichts übertragen – alle Titel gibt es dort schon");
+        const skip = ids.filter((i) => !ok.includes(i));
+        try {
+          const r = await api.transferToTab(ids, t.label, dir, copy, skip);
+          reportErrors(r.errors, `${r.moved} Titel ${copy ? "kopiert" : "verschoben"} → „${t.name}“ (${basename(dir)})`);
+          if (!copy) {
+            ok.forEach((id) => store.selection.delete(id));
+            await store.loadTracks();
+            store.loadPlaylists();
+            store.emit("dirs");
+          }
+        } catch (e) {
+          toast(String(e));
+        }
+      } }, "Übertragen"),
+    ),
+  ));
 }
 
 async function load() {

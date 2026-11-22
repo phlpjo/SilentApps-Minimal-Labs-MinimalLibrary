@@ -39,6 +39,15 @@ export interface Settings {
   closeToTray: boolean;
   /** Pioneer DJ / AlphaTheta-Export eingeschaltet (Beatgrid, Cues, OneLibrary, rekordbox-XML) */
   pioneer: boolean;
+  /** Musikordner, deren Titel nicht mit anderen Musikordnern auf Duplikate verglichen werden */
+  noCrossDup: string[];
+}
+
+export interface DupCheck {
+  trackId: number;
+  matches: { id: number; path: string; artist: string | null; title: string | null }[];
+  reasons: string[];
+  audioSimilarity: number | null;
 }
 
 export interface PioneerGrid { bpm: number; downbeatMs: number; edited: boolean }
@@ -161,6 +170,10 @@ export const api = {
   pioneerPreview: (options: PioneerOptions) => invoke<PioneerPreview>("pioneer_preview", { options }),
   pioneerExport: (options: PioneerOptions) => invoke<PioneerReport>("pioneer_export", { options }),
   pioneerXml: (playlists: number[], file: string) => invoke<void>("pioneer_xml", { playlists, file }),
+  dupCheck: (ids: number[], dir: string, tab?: string) => invoke<DupCheck[]>("dup_check", { ids, dir, tab: tab ?? null }),
+  tabRoots: (label: string) => invoke<string[]>("tab_roots", { label }),
+  transferToTab: (ids: number[], label: string, dir: string, copy: boolean, skip: number[]) =>
+    invoke<{ moved: number; errors: string[]; newIds: number[] }>("transfer_to_tab", { ids, label, dir, copy, skip }),
   tabsList: () => invoke<{ label: string; name: string }[]>("tabs_list"),
   tabShow: (label: string) => invoke<void>("tab_show", { label }),
   tabCreate: () => invoke<string>("tab_create"),

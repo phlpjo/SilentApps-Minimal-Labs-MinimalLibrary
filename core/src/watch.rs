@@ -88,15 +88,17 @@ fn sync_path(conn: &Mutex<Connection>, p: &Path, ch: &mut Change) {
     }
     if p.is_dir() {
         // neuer/hineinkopierter Ordner: alle unbekannten Audiodateien aufnehmen
-        let mut new = Vec::new();
-        {
+        // Erst ohne Datenbank-Sperre auflisten (Cloud-Ordner können langsam sein), dann abgleichen
+        let found: Vec<PathBuf> = walkdir::WalkDir::new(p)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file() && is_audio(e.path()) && !ignored(e.path()))
+            .map(|e| e.into_path())
+            .collect();
+        let new: Vec<PathBuf> = {
             let c = conn.lock().unwrap();
-            for e in walkdir::WalkDir::new(p).into_iter().filter_map(|e| e.ok()) {
-                if e.file_type().is_file() && is_audio(e.path()) && !ignored(e.path()) && track_id(&c, e.path()).is_none() {
-                    new.push(e.into_path());
-                }
-            }
-        }
+            found.into_iter().filter(|f| track_id(&c, f).is_none()).collect()
+        };
         adopt_or_add(conn, new, ch);
         return;
     }
@@ -113,8 +115,14 @@ fn sync_path(conn: &Mutex<Connection>, p: &Path, ch: &mut Change) {
             Some(id) => {
                 let known: Option<(i64, i64)> =
                     c.query_row("SELECT size, mtime FROM tracks WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).ok();
-                if stat(p) != known && scanner::refresh(&c, p).is_ok() {
-                    ch.updated += 1;
+                drop(c);
+                // Tags ohne Datenbank-Sperre lesen – bei Cloud-Dateien kann das dauern (Download)
+                if stat(p) != known {
+                    if let Ok(t) = crate::tags::read(p) {
+                        if scanner::upsert(&conn.lock().unwrap(), p, &t).is_ok() {
+                            ch.updated += 1;
+                        }
+                    }
                 }
             }
         }

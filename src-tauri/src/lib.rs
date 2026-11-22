@@ -182,6 +182,8 @@ struct Settings {
     close_to_tray: bool,
     /// Pioneer-Export (Beatgrid, Pioneer-Wellenform, Cues, OneLibrary/rekordbox-XML) – erst nach Einschalten aktiv
     pioneer: bool,
+    /// Musikordner, deren Titel NICHT mit anderen Musikordnern auf Duplikate verglichen werden
+    no_cross_dup: Vec<String>,
 }
 
 impl Default for Settings {
@@ -199,6 +201,7 @@ impl Default for Settings {
             rip_format: "mp3".into(),
             close_to_tray: true,
             pioneer: false,
+            no_cross_dup: vec![],
         }
     }
 }
@@ -212,12 +215,12 @@ fn load_settings(conn: &Connection) -> Settings {
 }
 
 #[tauri::command]
-fn get_settings(state: Tab) -> R<Settings> {
+async fn get_settings(state: Tab) -> R<Settings> {
     Ok(load_settings(&state.db.lock().unwrap()))
 }
 
 #[tauri::command]
-fn set_settings(app: AppHandle, state: Tab, settings: Settings) -> R<usize> {
+async fn set_settings(app: AppHandle, state: Tab, settings: Settings) -> R<usize> {
     let c = state.db.lock().unwrap();
     db::set_setting(&c, "settings", &serde_json::to_string(&settings).map_err(err)?).map_err(err)?;
     for r in &settings.roots {
@@ -305,13 +308,13 @@ async fn list_tracks(state: Tab) -> R<Vec<db::Track>> {
 }
 
 #[tauri::command]
-fn get_tracks(state: Tab, ids: Vec<i64>) -> R<Vec<db::Track>> {
+async fn get_tracks(state: Tab, ids: Vec<i64>) -> R<Vec<db::Track>> {
     db::tracks_by_ids(&state.db.lock().unwrap(), &ids).map_err(err)
 }
 
 /// Wellenformen als Base64 (je 2000 Bytes).
 #[tauri::command]
-fn get_peaks(state: Tab, ids: Vec<i64>) -> R<HashMap<i64, String>> {
+async fn get_peaks(state: Tab, ids: Vec<i64>) -> R<HashMap<i64, String>> {
     let c = state.db.lock().unwrap();
     let mut out = HashMap::new();
     for id in ids {
@@ -350,7 +353,7 @@ async fn analyze(app: AppHandle, state: Tab, ids: Option<Vec<i64>>) -> R<usize> 
 }
 
 #[tauri::command]
-fn cancel_task(state: Tab) {
+async fn cancel_task(state: Tab) {
     state.cancel_all();
 }
 
@@ -593,20 +596,28 @@ async fn find_duplicates(app: AppHandle, state: Tab, modes: duplicates::Modes) -
     let db = state.db.clone();
     let prog = emitter(&app, &state.label, "duplicates");
     blocking(move || {
-        let (tracks, fps, ignored) = {
+        let (tracks, fps, ignored, settings) = {
             let c = db.lock().unwrap();
             let mut st = c.prepare("SELECT a, b FROM dup_ignore")?;
             let ignored: duplicates::Ignored = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
-            (db::all_tracks(&c)?, if modes.audio { db::fingerprints(&c)? } else { HashMap::new() }, ignored)
+            (db::all_tracks(&c)?, if modes.audio { db::fingerprints(&c)? } else { HashMap::new() }, ignored, load_settings(&c))
         };
-        Ok(duplicates::find(&tracks, &fps, modes, &ignored, &prog))
+        // Musikordner je Titel: Paare aus verschiedenen Ordnern nur, wenn beide Ordner das erlauben
+        let roots: Vec<PathBuf> = settings.roots.iter().map(PathBuf::from).collect();
+        let root_of: Vec<Option<usize>> = tracks.iter().map(|t| root_index(&t.path, &roots)).collect();
+        let closed: Vec<bool> = settings.roots.iter().map(|r| settings.no_cross_dup.iter().any(|x| x == r)).collect();
+        let scope = |a: usize, b: usize| match (root_of[a], root_of[b]) {
+            (Some(x), Some(y)) if x != y => !closed[x] && !closed[y],
+            _ => true,
+        };
+        Ok(duplicates::find_scoped(&tracks, &fps, modes, &ignored, &scope, &prog))
     })
     .await
 }
 
 /// „Kein Duplikat“: diese Titel nie wieder gegeneinander melden (jedes Paar der Liste)
 #[tauri::command]
-fn dup_ignore(state: Tab, ids: Vec<i64>, against: Option<Vec<i64>>) -> R<usize> {
+async fn dup_ignore(state: Tab, ids: Vec<i64>, against: Option<Vec<i64>>) -> R<usize> {
     let c = state.db.lock().unwrap();
     let mut n = 0;
     let mut add = |a: i64, b: i64| {
@@ -625,16 +636,185 @@ fn dup_ignore(state: Tab, ids: Vec<i64>, against: Option<Vec<i64>>) -> R<usize> 
 }
 
 #[tauri::command]
-fn dup_ignore_count(state: Tab) -> R<usize> {
+async fn dup_ignore_count(state: Tab) -> R<usize> {
     state.db.lock().unwrap().query_row("SELECT COUNT(*) FROM dup_ignore", [], |r| r.get::<_, i64>(0)).map(|n| n as usize).map_err(err)
 }
 
 #[tauri::command]
-fn dup_ignore_clear(state: Tab) -> R<()> {
+async fn dup_ignore_clear(state: Tab) -> R<()> {
     state.db.lock().unwrap().execute("DELETE FROM dup_ignore", []).map(|_| ()).map_err(err)
 }
 
 // ---------- Sortieren ----------
+
+/// In welchem Musikordner liegt der Pfad? (längster passender zuerst)
+fn root_index(path: &str, roots: &[PathBuf]) -> Option<usize> {
+    let mut best: Option<(usize, usize)> = None;
+    for (i, r) in roots.iter().enumerate() {
+        if dirs::under_any(path, std::slice::from_ref(r)) {
+            let len = r.as_os_str().len();
+            if best.is_none_or(|(_, l)| len > l) {
+                best = Some((i, len));
+            }
+        }
+    }
+    best.map(|(i, _)| i)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DupMatch {
+    id: i64,
+    path: String,
+    artist: Option<String>,
+    title: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DupCheck {
+    track_id: i64,
+    matches: Vec<DupMatch>,
+    reasons: Vec<String>,
+    audio_similarity: Option<f32>,
+}
+
+/// Vor dem Kopieren/Verschieben nach `dir`: Gibt es die Titel dort (im ganzen Musikordner des Ziels)
+/// schon? `tab` = anderer Tab als Ziel (dessen Bibliothek wird verglichen).
+#[tauri::command]
+async fn dup_check(app: AppHandle, state: Tab, ids: Vec<i64>, dir: String, tab: Option<String>) -> R<Vec<DupCheck>> {
+    let src_db = state.db.clone();
+    let dst = match &tab {
+        Some(l) if *l != state.label => tab_state(&app, l).map_err(err)?,
+        _ => state.0.clone(),
+    };
+    let other = !Arc::ptr_eq(&dst, &state.0);
+    blocking(move || {
+        let (src, mut fps, ignored) = {
+            let c = src_db.lock().unwrap();
+            let src = db::tracks_by_ids(&c, &ids)?;
+            let fps = db::fingerprints(&c)?;
+            let mut st = c.prepare("SELECT a, b FROM dup_ignore")?;
+            let ignored: duplicates::Ignored = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+            (src, fps, ignored)
+        };
+        fps.retain(|k, _| ids.contains(k));
+        let (mut cand, dfps) = {
+            let c = dst.db.lock().unwrap();
+            let roots: Vec<PathBuf> = load_settings(&c).roots.iter().map(PathBuf::from).collect();
+            // Ziel-Musikordner (bzw. der Zielordner selbst, wenn er in keinem liegt)
+            let scope: Vec<PathBuf> = match root_index(&format!("{dir}/x"), &roots) {
+                Some(i) => vec![roots[i].clone()],
+                None => vec![PathBuf::from(&dir)],
+            };
+            let cand: Vec<db::Track> = db::all_tracks(&c)?.into_iter().filter(|t| dirs::under_any(&t.path, &scope) && (other || !ids.contains(&t.id))).collect();
+            (cand, db::fingerprints(&c)?)
+        };
+        // IDs aus einer anderen Bibliothek können sich mit unseren überschneiden → negativ machen
+        let map = |id: i64| if other { -id - 1 } else { id };
+        for t in cand.iter_mut() {
+            if let Some(f) = dfps.get(&t.id) {
+                fps.insert(map(t.id), f.clone());
+            }
+            t.id = map(t.id);
+        }
+        let none = duplicates::Ignored::default();
+        let hits = duplicates::check_against(&src, &cand, &fps, if other { &none } else { &ignored });
+        let by_id: HashMap<i64, &db::Track> = cand.iter().map(|t| (t.id, t)).collect();
+        let unmap = |id: i64| if other { -(id + 1) } else { id };
+        Ok(hits
+            .into_iter()
+            .map(|h| DupCheck {
+                track_id: h.track_id,
+                matches: h.matches.iter().filter_map(|m| by_id.get(m)).map(|t| DupMatch { id: unmap(t.id), path: t.path.clone(), artist: t.artist.clone(), title: t.title.clone() }).collect(),
+                reasons: h.reasons,
+                audio_similarity: h.audio_similarity,
+            })
+            .collect())
+    })
+    .await
+}
+
+/// Musikordner eines anderen Tabs (Ziel beim Ziehen auf einen Tab)
+#[tauri::command]
+async fn tab_roots(app: AppHandle, label: String) -> R<Vec<String>> {
+    let st = tab_state(&app, &label).map_err(err)?;
+    let roots = load_settings(&st.db.lock().unwrap()).roots;
+    Ok(roots)
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct TransferReport {
+    moved: usize,
+    errors: Vec<String>,
+    new_ids: Vec<i64>,
+}
+
+/// Titel in einen anderen Tab kopieren oder verschieben (in einen Ordner dieses Tabs).
+/// Ziel außerhalb seiner Musikordner → wird dort als Musikordner aufgenommen.
+#[tauri::command]
+async fn transfer_to_tab(app: AppHandle, state: Tab, ids: Vec<i64>, label: String, dir: String, copy: bool, skip: Vec<i64>) -> R<TransferReport> {
+    let dst = tab_state(&app, &label).map_err(err)?;
+    let src_db = state.db.clone();
+    let prog = emitter(&app, &state.label, "organize");
+    let _ = app.asset_protocol_scope().allow_directory(&dir, true);
+    let app2 = app.clone();
+    blocking(move || {
+        let tracks: Vec<db::Track> = db::tracks_by_ids(&src_db.lock().unwrap(), &ids)?.into_iter().filter(|t| !skip.contains(&t.id)).collect();
+        let plan = organize::plan_to_folder(&tracks, Path::new(&dir), None);
+        let stops = stop_dirs(&src_db.lock().unwrap());
+        let mut rep = TransferReport::default();
+        let mut done_paths = Vec::new();
+        for (i, m) in plan.iter().enumerate() {
+            prog(i, plan.len(), &m.to);
+            if m.unchanged {
+                continue;
+            }
+            let (from, to) = (Path::new(&m.from), Path::new(&m.to));
+            if to.exists() {
+                rep.errors.push(format!("Ziel belegt: {}", m.to));
+                continue;
+            }
+            let r = if copy {
+                to.parent().map(std::fs::create_dir_all).transpose().and_then(|_| std::fs::copy(from, to).map(|_| ()))
+            } else {
+                musiccore::paths::move_file(from, to)
+            };
+            match r {
+                Ok(()) => {
+                    if !copy {
+                        let c = src_db.lock().unwrap();
+                        c.execute("DELETE FROM tracks WHERE id = ?1", [m.track_id])?;
+                        c.execute("DELETE FROM playlist_items WHERE track_id = ?1", [m.track_id])?;
+                        if let Some(d) = from.parent() {
+                            musiccore::paths::remove_empty_dirs(d.to_path_buf(), &stops);
+                        }
+                    }
+                    done_paths.push(to.to_path_buf());
+                    rep.moved += 1;
+                }
+                Err(e) => rep.errors.push(format!("{}: {e}", m.from)),
+            }
+        }
+        prog(plan.len(), plan.len(), "Fertig");
+        // Ziel-Tab: Ordner ggf. als Musikordner aufnehmen, Dateien eintragen
+        {
+            let c = dst.db.lock().unwrap();
+            let mut s = load_settings(&c);
+            let roots: Vec<PathBuf> = s.roots.iter().map(PathBuf::from).collect();
+            if !dirs::under_any(&format!("{dir}/x"), &roots) {
+                s.roots.push(dir.clone());
+                db::set_setting(&c, "settings", &serde_json::to_string(&s)?)?;
+            }
+        }
+        rep.new_ids = scanner::add_files(&dst.db, &done_paths)?;
+        sync_playlists(&src_db.lock().unwrap());
+        let _ = app2.emit_to(&dst.label, "library-changed", watch::Change { added: rep.new_ids.clone(), ..Default::default() });
+        Ok(rep)
+    })
+    .await
+}
 
 fn stop_dirs(conn: &Connection) -> Vec<PathBuf> {
     let s = load_settings(conn);
@@ -673,7 +853,7 @@ async fn organize_apply(app: AppHandle, state: Tab, plan: Vec<organize::PlannedM
 }
 
 #[tauri::command]
-fn move_batches(state: Tab) -> R<Vec<organize::Batch>> {
+async fn move_batches(state: Tab) -> R<Vec<organize::Batch>> {
     organize::batches(&state.db.lock().unwrap()).map_err(err)
 }
 
@@ -702,12 +882,12 @@ fn delete_playlist_file(conn: &Connection, name: &str) {
 }
 
 #[tauri::command]
-fn playlists_list(state: Tab) -> R<Vec<playlists::Playlist>> {
+async fn playlists_list(state: Tab) -> R<Vec<playlists::Playlist>> {
     playlists::list(&state.db.lock().unwrap()).map_err(err)
 }
 
 #[tauri::command]
-fn playlist_create(state: Tab, name: String, rules: Option<playlists::SmartRules>, ids: Option<Vec<i64>>) -> R<i64> {
+async fn playlist_create(state: Tab, name: String, rules: Option<playlists::SmartRules>, ids: Option<Vec<i64>>) -> R<i64> {
     let mut c = state.db.lock().unwrap();
     let id = playlists::create(&c, &name, rules.as_ref()).map_err(err)?;
     if let Some(ids) = ids {
@@ -718,7 +898,7 @@ fn playlist_create(state: Tab, name: String, rules: Option<playlists::SmartRules
 }
 
 #[tauri::command]
-fn playlist_update(state: Tab, id: i64, name: String, rules: Option<playlists::SmartRules>) -> R<()> {
+async fn playlist_update(state: Tab, id: i64, name: String, rules: Option<playlists::SmartRules>) -> R<()> {
     let c = state.db.lock().unwrap();
     let old = playlists::name(&c, id).map_err(err)?;
     if old != name {
@@ -730,7 +910,7 @@ fn playlist_update(state: Tab, id: i64, name: String, rules: Option<playlists::S
 }
 
 #[tauri::command]
-fn playlist_delete(state: Tab, id: i64) -> R<()> {
+async fn playlist_delete(state: Tab, id: i64) -> R<()> {
     let c = state.db.lock().unwrap();
     if let Ok(n) = playlists::name(&c, id) {
         delete_playlist_file(&c, &n);
@@ -739,12 +919,12 @@ fn playlist_delete(state: Tab, id: i64) -> R<()> {
 }
 
 #[tauri::command]
-fn playlist_items(state: Tab, id: i64) -> R<Vec<i64>> {
+async fn playlist_items(state: Tab, id: i64) -> R<Vec<i64>> {
     playlists::track_ids(&state.db.lock().unwrap(), id).map_err(err)
 }
 
 #[tauri::command]
-fn playlist_set_items(state: Tab, id: i64, ids: Vec<i64>) -> R<()> {
+async fn playlist_set_items(state: Tab, id: i64, ids: Vec<i64>) -> R<()> {
     let mut c = state.db.lock().unwrap();
     playlists::set_items(&mut c, id, &ids).map_err(err)?;
     sync_playlists(&c);
@@ -752,7 +932,7 @@ fn playlist_set_items(state: Tab, id: i64, ids: Vec<i64>) -> R<()> {
 }
 
 #[tauri::command]
-fn playlist_add_items(state: Tab, id: i64, ids: Vec<i64>) -> R<()> {
+async fn playlist_add_items(state: Tab, id: i64, ids: Vec<i64>) -> R<()> {
     let mut c = state.db.lock().unwrap();
     playlists::add_items(&mut c, id, &ids).map_err(err)?;
     sync_playlists(&c);
@@ -760,7 +940,7 @@ fn playlist_add_items(state: Tab, id: i64, ids: Vec<i64>) -> R<()> {
 }
 
 #[tauri::command]
-fn smart_preview(state: Tab, rules: playlists::SmartRules) -> R<Vec<i64>> {
+async fn smart_preview(state: Tab, rules: playlists::SmartRules) -> R<Vec<i64>> {
     let all = db::all_tracks(&state.db.lock().unwrap()).map_err(err)?;
     Ok(playlists::evaluate(&all, &rules))
 }
@@ -783,12 +963,12 @@ async fn playlist_import(state: Tab, file: String) -> R<(i64, usize)> {
 }
 
 #[tauri::command]
-fn playlist_save_m3u8(state: Tab, id: i64, file: String) -> R<()> {
+async fn playlist_save_m3u8(state: Tab, id: i64, file: String) -> R<()> {
     playlists::write_m3u8(&state.db.lock().unwrap(), id, Path::new(&file)).map_err(err)
 }
 
 #[tauri::command]
-fn export_size(state: Tab, ids: Vec<i64>) -> R<u64> {
+async fn export_size(state: Tab, ids: Vec<i64>) -> R<u64> {
     export::size_of(&state.db.lock().unwrap(), &ids).map_err(err)
 }
 
@@ -816,7 +996,7 @@ struct PioneerTrack {
 }
 
 #[tauri::command]
-fn pioneer_track(state: Tab, id: i64) -> R<PioneerTrack> {
+async fn pioneer_track(state: Tab, id: i64) -> R<PioneerTrack> {
     pioneer_on(&state.db)?;
     use base64::Engine;
     let c = state.db.lock().unwrap();
@@ -828,19 +1008,19 @@ fn pioneer_track(state: Tab, id: i64) -> R<PioneerTrack> {
 }
 
 #[tauri::command]
-fn pioneer_set_grid(state: Tab, id: i64, bpm: f64, downbeat_ms: f64, what: String) -> R<i64> {
+async fn pioneer_set_grid(state: Tab, id: i64, bpm: f64, downbeat_ms: f64, what: String) -> R<i64> {
     pioneer_on(&state.db)?;
     pioneer::set_grid(&state.db.lock().unwrap(), id, bpm, downbeat_ms, &what).map_err(err)
 }
 
 #[tauri::command]
-fn pioneer_set_cue(state: Tab, id: i64, cue: pioneer::Cue) -> R<i64> {
+async fn pioneer_set_cue(state: Tab, id: i64, cue: pioneer::Cue) -> R<i64> {
     pioneer_on(&state.db)?;
     pioneer::set_cue(&state.db.lock().unwrap(), id, &cue).map_err(err)
 }
 
 #[tauri::command]
-fn pioneer_delete_cue(state: Tab, id: i64, cue_id: i64) -> R<i64> {
+async fn pioneer_delete_cue(state: Tab, id: i64, cue_id: i64) -> R<i64> {
     pioneer_on(&state.db)?;
     pioneer::delete_cue(&state.db.lock().unwrap(), id, cue_id).map_err(err)
 }
@@ -893,7 +1073,7 @@ async fn pioneer_xml(app: AppHandle, state: Tab, playlists: Vec<i64>, file: Stri
 }
 
 #[tauri::command]
-fn sync_playlist_folder(state: Tab) -> R<usize> {
+async fn sync_playlist_folder(state: Tab) -> R<usize> {
     let c = state.db.lock().unwrap();
     let s = load_settings(&c);
     match s.playlist_dir.filter(|d| !d.is_empty()) {
@@ -1019,7 +1199,7 @@ async fn rename_track(state: Tab, id: i64, name: String) -> R<organize::ApplyRep
 }
 
 #[tauri::command]
-fn rename_preview(state: Tab, ids: Vec<i64>, pattern: String) -> R<Vec<(i64, String)>> {
+async fn rename_preview(state: Tab, ids: Vec<i64>, pattern: String) -> R<Vec<(i64, String)>> {
     let tracks = db::tracks_by_ids(&state.db.lock().unwrap(), &ids).map_err(err)?;
     Ok(tracks
         .iter()
@@ -1057,17 +1237,17 @@ async fn rename_by_pattern(state: Tab, ids: Vec<i64>, pattern: String) -> R<orga
 // ---------- Sync (USB-Stick, SD-Karte …) ----------
 
 #[tauri::command]
-fn sync_targets(state: Tab) -> R<Vec<sync::TargetState>> {
+async fn sync_targets(state: Tab) -> R<Vec<sync::TargetState>> {
     sync::list(&state.db.lock().unwrap()).map_err(err)
 }
 
 #[tauri::command]
-fn sync_save(state: Tab, target: sync::Target) -> R<i64> {
+async fn sync_save(state: Tab, target: sync::Target) -> R<i64> {
     sync::save(&state.db.lock().unwrap(), &target).map_err(err)
 }
 
 #[tauri::command]
-fn sync_delete(state: Tab, id: i64) -> R<()> {
+async fn sync_delete(state: Tab, id: i64) -> R<()> {
     sync::delete(&state.db.lock().unwrap(), id).map_err(err)
 }
 
@@ -1554,6 +1734,9 @@ pub fn run() {
             cast_set_sound,
             set_tray_title,
             tabs_list,
+            tab_roots,
+            dup_check,
+            transfer_to_tab,
             tab_show,
             tab_create,
             tab_rename,

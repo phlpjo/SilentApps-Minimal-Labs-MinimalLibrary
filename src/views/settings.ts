@@ -18,11 +18,20 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
     clear(body);
     const roots = h("div", {},
       ...(s.roots.length
-        ? s.roots.map((r) =>
-            h("div", { class: "setting" }, h("span", { style: { fontFamily: "var(--mono)", fontSize: "12px" } }, r),
-              h("button", { class: "btn", onclick: async () => { await store.saveSettings({ roots: s.roots.filter((x) => x !== r) }); render(); scanNow(); } }, "Entfernen"),
-            ),
-          )
+        ? s.roots.map((r) => {
+            // Duplikatsuche: Titel dieses Ordners auch mit den anderen Musikordnern vergleichen?
+            const cross = h("input", { type: "checkbox", checked: !(s.noCrossDup ?? []).includes(r) }) as HTMLInputElement;
+            cross.addEventListener("change", () => {
+              const set = new Set(s.noCrossDup ?? []);
+              cross.checked ? set.delete(r) : set.add(r);
+              store.saveSettings({ noCrossDup: [...set] });
+            });
+            return h("div", { class: "setting", style: { flexWrap: "wrap", gap: "6px 14px" } },
+              h("span", { style: { fontFamily: "var(--mono)", fontSize: "12px", flex: "1", minWidth: "220px", wordBreak: "break-all" } }, r),
+              s.roots.length > 1 ? h("label", { class: "check", title: "Aus: Duplikate nur innerhalb dieses Ordners suchen" }, cross, "Duplikate mit anderen Musikordnern finden") : "",
+              h("button", { class: "btn", onclick: async () => { await store.saveSettings({ roots: s.roots.filter((x) => x !== r), noCrossDup: (s.noCrossDup ?? []).filter((x) => x !== r) }); render(); scanNow(); } }, "Entfernen"),
+            );
+          })
         : [h("div", { class: "note" }, "Noch kein Musikordner. Füge den Ordner hinzu, in dem deine Musik liegt.")]),
     );
     const threads = h("select", {}, ...[1, 2, 3, 4, 6, 8, 12, 16].map((n) => h("option", { value: String(n), selected: n === s.threads }, String(n))));

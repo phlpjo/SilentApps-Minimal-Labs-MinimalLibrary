@@ -396,3 +396,5 @@ html.mac #titlebar { padding-left: 78px; }
 #titlebar .tab .spk { display: inline-flex; color: var(--ink); }
 #titlebar .tab-add { width: 26px; height: 26px; border: 0; border-radius: 8px; background: transparent; color: var(--weak); font-size: 16px; cursor: pointer; flex: none; }
 #titlebar .tab-add:hover { color: var(--ink); background: var(--panel); }
+.dup-hit { padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
+#titlebar .tab.drop { background: var(--ink); color: var(--bg); }

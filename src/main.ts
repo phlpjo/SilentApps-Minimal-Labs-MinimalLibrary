@@ -407,8 +407,26 @@ store.on("player", () => {
 });
 
 // Musikordner-Überwachung: Änderungen aus dem Explorer sofort übernehmen
-listen<LibraryChange>("library-changed", async (e) => {
+// Änderungen sammeln: bei Cloud-Ordnern kommen sie in schneller Folge – nur einmal neu laden
+let pendingChange: LibraryChange | null = null;
+let changeTimer = 0;
+listen<LibraryChange>("library-changed", (e) => {
   const c = e.payload;
+  if (pendingChange) {
+    pendingChange.added.push(...c.added);
+    pendingChange.moved += c.moved;
+    pendingChange.removed += c.removed;
+    pendingChange.updated += c.updated;
+  } else pendingChange = { ...c, added: [...c.added] };
+  clearTimeout(changeTimer);
+  changeTimer = window.setTimeout(() => {
+    const all = pendingChange!;
+    pendingChange = null;
+    applyLibraryChange(all);
+  }, 1200);
+});
+
+async function applyLibraryChange(c: LibraryChange) {
   await store.loadTracks();
   store.emit("dirs");
   if (c.moved || c.removed || c.added.length) store.loadPlaylists();
@@ -419,7 +437,7 @@ listen<LibraryChange>("library-changed", async (e) => {
   ].filter(Boolean);
   if (parts.length) toast(`Musikordner: ${parts.join(", ")}`);
   if (c.added.length && store.settings.autoAnalyze) analyzeIds(c.added);
-});
+}
 
 // Dateien/Ordner ins Fenster ziehen → zur Bibliothek
 getCurrentWebview().onDragDropEvent(async (e) => {

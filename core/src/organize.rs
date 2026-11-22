@@ -174,9 +174,12 @@ pub struct ApplyReport {
     pub batch_id: i64,
     pub moved: usize,
     pub errors: Vec<String>,
+    /// Bei Kopien: IDs der neuen Titel
+    #[serde(default)]
+    pub new_ids: Vec<i64>,
 }
 
-/// Führt den Plan aus. `copy = true` kopiert statt zu verschieben (Bibliothek zeigt dann auf die Kopie).
+/// Führt den Plan aus. `copy = true` kopiert: das Original bleibt, die Kopie kommt als eigener Titel dazu.
 pub fn apply(
     conn: &std::sync::Mutex<Connection>,
     plan: &[PlannedMove],
@@ -193,7 +196,7 @@ pub fn apply(
         )?;
         c.last_insert_rowid()
     };
-    let mut report = ApplyReport { batch_id, moved: 0, errors: vec![] };
+    let mut report = ApplyReport { batch_id, moved: 0, errors: vec![], new_ids: vec![] };
     let todo: Vec<&PlannedMove> = plan.iter().filter(|m| !m.unchanged).collect();
     // Zwei-Phasen bei Kollisionen (A→B und B→A): erst auf temporäre Namen, wenn Ziel noch belegt ist
     for (i, m) in todo.iter().enumerate() {
@@ -219,11 +222,20 @@ pub fn apply(
         match res {
             Ok(()) => {
                 let c = conn.lock().unwrap();
+                let tid = if copy {
+                    // Kopie = neuer Titel; das Original bleibt, wo es ist
+                    let _ = c.execute("DELETE FROM tracks WHERE path = ?1", [&m.to]); // evtl. schon vom Überwacher erfasst
+                    let id = crate::db::clone_track(&c, m.track_id, &m.to)?;
+                    report.new_ids.push(id);
+                    id
+                } else {
+                    c.execute("UPDATE tracks SET path = ?2 WHERE id = ?1", params![m.track_id, m.to])?;
+                    m.track_id
+                };
                 c.execute(
                     "INSERT INTO moves(batch_id, track_id, src, dst, copied) VALUES(?1, ?2, ?3, ?4, ?5)",
-                    params![batch_id, m.track_id, m.from, m.to, copy as i64],
+                    params![batch_id, tid, m.from, m.to, copy as i64],
                 )?;
-                c.execute("UPDATE tracks SET path = ?2 WHERE id = ?1", params![m.track_id, m.to])?;
                 report.moved += 1;
                 if !copy {
                     if let Some(d) = from.parent() {
@@ -277,7 +289,7 @@ pub fn undo(conn: &std::sync::Mutex<Connection>, batch_id: i64, stop_dirs: &[Pat
         st.query_map([batch_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? != 0)))?
             .collect::<rusqlite::Result<_>>()?
     };
-    let mut report = ApplyReport { batch_id, moved: 0, errors: vec![] };
+    let mut report = ApplyReport { batch_id, moved: 0, errors: vec![], new_ids: vec![] };
     for (tid, src, dst, copied) in moves {
         let (s, d) = (Path::new(&src), Path::new(&dst));
         let res = if copied {
@@ -291,7 +303,13 @@ pub fn undo(conn: &std::sync::Mutex<Connection>, batch_id: i64, stop_dirs: &[Pat
             Ok(()) => {
                 if let Some(id) = tid {
                     let c = conn.lock().unwrap();
-                    c.execute("UPDATE tracks SET path = ?2 WHERE id = ?1", params![id, src])?;
+                    if copied {
+                        // Kopie wieder weg → ihren Titel entfernen (nur wenn er wirklich die Kopie ist)
+                        c.execute("DELETE FROM tracks WHERE id = ?1 AND path = ?2", params![id, dst])?;
+                        c.execute("DELETE FROM playlist_items WHERE track_id = ?1", [id])?;
+                    } else {
+                        c.execute("UPDATE tracks SET path = ?2 WHERE id = ?1", params![id, src])?;
+                    }
                 }
                 if let Some(p) = d.parent() {
                     paths::remove_empty_dirs(p.to_path_buf(), stop_dirs);
@@ -324,5 +342,28 @@ mod tests {
         let mut u = t.clone();
         u.track_no = None;
         assert_eq!(filename_from_pattern("{track} - {title}", &u), "Hells Bells");
+    }
+
+    #[test]
+    fn copy_keeps_original_and_adds_track() {
+        let base = std::env::temp_dir().join(format!("mlcopy{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("a")).unwrap();
+        std::fs::create_dir_all(base.join("b")).unwrap();
+        std::fs::write(base.join("a/x.mp3"), b"abc").unwrap();
+        let conn = std::sync::Mutex::new(crate::db::open(&base.join("t.db")).unwrap());
+        conn.lock().unwrap().execute("INSERT INTO tracks(path, size, title) VALUES(?1, 3, 'X')", [base.join("a/x.mp3").to_string_lossy()]).unwrap();
+        let tracks = crate::db::all_tracks(&conn.lock().unwrap()).unwrap();
+        let plan = plan_to_folder(&tracks, &base.join("b"), None);
+        let r = apply(&conn, &plan, true, "Kopie", &[], &|_, _, _| {}).unwrap();
+        assert_eq!(r.new_ids.len(), 1);
+        assert!(base.join("a/x.mp3").exists() && base.join("b/x.mp3").exists());
+        let all = crate::db::all_tracks(&conn.lock().unwrap()).unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all.iter().all(|t| t.title.as_deref() == Some("X")));
+        undo(&conn, r.batch_id, &[]).unwrap();
+        assert!(!base.join("b/x.mp3").exists());
+        assert_eq!(crate::db::all_tracks(&conn.lock().unwrap()).unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

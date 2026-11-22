@@ -12,9 +12,24 @@ let lastEntries: RipEntry[] = [];
 const checked = new Set<number>();
 const states = new Map<number, RipEvent>();
 let running = false;
+let urlText = "";
+/** Liste der offenen Ansicht neu zeichnen (null = Ripper gerade nicht geöffnet) */
+let rerender: (() => void) | null = null;
+
+// Fortschritt auch mitschreiben, während eine andere Ansicht offen ist
+listen<RipEvent>("rip", (e) => {
+  states.set(e.payload.index, e.payload);
+  if (e.payload.stage === "done") checked.delete(e.payload.index);
+  rerender?.();
+});
+
+/** Läuft gerade ein Download? (für die Navigation) */
+export const ripRunning = () => running;
 
 export function ripperView(): { el: HTMLElement; destroy: () => void } {
   const url = h("textarea", { placeholder: "Link einfügen: YouTube, SoundCloud, Spotify – Titel, Album oder Playlist. Mehrere Links: einer pro Zeile.", rows: 2, spellcheck: false, style: { width: "100%", resize: "vertical" } }) as HTMLTextAreaElement;
+  url.value = urlText;
+  url.addEventListener("input", () => (urlText = url.value));
   const toolsBox = h("div", {});
   const listBox = h("div", {});
   const info = h("span", { class: "sub" });
@@ -117,6 +132,7 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
   const load = async () => {
     const links = url.value.split(/\s+/).map((x) => x.trim()).filter((x) => x.startsWith("http"));
     if (!links.length) return toast("Bitte einen Link einfügen");
+    if (running) return toast("Erst den laufenden Download abwarten oder abbrechen");
     listBox.replaceChildren(h("div", { class: "empty" }, "Lese Link …"));
     const names: string[] = [];
     const entries: RipEntry[] = [];
@@ -135,11 +151,12 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
     checked.clear();
     states.clear();
     entries.filter((e) => !e.inLibrary).forEach((e) => checked.add(e.index));
-    renderList();
+    rerender?.();
   };
 
   const download = async () => {
     const list = lastEntries.filter((e) => checked.has(e.index));
+    if (running) return toast("Download läuft schon");
     if (!list.length) return toast("Nichts ausgewählt");
     if (!dir.value.trim()) return toast("Zielordner wählen");
     let target = dir.value.trim();
@@ -149,6 +166,7 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
     }
     running = true;
     renderList();
+    toast(`${list.length} Titel werden geladen – du kannst den Ripper verlassen, es läuft im Hintergrund weiter.`, 5000);
     try {
       const r = await api.ripDownload(list, target, fmt.value as "mp3" | "original");
       reportErrors(r.errors, `${r.ids.length} Titel heruntergeladen`);
@@ -161,15 +179,9 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
       toast(String(e));
     } finally {
       running = false;
-      renderList();
+      rerender?.();
     }
   };
-
-  const unlisten = listen<RipEvent>("rip", (e) => {
-    states.set(e.payload.index, e.payload);
-    if (e.payload.stage === "done") checked.delete(e.payload.index);
-    renderList();
-  });
 
   url.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -180,6 +192,7 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
   // Link aus der Zwischenablage beim Einfügen direkt laden
   url.addEventListener("paste", () => setTimeout(() => url.value.trim().startsWith("http") && load(), 50));
 
+  rerender = renderList;
   renderTools();
   renderList();
   setTimeout(() => url.focus());
@@ -211,5 +224,5 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
       ),
     ),
   );
-  return { el, destroy: () => { unlisten.then((u) => u()); } };
+  return { el, destroy: () => { if (rerender === renderList) rerender = null; } };
 }

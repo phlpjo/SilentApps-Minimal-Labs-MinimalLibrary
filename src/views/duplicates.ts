@@ -81,9 +81,31 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
     );
   };
 
+  /** Als „kein Duplikat“ merken und aus der Ansicht nehmen */
+  const notDuplicate = async (gi: number, ids: number[], against: number[] | null) => {
+    await api.dupIgnore(ids, against);
+    const g = lastGroups![gi];
+    if (against) g.trackIds = g.trackIds.filter((x) => !ids.includes(x));
+    if (!against || g.trackIds.length < 2) g.trackIds = [];
+    keep.get(gi)?.forEach((x) => !g.trackIds.includes(x) && keep.get(gi)!.delete(x));
+    if (g.trackIds.length && !keep.get(gi)?.size) keep.set(gi, new Set([g.trackIds[0]]));
+    toast("Wird nicht mehr als Duplikat angezeigt");
+    render();
+    updateIgnored();
+  };
+
+  const ignoredInfo = h("span", { class: "note" });
+  const updateIgnored = async () => {
+    const n = await api.dupIgnoreCount().catch(() => 0);
+    clear(ignoredInfo);
+    if (n) ignoredInfo.append(`${n} Paar${n === 1 ? "" : "e"} als „kein Duplikat“ markiert · `,
+      h("a", { href: "#", style: { color: "inherit" }, onclick: async (e: Event) => { e.preventDefault(); await api.dupIgnoreClear(); toast("Markierungen zurückgesetzt"); updateIgnored(); } }, "zurücksetzen"));
+  };
+  updateIgnored();
+
   const render = () => {
     canvases.length = 0;
-    const groups = (lastGroups ?? []).map((g, i) => [g, i] as const).filter(([g]) => g.trackIds.some((id) => store.tracks.has(id)));
+    const groups = (lastGroups ?? []).map((g, i) => [g, i] as const).filter(([g]) => g.trackIds.filter((id) => store.tracks.has(id)).length > 1);
     summary.textContent = lastGroups ? `${groups.length} Gruppen · ${groups.reduce((s, [g]) => s + g.trackIds.length - 1, 0)} mögliche Duplikate` : "";
     if (!lastGroups) {
       out.replaceChildren(h("div", { class: "empty" }, "Suchart wählen und ", h("b", {}, "Suchen"), " klicken."));
@@ -122,6 +144,7 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
             e.preventDefault();
             contextMenu(e.clientX, e.clientY, [
               { label: "Abspielen", action: () => player.play(id, 0, g.trackIds) },
+              { label: "Gehört nicht dazu (kein Duplikat)", action: () => notDuplicate(gi, [id], g.trackIds.filter((x) => x !== id)) },
               { label: "Im Explorer zeigen", action: () => revealItemInDir(t.path) },
               { label: "Ordner in der Ordneransicht", action: () => nav("folders", undefined, t.path) },
             ]);
@@ -129,7 +152,12 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
           return tr;
         });
         return h("div", { class: "group" },
-          h("div", { class: "gh" }, h("span", {}, reasons), h("span", {}, "Haken = behalten")),
+          h("div", { class: "gh" }, h("span", {}, reasons),
+            h("span", { style: { display: "flex", gap: "14px", alignItems: "center" } },
+              h("span", {}, "Haken = behalten"),
+              h("button", { class: "btn", title: "Diese Titel nie wieder als Duplikat anzeigen", onclick: () => notDuplicate(gi, g.trackIds, null) }, "Kein Duplikat"),
+            ),
+          ),
           h("table", { class: "grid fixed" },
             h("colgroup", {}, h("col", { style: { width: "34px" } }), h("col", {}), h("col", { style: { width: "90px" } }), h("col", { style: { width: "56px" } }), h("col", { style: { width: "76px" } }), h("col", { style: { width: "30%" } })),
             h("tbody", {}, ...rows)),
@@ -162,7 +190,7 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
         "Metadaten: gleicher Künstler + Titel (ohne Zusätze wie „Remastered“). Dateiname: gleicher Name ohne Nummern und „(1)“/„Kopie“. ",
         "Audio-Inhalt: akustischer Fingerabdruck – findet dieselbe Aufnahme auch in anderem Format oder mit falschen Tags. Vorschlag zum Behalten: verlustfrei > höhere Bitrate > vollständigere Tags.",
       ),
-      hint, out,
+      hint, ignoredInfo, out,
     ),
     h("div", { style: { padding: "8px 20px", borderTop: "1px solid var(--line-soft)" } }, footer),
   );

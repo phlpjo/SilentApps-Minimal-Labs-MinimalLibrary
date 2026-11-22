@@ -30,7 +30,7 @@ fn main() -> anyhow::Result<()> {
         );
     }
     let fps = db::fingerprints(&conn.lock().unwrap())?;
-    let g = duplicates::find(&tracks, &fps, duplicates::Modes { metadata: true, filename: true, audio: true }, &prog);
+    let g = duplicates::find(&tracks, &fps, duplicates::Modes { metadata: true, filename: true, audio: true }, &Default::default(), &prog);
     println!("Duplikate: {g:#?}");
     if tracks.len() >= 2 {
         let a = &fps[&tracks[0].id];

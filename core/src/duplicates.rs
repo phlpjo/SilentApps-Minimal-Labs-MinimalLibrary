@@ -162,12 +162,23 @@ fn quality(t: &Track) -> (i64, i64, i64, i64) {
     (lossless, t.bitrate.unwrap_or(0) as i64, tags, t.size)
 }
 
-pub fn find(tracks: &[Track], fps: &HashMap<i64, Vec<u32>>, modes: Modes, progress: crate::Progress) -> Vec<DupGroup> {
+/// Paare, die als „kein Duplikat“ markiert wurden (kleinere ID zuerst)
+pub type Ignored = std::collections::HashSet<(i64, i64)>;
+
+pub fn pair(a: i64, b: i64) -> (i64, i64) {
+    (a.min(b), a.max(b))
+}
+
+pub fn find(tracks: &[Track], fps: &HashMap<i64, Vec<u32>>, modes: Modes, ignored: &Ignored, progress: crate::Progress) -> Vec<DupGroup> {
     let n = tracks.len();
     let mut uf = Uf::new(n);
     let mut reasons: HashMap<(usize, usize), BTreeSet<&'static str>> = HashMap::new();
     let mut audio_sim: HashMap<(usize, usize), f32> = HashMap::new();
+    let is_ignored = |a: usize, b: usize| ignored.contains(&pair(tracks[a].id, tracks[b].id));
     let mut add = |uf: &mut Uf, a: usize, b: usize, why: &'static str| {
+        if is_ignored(a, b) {
+            return;
+        }
         uf.union(a, b);
         reasons.entry((a.min(b), a.max(b))).or_default().insert(why);
     };
@@ -239,6 +250,9 @@ pub fn find(tracks: &[Track], fps: &HashMap<i64, Vec<u32>>, modes: Modes, progre
             })
             .collect();
         for (a, b, s) in pairs {
+            if is_ignored(a, b) {
+                continue;
+            }
             add(&mut uf, a, b, "audio");
             audio_sim.insert((a.min(b), a.max(b)), s);
         }

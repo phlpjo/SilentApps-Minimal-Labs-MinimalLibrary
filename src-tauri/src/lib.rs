@@ -15,8 +15,29 @@ struct AppState {
     /// Fensterkennung des Tabs ("main" oder "tab-…")
     label: String,
     db: Db,
-    cancel: Arc<AtomicBool>,
+    /// Laufende Aufgaben (Analyse, Export, Sync, Ripper) – jede mit eigenem Abbruch-Schalter,
+    /// damit eine neu gestartete Aufgabe eine abgebrochene nicht wieder „anschaltet“
+    tasks: Mutex<Vec<std::sync::Weak<AtomicBool>>>,
     watcher: Mutex<Option<watch::Watcher>>,
+}
+
+impl AppState {
+    /// Neue Aufgabe anmelden: eigener Abbruch-Schalter
+    fn task(&self) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut t = self.tasks.lock().unwrap();
+        t.retain(|w| w.strong_count() > 0);
+        t.push(Arc::downgrade(&flag));
+        flag
+    }
+    /// Alle laufenden Aufgaben dieses Tabs abbrechen
+    fn cancel_all(&self) {
+        for w in self.tasks.lock().unwrap().iter() {
+            if let Some(f) = w.upgrade() {
+                f.store(true, Ordering::Relaxed);
+            }
+        }
+    }
 }
 
 // ---------- Tabs: jede Registerkarte ist eine eigene, komplette Instanz ----------
@@ -70,7 +91,7 @@ fn tab_state(app: &AppHandle, label: &str) -> anyhow::Result<Arc<AppState>> {
     for r in &roots {
         let _ = app.asset_protocol_scope().allow_directory(r, true);
     }
-    let st = Arc::new(AppState { label: label.to_string(), db: Arc::new(Mutex::new(conn)), cancel: Arc::new(AtomicBool::new(false)), watcher: Mutex::new(None) });
+    let st = Arc::new(AppState { label: label.to_string(), db: Arc::new(Mutex::new(conn)), tasks: Mutex::new(Vec::new()), watcher: Mutex::new(None) });
     let st = {
         let mut m = tabs.map.lock().unwrap();
         m.entry(label.to_string()).or_insert(st).clone()
@@ -206,7 +227,7 @@ fn set_settings(app: AppHandle, state: Tab, settings: Settings) -> R<usize> {
     let roots: Vec<PathBuf> = settings.roots.iter().map(PathBuf::from).collect();
     let pruned = dirs::prune_outside(&c, &roots).map_err(err)?;
     if pruned > 0 {
-        state.cancel.store(true, Ordering::Relaxed);
+        state.cancel_all();
         sync_playlists(&c);
     }
     drop(c);
@@ -310,24 +331,27 @@ fn allow_play(app: AppHandle, path: String) -> R<()> {
 #[tauri::command]
 async fn analyze(app: AppHandle, state: Tab, ids: Option<Vec<i64>>) -> R<usize> {
     let db = state.db.clone();
-    let cancel = state.cancel.clone();
-    cancel.store(false, Ordering::Relaxed);
+    let cancel = state.task();
     let s = load_settings(&db.lock().unwrap());
     let (threads, pioneer) = (s.threads, s.pioneer);
     let prog = emitter(&app, &state.label, "analyze");
     let app2 = app.clone();
     let label = state.label.clone();
     blocking(move || {
-        analysis::analyze_pending_with(&db, ids, threads, pioneer, &cancel, &prog, &|id| {
+        let n = analysis::analyze_pending_with(&db, ids, threads, pioneer, &cancel, &prog, &|id| {
             let _ = app2.emit_to(&label, "analyzed", id);
-        })
+        })?;
+        if cancel.load(Ordering::Relaxed) {
+            prog(1, 1, "Abgebrochen"); // Fortschrittsanzeige schließen
+        }
+        Ok(n)
     })
     .await
 }
 
 #[tauri::command]
 fn cancel_task(state: Tab) {
-    state.cancel.store(true, Ordering::Relaxed);
+    state.cancel_all();
 }
 
 #[tauri::command]
@@ -771,8 +795,7 @@ fn export_size(state: Tab, ids: Vec<i64>) -> R<u64> {
 #[tauri::command]
 async fn export_playlists(app: AppHandle, state: Tab, ids: Vec<i64>, dest: String, layout: export::Layout) -> R<export::ExportReport> {
     let db = state.db.clone();
-    let cancel = state.cancel.clone();
-    cancel.store(false, Ordering::Relaxed);
+    let cancel = state.task();
     let prog = emitter(&app, &state.label, "export");
     blocking(move || export::export(&db, &ids, Path::new(&dest), layout, &cancel, &prog)).await
 }
@@ -835,8 +858,7 @@ async fn pioneer_preview(app: AppHandle, state: Tab, options: pioneer::export::O
 async fn pioneer_export(app: AppHandle, state: Tab, options: pioneer::export::Options) -> R<pioneer::export::Report> {
     pioneer_on(&state.db)?;
     let db = state.db.clone();
-    let cancel = state.cancel.clone();
-    cancel.store(false, Ordering::Relaxed);
+    let cancel = state.task();
     let threads = load_settings(&db.lock().unwrap()).threads;
     let ffmpeg = ripper::find(&tools_dir(&app), ripper::FFMPEG);
     let prog = emitter(&app, &state.label, "pioneer");
@@ -1063,8 +1085,7 @@ async fn sync_preview(state: Tab, id: i64) -> R<sync::Preview> {
 #[tauri::command]
 async fn sync_run(app: AppHandle, state: Tab, id: i64) -> R<sync::Report> {
     let db = state.db.clone();
-    let cancel = state.cancel.clone();
-    cancel.store(false, Ordering::Relaxed);
+    let cancel = state.task();
     let prog = emitter(&app, &state.label, "sync");
     blocking(move || sync::run(&db, id, &cancel, &prog)).await
 }
@@ -1123,8 +1144,7 @@ struct RipReport {
 async fn rip_download(app: AppHandle, state: Tab, entries: Vec<ripper::Entry>, dir: String, format: ripper::Format) -> R<RipReport> {
     let tools = tools_dir(&app);
     let db = state.db.clone();
-    let cancel = state.cancel.clone();
-    cancel.store(false, Ordering::Relaxed);
+    let cancel = state.task();
     let _ = app.asset_protocol_scope().allow_directory(&dir, true);
     let label = state.label.clone();
     blocking(move || {
@@ -1321,8 +1341,13 @@ fn tab_window(app: &AppHandle, label: &str, like: &tauri::WebviewWindow) -> anyh
 }
 
 /// Zu einem Tab wechseln: Zielfenster an gleicher Stelle zeigen, aktuelles verstecken
+/// Asynchron: unter Windows blockiert das Anlegen eines Fensters in einem synchronen Befehl
 #[tauri::command]
-fn tab_show(app: AppHandle, window: tauri::WebviewWindow, label: String) -> R<()> {
+async fn tab_show(app: AppHandle, window: tauri::WebviewWindow, label: String) -> R<()> {
+    show_tab(app, window, label)
+}
+
+fn show_tab(app: AppHandle, window: tauri::WebviewWindow, label: String) -> R<()> {
     if label == window.label() {
         return Ok(());
     }
@@ -1351,7 +1376,7 @@ fn tab_show(app: AppHandle, window: tauri::WebviewWindow, label: String) -> R<()
 }
 
 #[tauri::command]
-fn tab_create(app: AppHandle, window: tauri::WebviewWindow) -> R<String> {
+async fn tab_create(app: AppHandle, window: tauri::WebviewWindow) -> R<String> {
     let tabs = app.state::<Tabs>();
     let mut v = tabs.list();
     let id = format!("tab-{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis());
@@ -1359,7 +1384,7 @@ fn tab_create(app: AppHandle, window: tauri::WebviewWindow) -> R<String> {
     v.push(TabInfo { label: id.clone(), name: format!("Bibliothek {n}") });
     tabs.save(&v);
     let _ = app.emit("tabs-changed", ());
-    tab_show(app, window, id.clone())?;
+    show_tab(app, window, id.clone())?;
     Ok(id)
 }
 
@@ -1381,19 +1406,19 @@ fn tab_rename(app: AppHandle, label: String, name: String) -> R<()> {
 /// Tab schließen: Fenster zu, Bibliothek dieses Tabs (Datenbank, Einstellungen) wird gelöscht.
 /// Die Musikdateien selbst bleiben unberührt. Der erste Tab lässt sich nicht schließen.
 #[tauri::command]
-fn tab_close(app: AppHandle, window: tauri::WebviewWindow, label: String) -> R<()> {
+async fn tab_close(app: AppHandle, window: tauri::WebviewWindow, label: String) -> R<()> {
     if label == "main" {
         return Err("Der erste Tab lässt sich nicht schließen".into());
     }
     let tabs = app.state::<Tabs>();
     if window.label() == label {
-        tab_show(app.clone(), window.clone(), "main".into())?;
+        show_tab(app.clone(), window.clone(), "main".into())?;
     }
     if let Some(w) = app.get_webview_window(&label) {
         let _ = w.destroy();
     }
     if let Some(st) = tabs.map.lock().unwrap().remove(&label) {
-        st.cancel.store(true, Ordering::Relaxed);
+        st.cancel_all();
         *st.watcher.lock().unwrap() = None;
     }
     let v: Vec<TabInfo> = tabs.list().into_iter().filter(|t| t.label != label).collect();

@@ -15,6 +15,7 @@ pub mod paths;
 pub mod playlists;
 pub mod ripper;
 pub mod scanner;
+pub mod sync;
 pub mod tags;
 pub mod watch;
 pub mod webcache;

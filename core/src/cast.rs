@@ -26,6 +26,9 @@ pub struct Device {
     group_volume: bool,
     #[serde(skip)]
     local_ip: Ipv4Addr,
+    /// Sonos: Basis-URLs aller Lautsprecher der Gruppe (für Klang-Einstellungen)
+    #[serde(skip)]
+    members: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -231,7 +234,7 @@ fn describe(location: &str) -> Result<Desc> {
 }
 
 /// Sonos: Gruppen auslesen → ein Eintrag pro Gruppe (Koordinator steuert)
-fn sonos_groups(any_base: &str) -> Result<Vec<(String, String, String)>> {
+fn sonos_groups(any_base: &str) -> Result<Vec<(String, String, String, Vec<String>)>> {
     let resp = soap(&format!("{any_base}/ZoneGroupTopology/Control"), ZGT, "GetZoneGroupState", &[])?;
     let state = tag(&resp, "ZoneGroupState").context("kein ZoneGroupState")?;
     let doc = roxmltree::Document::parse(&state)?;
@@ -240,6 +243,7 @@ fn sonos_groups(any_base: &str) -> Result<Vec<(String, String, String)>> {
         let coord = g.attribute("Coordinator").unwrap_or("").to_string();
         let mut names: Vec<String> = Vec::new();
         let mut base = String::new();
+        let mut members: Vec<String> = Vec::new();
         for m in g.children().filter(|n| n.tag_name().name() == "ZoneGroupMember") {
             if m.attribute("Invisible") == Some("1") {
                 continue; // Sub, Surround-Boxen
@@ -248,12 +252,16 @@ fn sonos_groups(any_base: &str) -> Result<Vec<(String, String, String)>> {
             if !zn.is_empty() && !names.contains(&zn) {
                 names.push(zn);
             }
+            let mb = base_of(m.attribute("Location").unwrap_or(""));
+            if !mb.is_empty() && !members.contains(&mb) {
+                members.push(mb);
+            }
             if m.attribute("UUID") == Some(coord.as_str()) {
                 base = base_of(m.attribute("Location").unwrap_or(""));
             }
         }
         if !coord.is_empty() && !base.is_empty() && !names.is_empty() {
-            out.push((coord, names.join(" + "), base));
+            out.push((coord, names.join(" + "), base, members));
         }
     }
     Ok(out)
@@ -286,11 +294,12 @@ pub fn discover() -> Result<Vec<Device>> {
             rc_control: d.services.get(RC).map(|c| join(&base, c)),
             group_volume: false,
             local_ip: local_ip_for(ip),
+            members: vec![],
         });
     }
     if let Some(b) = sonos_base {
         if let Ok(groups) = sonos_groups(&b) {
-            for (coord, name, base) in groups {
+            for (coord, name, base, members) in groups {
                 let ip = host_ip(&base).unwrap_or(Ipv4Addr::UNSPECIFIED);
                 found.push(Device {
                     id: format!("uuid:{coord}"),
@@ -301,6 +310,7 @@ pub fn discover() -> Result<Vec<Device>> {
                     rc_control: Some(format!("{base}/MediaRenderer/GroupRenderingControl/Control")),
                     group_volume: true,
                     local_ip: local_ip_for(ip),
+                    members,
                 });
             }
         }
@@ -578,6 +588,54 @@ pub fn status(device_id: &str) -> Result<Status> {
         duration: tag(&pi, "TrackDuration").map(|t| parse_hms(&t)).unwrap_or(0.0),
         volume,
     })
+}
+
+// ---------- Klang (Sonos: Bass, Höhen, Loudness) ----------
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Sound {
+    pub supported: bool,
+    /// -10 … 10
+    pub bass: i32,
+    pub treble: i32,
+    pub loudness: bool,
+}
+
+fn rc_of(base: &str) -> String {
+    format!("{base}/MediaRenderer/RenderingControl/Control")
+}
+
+pub fn sound_get(device_id: &str) -> Result<Sound> {
+    let d = device(device_id)?;
+    let Some(base) = d.members.first() else {
+        return Ok(Sound { supported: false, bass: 0, treble: 0, loudness: false });
+    };
+    let rc = rc_of(base);
+    let num = |action: &str, field: &str| -> i32 {
+        soap(&rc, RC, action, &[("InstanceID", "0".into())]).ok().and_then(|x| tag(&x, field)).and_then(|v| v.parse().ok()).unwrap_or(0)
+    };
+    let loud = soap(&rc, RC, "GetLoudness", &[("InstanceID", "0".into()), ("Channel", "Master".into())])
+        .ok()
+        .and_then(|x| tag(&x, "CurrentLoudness"))
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    Ok(Sound { supported: true, bass: num("GetBass", "CurrentBass"), treble: num("GetTreble", "CurrentTreble"), loudness: loud })
+}
+
+/// Gilt für alle Lautsprecher der Gruppe
+pub fn sound_set(device_id: &str, s: &Sound) -> Result<()> {
+    let d = device(device_id)?;
+    if d.members.is_empty() {
+        bail!("Dieses Gerät hat keine Klangregelung");
+    }
+    for base in &d.members {
+        let rc = rc_of(base);
+        soap(&rc, RC, "SetBass", &[("InstanceID", "0".into()), ("DesiredBass", s.bass.clamp(-10, 10).to_string())])?;
+        soap(&rc, RC, "SetTreble", &[("InstanceID", "0".into()), ("DesiredTreble", s.treble.clamp(-10, 10).to_string())])?;
+        let _ = soap(&rc, RC, "SetLoudness", &[("InstanceID", "0".into()), ("Channel", "Master".into()), ("DesiredLoudness", if s.loudness { "1" } else { "0" }.into())]);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

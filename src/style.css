@@ -326,3 +326,35 @@ body.is-dragging .pl-new-drop { display: block; }
 .row.playing .t1 { color: var(--ink); font-weight: 500; }
 :root { --playing: rgba(255, 255, 255, 0.07); }
 :root[data-theme="light"], :root.light { --playing: rgba(0, 0, 0, 0.055); }
+
+/* Lautstärke: große Trefferfläche */
+.vol-box { flex: 1; display: flex; align-items: center; height: 36px; padding: 0 4px; cursor: pointer; }
+.vol-box input[type="range"] { height: 36px; cursor: pointer; }
+.vol-box input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; }
+.vol-box input[type="range"]::-webkit-slider-thumb { width: 16px; height: 16px; margin-top: -6px; }
+/* Ausgabe-Auswahl */
+.out-pop { min-width: 280px; max-height: 70vh; overflow-y: auto; }
+.out-pop .pop-title { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--weak); padding: 8px 12px 4px; font-weight: 500; }
+.out-pop .option.dim { opacity: 0.55; }
+.out-pop .option.small { font-size: 12px; color: var(--weak); }
+.out-pop .searching { letter-spacing: 0; text-transform: none; }
+.nav-item .count.ready { color: var(--ink); }
+/* Sync */
+.sync-card.ready { box-shadow: inset 3px 0 0 var(--ink); }
+.sync-state { font-size: 12px; color: var(--weak); }
+.sync-state.on, .sync-state.busy { color: var(--ink); }
+/* Equalizer */
+.eq-layout { display: grid; grid-template-columns: minmax(240px, 320px) 1fr; gap: 14px; align-items: start; }
+.out-group { margin-bottom: 14px; }
+.out-group h3 { margin: 6px 0 6px; }
+.out-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; cursor: pointer; color: var(--dim); }
+.out-item:hover { background: var(--hover); color: var(--ink); }
+.out-item.on { background: var(--sel); color: var(--ink); box-shadow: inset 3px 0 0 var(--ink); }
+.out-item.dim { opacity: 0.55; }
+.out-item small { color: var(--weak); font-size: 11px; white-space: nowrap; }
+.eq-bands { display: flex; justify-content: space-between; gap: 6px; padding: 10px 4px 4px; }
+.eq-band { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 1; }
+.eq-band .vwrap { height: 170px; width: 28px; display: flex; align-items: center; justify-content: center; }
+.eq-band .vslider { width: 170px; transform: rotate(-90deg); flex: none; }
+.eq-freq, .eq-val { font-size: 11px; color: var(--weak); font-variant-numeric: tabular-nums; }
+.eq-val { color: var(--dim); min-width: 34px; text-align: center; }

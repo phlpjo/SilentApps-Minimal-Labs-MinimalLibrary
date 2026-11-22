@@ -262,11 +262,14 @@ table.grid td.mono { font-family: var(--mono); font-size: 11px; word-break: brea
 .switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--weak); transition: transform 0.15s, background 0.15s; }
 .switch.on .track { background: var(--line); }
 .switch.on .track::after { transform: translateX(14px); background: var(--ink); }
-.theme-toggle { gap: 6px; }
-.theme-toggle svg { color: var(--weak); transition: color 0.15s; }
-.theme-toggle .sun { color: var(--ink); }
-.theme-toggle.on .sun { color: var(--weak); }
-.theme-toggle.on .moon { color: var(--ink); }
+.theme-toggle { flex: none; }
+.theme-toggle .track { width: 38px; height: 20px; border-radius: 10px; background: var(--line-soft); }
+.theme-toggle .track::after { display: none; }
+.theme-toggle .knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--ink); color: var(--bg); display: flex; align-items: center; justify-content: center; transition: transform 0.15s; }
+.theme-toggle.on .knob { transform: translateX(18px); }
+.theme-toggle .knob svg { display: block; }
+.theme-toggle .knob .moon, .theme-toggle.on .knob .sun { display: none; }
+.theme-toggle.on .knob .moon { display: block; }
 .q-up { color: var(--ink); font-weight: 600; text-decoration: underline dotted; text-underline-offset: 3px; }
 .brand { justify-content: space-between; }
 .brand .bl { display: flex; align-items: center; gap: 10px; }

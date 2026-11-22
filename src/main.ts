@@ -289,11 +289,12 @@ function renderSide() {
 
 /** Dunkelmodus-Schalter (überschreibt die Windows-Einstellung) */
 function darkSwitch() {
-  const sun = icon("sun", 14);
+  const sun = icon("sun", 11);
   sun.classList.add("sun");
-  const moon = icon("moon", 14);
+  const moon = icon("moon", 11);
   moon.classList.add("moon");
-  const sw = h("div", { class: "switch theme-toggle", title: "Hell / Dunkel" }, sun, h("span", { class: "track" }), moon);
+  // Symbol sitzt im Schalterknopf: Sonne = hell, Mond = dunkel
+  const sw = h("div", { class: "switch theme-toggle", title: "Hell / Dunkel" }, h("span", { class: "track" }, h("span", { class: "knob" }, sun, moon)));
   const upd = () => sw.classList.toggle("on", !isLight());
   sw.addEventListener("click", () => applyTheme(isLight() ? "dark" : "light"));
   document.addEventListener("themechange", upd);

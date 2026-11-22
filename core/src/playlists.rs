@@ -53,6 +53,13 @@ fn text(t: &Track, f: &str) -> Option<String> {
         "comment" => t.comment.clone(),
         "path" => Some(t.path.clone()),
         "year" => t.year.clone(),
+        "quality" => Some(match (t.upscaled, t.lossless, t.real_kbps) {
+            (true, true, Some(k)) => format!("hochgerechnet aus MP3 ≈ {k} kbps"),
+            (true, _, Some(k)) => format!("hochgerechnet ≈ {k} kbps"),
+            (_, true, _) => "verlustfrei".into(),
+            (_, _, Some(k)) => format!("≈ {k} kbps"),
+            _ => "unbekannt".into(),
+        }),
         _ => None,
     }
 }
@@ -68,6 +75,7 @@ fn number(t: &Track, f: &str) -> Option<f64> {
             .and_then(|y| y.parse().ok()),
         "added" => Some(t.added as f64),
         "bitrate" => t.bitrate.map(f64::from),
+        "realkbps" => t.real_kbps.map(f64::from),
         _ => None,
     }
 }

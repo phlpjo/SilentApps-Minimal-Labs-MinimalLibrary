@@ -225,7 +225,7 @@ table.grid td.mono { font-family: var(--mono); font-size: 11px; word-break: brea
 .chip { font-family: var(--mono); font-size: 11px; padding: 3px 8px; border-radius: 8px; background: var(--panel2); color: var(--dim); cursor: pointer; }
 .chip:hover { color: var(--ink); }
 .card { background: var(--panel); border-radius: 16px; padding: 14px 16px; margin-bottom: 14px; }
-.card h3 { margin: 0 0 10px; font-weight: 500; font-size: 11px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--weak); }
+.card h3 { margin: 0 0 12px; font-weight: 500; font-size: 14px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--dim); }
 .line { display: flex; align-items: center; gap: 10px; margin: 8px 0; flex-wrap: wrap; }
 .line > .grow { flex: 1; min-width: 200px; }
 .note { color: var(--weak); font-size: 12px; line-height: 1.5; }
@@ -262,6 +262,12 @@ table.grid td.mono { font-family: var(--mono); font-size: 11px; word-break: brea
 .switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--weak); transition: transform 0.15s, background 0.15s; }
 .switch.on .track { background: var(--line); }
 .switch.on .track::after { transform: translateX(14px); background: var(--ink); }
+.theme-toggle { gap: 6px; }
+.theme-toggle svg { color: var(--weak); transition: color 0.15s; }
+.theme-toggle .sun { color: var(--ink); }
+.theme-toggle.on .sun { color: var(--weak); }
+.theme-toggle.on .moon { color: var(--ink); }
+.q-up { color: var(--ink); font-weight: 600; text-decoration: underline dotted; text-underline-offset: 3px; }
 .brand { justify-content: space-between; }
 .brand .bl { display: flex; align-items: center; gap: 10px; }
 .field input[type="checkbox"] { width: 15px; flex: none; }

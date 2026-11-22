@@ -135,7 +135,7 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
           const tr = h("tr", { class: k.has(id) ? "keep" : "drop" },
             h("td", {}, box),
             h("td", {}, h("div", { class: "t1" }, `${t.artist ?? "?"} – ${store.label(t)}`), h("div", { class: "path", style: { margin: "3px 0 0" }, title: `Rechtsklick: ${SHOW_IN}` }, t.path)),
-            h("td", {}, `${ext(t.path)}${t.bitrate ? " " + t.bitrate : ""}`),
+            h("td", { class: t.upscaled ? "q-up" : "", title: t.upscaled ? `wahrscheinlich hochgerechnet – echte Qualität ≈ ${t.realKbps} kbps` : "" }, `${ext(t.path)}${t.bitrate ? " " + t.bitrate : ""}${t.upscaled ? ` (≈ ${t.realKbps})` : ""}`),
             h("td", {}, fmtTime(t.duration)),
             h("td", {}, fmtSize(t.size)),
             h("td", {}, wrap),

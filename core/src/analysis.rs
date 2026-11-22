@@ -31,6 +31,8 @@ pub struct AnalysisResult {
     pub fingerprint: Vec<u32>,
     pub bpm: Option<f64>,
     pub key: Option<String>,
+    /// Obere Grenzfrequenz in Hz (Tiefpass des Encoders) – bei vollem Frequenzgang die halbe Abtastrate
+    pub cutoff: Option<u32>,
 }
 
 /// Zusatzdaten für den Pioneer-Export (Einstellung „Pioneer-Export“)
@@ -159,6 +161,128 @@ struct Accum {
     fp_buf: Vec<i16>,
     fp_frames: usize,
     frames: usize,
+    spec: Spectrum,
+}
+
+/// Mittleres Leistungsspektrum aus Stichproben (alle ~0,5 s ein Fenster) → Grenzfrequenz
+const SPEC_N: usize = 4096;
+struct Spectrum {
+    buf: Vec<f32>,
+    skip: usize,
+    hop: usize,
+    power: Vec<f64>,
+    frames: usize,
+    fft: Option<std::sync::Arc<dyn rustfft::Fft<f32>>>,
+}
+
+impl Spectrum {
+    fn new() -> Self {
+        Spectrum {
+            buf: Vec::with_capacity(SPEC_N),
+            skip: 0,
+            hop: 0,
+            power: vec![0.0; SPEC_N / 2 + 1],
+            frames: 0,
+            fft: None,
+        }
+    }
+
+    fn init(&mut self, rate: u32) {
+        self.hop = rate as usize / 2;
+        self.fft = Some(FftPlanner::new().plan_fft_forward(SPEC_N));
+    }
+
+    fn push(&mut self, m: f32) {
+        if self.skip > 0 {
+            self.skip -= 1;
+            return;
+        }
+        self.buf.push(m);
+        if self.buf.len() < SPEC_N {
+            return;
+        }
+        let rms = (self.buf.iter().map(|x| x * x).sum::<f32>() / SPEC_N as f32).sqrt();
+        if rms > 1e-3 {
+            if let Some(fft) = &self.fft {
+                let mut c: Vec<Complex<f32>> = self
+                    .buf
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &x)| {
+                        let w = 0.5
+                            - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / SPEC_N as f32).cos();
+                        Complex::new(x * w, 0.0)
+                    })
+                    .collect();
+                fft.process(&mut c);
+                for (p, v) in self.power.iter_mut().zip(&c) {
+                    *p += v.norm_sqr() as f64;
+                }
+                self.frames += 1;
+            }
+        }
+        self.buf.clear();
+        self.skip = self.hop;
+    }
+
+    /// Höchste Frequenz mit nennenswertem Inhalt, wenn darüber ein steiler Abfall folgt (Encoder-Tiefpass)
+    fn cutoff(&self, rate: u32) -> Option<u32> {
+        if self.frames < 4 || rate < 32000 {
+            return None;
+        }
+        let hz = rate as f64 / SPEC_N as f64;
+        let nyq = rate as f64 / 2.0;
+        // 100-Hz-Bänder in dB
+        let band = 100.0;
+        let nb = (nyq / band) as usize;
+        let db: Vec<f64> = (0..nb)
+            .map(|b| {
+                let (lo, hi) = (
+                    (b as f64 * band / hz) as usize,
+                    (((b + 1) as f64 * band) / hz) as usize,
+                );
+                let hi = hi.min(self.power.len()).max(lo + 1);
+                let m =
+                    self.power[lo..hi].iter().sum::<f64>() / (hi - lo) as f64 / self.frames as f64;
+                10.0 * (m + 1e-20).log10()
+            })
+            .collect();
+        let at = |f: f64| (f / band) as usize;
+        let refl =
+            db[at(1000.0)..at(5000.0)].iter().sum::<f64>() / (at(5000.0) - at(1000.0)) as f64;
+        // von oben: erstes Band, das noch deutlich über dem Grundrauschen liegt
+        let floor = refl - 75.0;
+        let top = (nb - 1).min(at(21900.0));
+        let mut c = top;
+        while c > at(5000.0) && db[c] < floor {
+            c -= 1;
+        }
+        if c >= top.saturating_sub(2) {
+            return Some(nyq as u32); // voller Frequenzgang
+        }
+        // Steilheit: 0,3–0,8 kHz oberhalb deutlich leiser als knapp unterhalb der Kante
+        let below = db[c.saturating_sub(5)..=c].iter().sum::<f64>() / 6.0;
+        let (a, b) = ((c + 3).min(nb - 1), (c + 8).min(nb - 1));
+        let above = db[a..=b].iter().sum::<f64>() / (b - a + 1) as f64;
+        if below - above >= 25.0 {
+            Some(((c + 1) as f64 * band) as u32)
+        } else {
+            Some(nyq as u32)
+        }
+    }
+}
+
+/// Geschätzte echte MP3-/AAC-Qualität aus der Grenzfrequenz (typische Encoder-Tiefpässe)
+pub fn kbps_from_cutoff(cutoff: u32) -> u32 {
+    match cutoff {
+        0..=11_499 => 64,
+        11_500..=14_499 => 96,
+        14_500..=17_299 => 128,
+        17_300..=18_199 => 160,
+        18_200..=19_199 => 192,
+        19_200..=19_799 => 256,
+        _ => 320,
+    }
 }
 
 impl Accum {
@@ -181,6 +305,7 @@ impl Accum {
             fp_buf: Vec::with_capacity(8192),
             fp_frames: 0,
             frames: 0,
+            spec: Spectrum::new(),
         }
     }
 
@@ -191,6 +316,7 @@ impl Accum {
         if self.want_pioneer {
             self.bands = Some(Bands::new(rate));
         }
+        self.spec.init(rate);
         let cfg = Configuration::preset_test2();
         let mut fp = Fingerprinter::new(&cfg);
         if fp.start(rate, 1).is_ok() {
@@ -208,6 +334,7 @@ impl Accum {
             if let Some(b) = self.bands.as_mut() {
                 b.push(m);
             }
+            self.spec.push(m);
             let a = m.abs();
             if a > self.b_max {
                 self.b_max = a;
@@ -356,6 +483,7 @@ pub fn analyze_with(path: &Path, cancel: &AtomicBool, pioneer: bool) -> Result<A
         fingerprint,
         bpm,
         key: detect_key(&acc.low, low_rate),
+        cutoff: acc.spec.cutoff(acc.rate),
     })
 }
 
@@ -716,8 +844,8 @@ pub fn store(conn: &Connection, id: i64, r: &Result<AnalysisResult>) -> Result<(
         Ok(a) => {
             conn.execute(
                 "UPDATE tracks SET analyzed = 1, analysis_error = NULL, peaks = ?2, fingerprint = ?3, bpm = ?4, musical_key = ?5,
-                 duration = CASE WHEN duration > 0 THEN duration ELSE ?6 END WHERE id = ?1",
-                params![id, a.peaks, db::u32_to_bytes(&a.fingerprint), a.bpm, a.key, a.duration],
+                 duration = CASE WHEN duration > 0 THEN duration ELSE ?6 END, cutoff = ?7 WHERE id = ?1",
+                params![id, a.peaks, db::u32_to_bytes(&a.fingerprint), a.bpm, a.key, a.duration, a.cutoff.map(|c| c as i64).unwrap_or(-1)],
             )?;
         }
         Err(e) => {
@@ -764,7 +892,7 @@ pub fn analyze_pending_with(
             }
             None => {
                 let mut st = c.prepare(
-                    "SELECT id, path FROM tracks WHERE analyzed = 0
+                    "SELECT id, path FROM tracks WHERE analyzed = 0 OR (analysis_error IS NULL AND cutoff IS NULL)
                        OR (?1 AND analysis_error IS NULL AND id NOT IN (SELECT track_id FROM pioneer_analysis)) ORDER BY id",
                 )?;
                 st.query_map([pioneer], |r| Ok((r.get(0)?, r.get(1)?)))?

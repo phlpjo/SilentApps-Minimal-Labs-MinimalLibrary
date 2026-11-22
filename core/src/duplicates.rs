@@ -177,13 +177,19 @@ fn quality(t: &Track) -> (i64, i64, i64, i64) {
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    let lossless = matches!(ext.as_str(), "flac" | "wav" | "aif" | "aiff") as i64;
+    // Hochgerechnete Dateien zählen mit ihrer echten Qualität (aus der Grenzfrequenz)
+    let lossless = (matches!(ext.as_str(), "flac" | "wav" | "aif" | "aiff") && !t.upscaled) as i64;
+    let bitrate = if t.upscaled {
+        t.real_kbps.unwrap_or(0)
+    } else {
+        t.bitrate.unwrap_or(0)
+    };
     let tags = [&t.title, &t.artist, &t.album, &t.genre, &t.year]
         .iter()
         .filter(|x| x.is_some())
         .count() as i64
         + t.has_cover as i64;
-    (lossless, t.bitrate.unwrap_or(0) as i64, tags, t.size)
+    (lossless, bitrate as i64, tags, t.size)
 }
 
 /// Paare, die als „kein Duplikat“ markiert wurden (kleinere ID zuerst)

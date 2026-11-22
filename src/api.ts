@@ -24,6 +24,13 @@ export interface Track {
   key: string | null;
   analyzed: boolean;
   analysisError: string | null;
+  /** Grenzfrequenz in Hz aus dem Spektrum (null = noch nicht gemessen, -1 = nicht messbar) */
+  cutoff: number | null;
+  /** Geschätzte echte Qualität in kbps (MP3-Maßstab) */
+  realKbps: number | null;
+  /** Wahrscheinlich hochgerechnet */
+  upscaled: boolean;
+  lossless: boolean;
 }
 
 export interface Settings {

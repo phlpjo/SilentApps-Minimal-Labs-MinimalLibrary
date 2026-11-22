@@ -110,7 +110,7 @@ async function saveM3u(p: Playlist) {
 const FIELDS: [string, string, "text" | "num" | "date"][] = [
   ["genre", "Genre", "text"], ["artist", "Künstler", "text"], ["albumartist", "Albumkünstler", "text"], ["album", "Album", "text"],
   ["title", "Titel", "text"], ["year", "Jahr", "num"], ["bpm", "BPM", "num"], ["key", "Tonart", "text"], ["duration", "Dauer (Sek. oder m:ss)", "num"],
-  ["bitrate", "Bitrate", "num"], ["comment", "Kommentar", "text"], ["path", "Pfad", "text"], ["added", "Hinzugefügt", "date"],
+  ["bitrate", "Bitrate", "num"], ["realkbps", "Echte Qualität (kbps)", "num"], ["quality", "Qualität (z. B. hochgerechnet)", "text"], ["comment", "Kommentar", "text"], ["path", "Pfad", "text"], ["added", "Hinzugefügt", "date"],
 ];
 const OPS: Record<string, [string, string][]> = {
   text: [["contains", "enthält"], ["notContains", "enthält nicht"], ["is", "ist"], ["isNot", "ist nicht"], ["startsWith", "beginnt mit"]],

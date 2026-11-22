@@ -320,3 +320,13 @@ export function albumLink(text: string | null): HTMLElement | string {
 
 /** Für die Suche: "A&B", "A & B", "A  &B" sind gleich */
 export const searchNorm = (s: string) => s.toLowerCase().replace(/\s*&\s*/g, " & ");
+
+/** Echte Qualität als kurzer Text, z. B. „≈ 128 · hochgerechnet“ */
+export function qualityText(t: { realKbps: number | null; upscaled: boolean; lossless: boolean; cutoff: number | null; analyzed: boolean }, short = false): string {
+  if (t.cutoff == null) return short ? "" : t.analyzed ? "wird bei der nächsten Analyse gemessen" : "nach der Analyse";
+  if (t.upscaled && t.lossless) return short ? `≈ ${t.realKbps} (MP3)` : `wahrscheinlich aus MP3 hochgerechnet · echte Qualität ≈ ${t.realKbps} kbps`;
+  if (t.upscaled) return short ? `≈ ${t.realKbps} ↑` : `wahrscheinlich hochgerechnet · echte Qualität ≈ ${t.realKbps} kbps`;
+  if (t.lossless) return short ? "verlustfrei" : "verlustfrei (voller Frequenzgang)";
+  if (t.realKbps) return short ? `≈ ${t.realKbps}` : `≈ ${t.realKbps} kbps`;
+  return short ? "" : "nicht messbar";
+}

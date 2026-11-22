@@ -278,7 +278,7 @@ fn without_on_demand(
         }
         None => {
             let mut st = c.prepare(
-                "SELECT id, path FROM tracks WHERE analyzed = 0
+                "SELECT id, path FROM tracks WHERE analyzed = 0 OR (analysis_error IS NULL AND cutoff IS NULL)
                    OR (?1 AND analysis_error IS NULL AND id NOT IN (SELECT track_id FROM pioneer_analysis)) ORDER BY id",
             )?;
             let v = st

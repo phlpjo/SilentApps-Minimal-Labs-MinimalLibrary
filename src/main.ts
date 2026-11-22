@@ -289,7 +289,11 @@ function renderSide() {
 
 /** Dunkelmodus-Schalter (überschreibt die Windows-Einstellung) */
 function darkSwitch() {
-  const sw = h("div", { class: "switch", title: "Dunkelmodus" }, h("span", { class: "track" }));
+  const sun = icon("sun", 14);
+  sun.classList.add("sun");
+  const moon = icon("moon", 14);
+  moon.classList.add("moon");
+  const sw = h("div", { class: "switch theme-toggle", title: "Hell / Dunkel" }, sun, h("span", { class: "track" }), moon);
   const upd = () => sw.classList.toggle("on", !isLight());
   sw.addEventListener("click", () => applyTheme(isLight() ? "dark" : "light"));
   document.addEventListener("themechange", upd);
@@ -356,7 +360,7 @@ export async function analyzeIds(ids: number[] | null, explicit = false) {
 store.on("pruned", () => {
   toast("Musikordner entfernt – seine Titel sind nicht mehr in der Bibliothek.");
   setTimeout(() => {
-    if (store.settings.autoAnalyze && [...store.tracks.values()].some((t) => !t.analyzed) && !busy) analyzeIds(null);
+    if (store.settings.autoAnalyze && [...store.tracks.values()].some((t) => !t.analyzed || (t.cutoff == null && !t.analysisError)) && !busy) analyzeIds(null);
   }, 1200);
 });
 
@@ -368,7 +372,7 @@ export async function scanNow() {
     await store.loadPlaylists();
     if (r.added || r.removed || r.updated) toast(`Scan: ${r.added} neu, ${r.updated} geändert, ${r.removed} entfernt`);
     if (r.errors.length) toast(`${r.errors.length} Dateien konnten nicht gelesen werden`);
-    if (store.settings.autoAnalyze && [...store.tracks.values()].some((t) => !t.analyzed) && !busy) analyzeIds(null);
+    if (store.settings.autoAnalyze && [...store.tracks.values()].some((t) => !t.analyzed || (t.cutoff == null && !t.analysisError)) && !busy) analyzeIds(null);
   } catch (e) {
     toast(String(e));
   }

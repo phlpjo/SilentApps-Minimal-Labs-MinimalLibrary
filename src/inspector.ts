@@ -3,7 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, type Candidate, type TagUpdate, type Track } from "./api";
 import { store } from "./store";
-import { basename, clear, ext, fmtSize, fmtTime, h, holdButton, keyLabel, reportErrors, sheet, toast } from "./ui";
+import { basename, clear, ext, fmtSize, fmtTime, h, holdButton, keyLabel, qualityText, reportErrors, sheet, toast } from "./ui";
 import { SHOW_IN } from "./platform";
 import { pioneerOn, pioneerPanel } from "./pioneer";
 
@@ -142,6 +142,8 @@ export class Inspector {
         h("div", { class: "section", style: { padding: "18px 0 6px" } }, "Datei"),
         h("div", { class: "path" }, one.path),
         kv("Format", `${ext(one.path)}${one.bitrate ? ` · ${one.bitrate} kbit/s` : ""}`),
+        kv("Echte Qualität", qualityText(one)),
+        one.upscaled ? h("div", { class: "note" }, `Die Höhen enden bei ${((one.cutoff ?? 0) / 1000).toLocaleString("de", { maximumFractionDigits: 1 })} kHz – typisch für ${one.realKbps} kbps. Manche Aufnahmen (alt, Vinyl, Lo-Fi) haben von Natur aus wenig Höhen.`) : "",
         kv("Abtastrate", one.sampleRate ? `${(one.sampleRate / 1000).toLocaleString("de")} kHz · ${one.channels === 1 ? "Mono" : "Stereo"}` : "–"),
         kv("Dauer", fmtTime(one.duration)),
         kv("Größe", fmtSize(one.size)),

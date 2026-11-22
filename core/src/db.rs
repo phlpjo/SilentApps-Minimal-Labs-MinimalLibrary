@@ -104,6 +104,10 @@ fn migrate(conn: &Connection) -> Result<()> {
             DELETE FROM cues WHERE track_id = old.id;
         END;",
     )?;
+    // Echte Qualität: Grenzfrequenz aus dem Spektrum (erkennt hochgerechnete Dateien)
+    if !has("tracks", "cutoff") {
+        conn.execute_batch("ALTER TABLE tracks ADD COLUMN cutoff INTEGER")?;
+    }
     if !has("move_batches", "kind") {
         conn.execute_batch(
             "ALTER TABLE move_batches ADD COLUMN kind TEXT NOT NULL DEFAULT 'move'",
@@ -150,9 +154,51 @@ pub struct Track {
     pub key: Option<String>,
     pub analyzed: bool,
     pub analysis_error: Option<String>,
+    /// Gemessene obere Grenzfrequenz in Hz (Encoder-Tiefpass); None = noch nicht gemessen, -1 = nicht messbar
+    pub cutoff: Option<i64>,
+    /// Aus der Grenzfrequenz geschätzte echte Qualität (kbps, MP3-Maßstab); None = unbekannt / voller Frequenzgang bei verlustfrei
+    pub real_kbps: Option<u32>,
+    /// Wahrscheinlich hochgerechnet (z. B. 128er als 320er oder MP3 als FLAC)
+    pub upscaled: bool,
+    pub lossless: bool,
 }
 
-pub const TRACK_COLS: &str = "id, path, size, mtime, added, title, artist, album, album_artist, genre, year, track_no, disc_no, comment, duration, bitrate, sample_rate, channels, has_cover, COALESCE(bpm, tag_bpm), COALESCE(musical_key, tag_key), analyzed, analysis_error";
+/// Echte Qualität aus Grenzfrequenz, angegebener Bitrate und Format
+pub fn quality(
+    path: &str,
+    bitrate: Option<u32>,
+    rate: Option<u32>,
+    cutoff: Option<i64>,
+) -> (Option<u32>, bool, bool) {
+    let ext = Path::new(path)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let lossless = matches!(
+        ext.as_str(),
+        "flac" | "wav" | "aiff" | "aif" | "ape" | "wv" | "alac"
+    ) || (ext == "m4a" && bitrate.is_some_and(|b| b > 500));
+    let Some(c) = cutoff.filter(|&c| c > 0) else {
+        return (None, false, lossless);
+    };
+    if rate.is_some_and(|r| r < 40000) {
+        return (None, false, lossless);
+    }
+    let est = crate::analysis::kbps_from_cutoff(c as u32);
+    if lossless {
+        // voller Frequenzgang ist normal – nur ein typischer MP3-Tiefpass verrät die Herkunft
+        return if c < 19_500 {
+            (Some(est), true, true)
+        } else {
+            (None, false, true)
+        };
+    }
+    let flag = matches!(ext.as_str(), "mp3" | "m4a" | "aac" | "wma")
+        && bitrate.is_some_and(|b| b as f64 >= est as f64 * 1.4 && b >= est + 60);
+    (Some(est), flag, false)
+}
+
+pub const TRACK_COLS: &str = "id, path, size, mtime, added, title, artist, album, album_artist, genre, year, track_no, disc_no, comment, duration, bitrate, sample_rate, channels, has_cover, COALESCE(bpm, tag_bpm), COALESCE(musical_key, tag_key), analyzed, analysis_error, cutoff";
 
 pub fn row_to_track(r: &Row) -> rusqlite::Result<Track> {
     Ok(Track {
@@ -179,6 +225,13 @@ pub fn row_to_track(r: &Row) -> rusqlite::Result<Track> {
         key: r.get(20)?,
         analyzed: r.get::<_, i64>(21)? != 0,
         analysis_error: r.get(22)?,
+        cutoff: r.get(23)?,
+        ..Default::default()
+    })
+    .map(|mut t: Track| {
+        (t.real_kbps, t.upscaled, t.lossless) =
+            quality(&t.path, t.bitrate, t.sample_rate, t.cutoff);
+        t
     })
 }
 
@@ -305,4 +358,36 @@ pub fn remove_tracks(conn: &Connection, ids: &[i64]) -> Result<()> {
         st.execute([id])?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod quality_tests {
+    use super::quality;
+    #[test]
+    fn upscaled() {
+        assert_eq!(
+            quality("a.mp3", Some(320), Some(44100), Some(16_900)),
+            (Some(128), true, false)
+        );
+        assert_eq!(
+            quality("a.mp3", Some(128), Some(44100), Some(16_900)),
+            (Some(128), false, false)
+        );
+        assert_eq!(
+            quality("a.mp3", Some(320), Some(44100), Some(20_400)),
+            (Some(320), false, false)
+        );
+        assert_eq!(
+            quality("a.flac", Some(900), Some(44100), Some(17_000)),
+            (Some(128), true, true)
+        );
+        assert_eq!(
+            quality("a.flac", Some(900), Some(44100), Some(22_050)),
+            (None, false, true)
+        );
+        assert_eq!(
+            quality("a.mp3", Some(320), Some(44100), None),
+            (None, false, false)
+        );
+    }
 }

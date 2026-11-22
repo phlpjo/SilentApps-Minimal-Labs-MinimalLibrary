@@ -2,13 +2,13 @@ import type { Track } from "./api";
 import { player } from "./player";
 import { store } from "./store";
 import { drawWave, waveElement } from "./waveform";
-import { albumLink, artistLinks, camelot, fmtTime, h, keyLabel, keyOrder, ext, type MenuItem, contextMenu } from "./ui";
+import { albumLink, artistLinks, camelot, fmtTime, h, keyLabel, keyOrder, ext, type MenuItem, contextMenu, qualityText } from "./ui";
 import { renameFileDialog } from "./fileops";
 import { beginDrag, dropTarget } from "./dnd";
 
 export type SortKey =
   | "pos" | "trackNo" | "title" | "artist" | "album" | "albumartist" | "genre" | "year" | "bpm" | "key" | "duration"
-  | "bitrate" | "format" | "samplerate" | "size" | "added" | "comment" | "filename" | "path";
+  | "bitrate" | "quality" | "format" | "samplerate" | "size" | "added" | "comment" | "filename" | "path";
 type ColKey = SortKey | "wave";
 
 interface Col { key: ColKey; label: string; width: string; render: (t: Track, pos: number) => Node | string; num?: boolean; hideBelow?: number }
@@ -33,6 +33,10 @@ const COLUMNS: Col[] = [
   { key: "key", label: "Tonart", width: "74px", render: (t) => h("span", { title: keyLabel(t.key) }, t.key ? `${camelot(t.key) || ""} ${t.key}`.trim() : "") },
   { key: "duration", label: "Zeit", width: "50px", num: true, render: (t) => fmtTime(t.duration) },
   { key: "bitrate", label: "Bitrate", width: "62px", num: true, render: (t) => (t.bitrate ? String(t.bitrate) : "") },
+  {
+    key: "quality", label: "Echt", width: "86px", num: true,
+    render: (t) => h("span", { class: t.upscaled ? "q-up" : "", title: qualityText(t) }, qualityText(t, true)),
+  },
   { key: "format", label: "Format", width: "58px", render: (t) => ext(t.path) },
   { key: "samplerate", label: "kHz", width: "52px", num: true, render: (t) => (t.sampleRate ? (t.sampleRate / 1000).toLocaleString("de") : "") },
   { key: "size", label: "Größe", width: "70px", num: true, render: (t) => fmtSizeShort(t.size) },
@@ -242,6 +246,7 @@ export class TrackList {
       case "trackNo": return (t.discNo ?? 1) * 10000 + (t.trackNo ?? 9999);
       case "albumartist": return s(t.albumArtist ?? t.artist);
       case "bitrate": return t.bitrate ?? 0;
+      case "quality": return (t.upscaled ? 0 : 100000) + (t.lossless && !t.upscaled ? 5000 : t.realKbps ?? 0);
       case "format": return ext(t.path);
       case "samplerate": return t.sampleRate ?? 0;
       case "size": return t.size;

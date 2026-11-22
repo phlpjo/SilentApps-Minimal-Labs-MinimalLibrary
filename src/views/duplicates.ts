@@ -67,11 +67,10 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
     clear(footer);
     if (!lastGroups?.length) return;
     footer.append(
-      h("span", { class: "sub" }, `${ids.length} Dateien markiert · ${fmtSize(bytes)}`),
+      h("span", { class: "sub" }, `${ids.length} Datei${ids.length === 1 ? "" : "en"} abgewählt · ${fmtSize(bytes)}`),
       h("span", { class: "spacer" }),
-      h("button", { class: "btn", disabled: !ids.length, onclick: async () => { await api.removeFromLibrary(ids); await store.loadTracks(); toast(`${ids.length} aus der Bibliothek entfernt`); run(); } }, "Nur aus Bibliothek entfernen"),
       ids.length
-        ? holdButton("Markierte in den Papierkorb", async () => {
+        ? holdButton("Abgewählte in den Papierkorb", async () => {
             player.release(ids);
             reportErrors(await api.trash(ids, replace), `${ids.length} Dateien im Papierkorb – Playlisten zeigen jetzt auf die behaltene Version`);
             await store.loadTracks();

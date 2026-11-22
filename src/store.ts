@@ -78,10 +78,13 @@ class Store {
 
   private async fetchPeaks() {
     this.peakTimer = 0;
-    const ids = [...this.pendingPeaks].filter((id) => !this.peaks.has(id)).slice(0, 200);
-    this.pendingPeaks.clear();
+    // in Paketen zu 200 laden – der Rest bleibt vorgemerkt (vorher fiel er weg: lange Listen ohne Wellenform)
+    const all = [...this.pendingPeaks].filter((id) => !this.peaks.has(id));
+    const ids = all.slice(0, 200);
+    this.pendingPeaks = new Set(all.slice(200));
     if (!ids.length) return;
-    const res = await api.getPeaks(ids);
+    const res = await api.getPeaks(ids).catch(() => ({}) as Record<string, string>);
+    if (this.pendingPeaks.size && !this.peakTimer) this.peakTimer = window.setTimeout(() => this.fetchPeaks(), 0);
     for (const [id, b64] of Object.entries(res)) {
       const bin = atob(b64);
       const arr = new Uint8Array(bin.length);

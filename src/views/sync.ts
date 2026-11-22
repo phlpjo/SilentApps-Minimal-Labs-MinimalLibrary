@@ -3,6 +3,7 @@ import { api, type SyncLayout, type SyncPreview, type SyncTarget, type SyncTarge
 import { store } from "../store";
 import { clear, fmtSize, h, holdButton, reportErrors, sheet, toast } from "../ui";
 import { OS } from "../platform";
+import { rootOf } from "../fileops";
 
 // ---------- Überwachung: Ziel angeschlossen? ----------
 
@@ -121,6 +122,7 @@ export function syncView(): { el: HTMLElement; destroy: () => void } {
           ),
           h("div", { class: "kv" }, h("span", {}, "Ordner"), h("span", { style: { fontFamily: "var(--mono)" } }, t.path)),
           h("div", { class: "kv" }, h("span", {}, "Playlisten"), h("span", {}, pls.length ? pls.join(", ") : "– keine –")),
+          t.folders?.length ? h("div", { class: "kv" }, h("span", {}, "Ordner"), h("span", {}, t.folders.map((f) => f.split(/[\\/]/).filter(Boolean).pop()).join(", "))) : "",
           h("div", { class: "kv" }, h("span", {}, "Modus"), h("span", {}, `${t.auto ? "automatisch beim Anschließen" : "manuell"}${t.mirror ? " · räumt auf" : ""}`)),
           h("div", { class: "kv" }, h("span", {}, "Ablage"), h("span", {}, (LAYOUTS.find((l) => l[0] === layoutOf(t))?.[1] ?? "") + (t.noPlaylistFiles ? " · ohne Playlist-Dateien" : ""))),
           spaceBar(pv?.totalBytes ?? null, t.available ? t.free : null, pv && t.available ? pv.copyBytes : 0),
@@ -148,7 +150,38 @@ export function syncView(): { el: HTMLElement; destroy: () => void } {
 }
 
 function editTarget(t: SyncTargetState | null) {
-  const v: SyncTarget = t ? { ...t } : { id: 0, name: "", path: "", playlists: [], auto: false, mirror: true, lastSync: 0, layout: "numbered", noPlaylistFiles: false };
+  const v: SyncTarget = t ? { ...t, folders: [...(t.folders ?? [])] } : { id: 0, name: "", path: "", playlists: [], auto: false, mirror: true, lastSync: 0, layout: "numbered", noPlaylistFiles: false, folders: [] };
+  // Ganze Ordner (eine Richtung: Quellordner → Ziel, Struktur bleibt)
+  const folderStats = (f: string) => {
+    let n = 0;
+    let bytes = 0;
+    for (const tr of store.tracks.values()) {
+      if (rootOf(tr.path, [f])) {
+        n++;
+        bytes += tr.size;
+      }
+    }
+    return { n, bytes };
+  };
+  const fBox = h("div", {});
+  const renderFolders = () => {
+    fBox.replaceChildren(
+      ...v.folders.map((f) => {
+        const st = folderStats(f);
+        return h("div", { class: "setting" },
+          h("span", { style: { fontFamily: "var(--mono)", fontSize: "12px", wordBreak: "break-all" } }, f, h("span", { class: "sub" }, ` · ${st.n} Titel · ${fmtSize(st.bytes)}`)),
+          h("button", { class: "btn", onclick: () => { v.folders = v.folders.filter((x) => x !== f); renderFolders(); upSize(); } }, "Entfernen"));
+      }),
+      h("button", { class: "btn", style: { marginTop: "6px" }, onclick: async () => {
+        const d = await open({ directory: true, defaultPath: store.settings.roots[0] });
+        if (d && !v.folders.includes(d as string)) {
+          v.folders.push(d as string);
+          renderFolders();
+          upSize();
+        }
+      } }, "+ Ordner hinzufügen …"),
+    );
+  };
   let layout: SyncLayout = layoutOf(v);
   const radios = LAYOUTS.map(([k, label, note]) => {
     const r = h("input", { type: "radio", name: "synclayout", checked: layout === k });
@@ -176,11 +209,12 @@ function editTarget(t: SyncTargetState | null) {
   let sizeSeq = 0;
   const upSize = async () => {
     const my = ++sizeSeq;
-    const b = chosen.size ? await api.exportSize([...chosen]).catch(() => 0) : 0;
+    const b = (chosen.size ? await api.exportSize([...chosen]).catch(() => 0) : 0) + v.folders.reduce((s2, f) => s2 + folderStats(f).bytes, 0);
     if (my !== sizeSeq) return;
     const free = t?.available ? t.free : null;
     sizeInfo.textContent = `Zusammen: ${fmtSize(b)}${free !== null && free !== undefined ? ` · frei auf dem Gerät: ${fmtSize(free)}` : ""}`;
   };
+  renderFolders();
   upSize();
   const s = sheet(t ? `„${t.name}“ bearbeiten` : "Neues Sync-Ziel", h("div", {},
     h("div", { class: "field" }, h("label", {}, "Name"), name),
@@ -193,11 +227,14 @@ function editTarget(t: SyncTargetState | null) {
             if (!name.value.trim()) name.value = (d as string).replace(/[\\/]+$/, "").split(/[\\/]/).pop() || (d as string);
           }
         } }, "Wählen …"))),
-    h("div", { class: "card", style: { marginTop: "10px" } }, h("h3", {}, "Playlisten für dieses Ziel"), plBox, sizeInfo),
-    h("div", { class: "card" }, h("h3", {}, "Aufbau"), ...radios),
+    h("div", { class: "card", style: { marginTop: "10px" } }, h("h3", {}, "Playlisten für dieses Ziel"), plBox),
+    h("div", { class: "card" }, h("h3", {}, "Ganze Ordner"), fBox,
+      h("div", { class: "note" }, "Nur in eine Richtung: Quellordner → Ziel. Auf dem Ziel als „Ordnername/…“ mit denselben Unterordnern.")),
+    sizeInfo,
+    h("div", { class: "card" }, h("h3", {}, "Aufbau der Playlisten"), ...radios),
     h("div", { class: "line" }, h("label", { class: "check" }, m3u, "Playlist-Dateien (.m3u8) mit ablegen")),
     h("div", { class: "line" }, h("label", { class: "check" }, auto, "Automatisch synchronisieren, sobald das Gerät angeschlossen wird")),
-    h("div", { class: "line" }, h("label", { class: "check" }, mirror, "Aufräumen: von der App kopierte Titel löschen, die in keiner gewählten Playlist mehr sind")),
+    h("div", { class: "line" }, h("label", { class: "check" }, mirror, "Aufräumen: von der App kopierte Titel löschen, die in keiner gewählten Playlist bzw. keinem gewählten Ordner mehr sind")),
     h("div", { class: "foot" },
       t ? holdButton("Ziel löschen", async () => { await api.syncDelete(t.id); s.close(); await poll(); store.emit("sync"); }, "halten") : "",
       h("span", { class: "spacer" }),
@@ -206,7 +243,7 @@ function editTarget(t: SyncTargetState | null) {
         class: "btn primary",
         onclick: async () => {
           if (!path.value.trim()) return toast("Bitte einen Ordner wählen");
-          const id = await api.syncSave({ ...v, name: name.value.trim() || path.value.trim(), path: path.value.trim(), playlists: [...chosen], auto: auto.checked, mirror: mirror.checked, layout, noPlaylistFiles: !m3u.checked });
+          const id = await api.syncSave({ ...v, name: name.value.trim() || path.value.trim(), path: path.value.trim(), playlists: [...chosen], auto: auto.checked, mirror: mirror.checked, layout, noPlaylistFiles: !m3u.checked, folders: v.folders });
           s.close();
           await poll();
           const nt = targets.find((x) => x.id === id);

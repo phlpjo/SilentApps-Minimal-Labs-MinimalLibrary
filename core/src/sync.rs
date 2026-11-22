@@ -33,6 +33,9 @@ pub struct Target {
     pub layout: String,
     /// Keine .m3u8-Dateien schreiben (Standard: schreiben)
     pub no_playlist_files: bool,
+    /// Ganze Ordner (eine Richtung: Quellordner → Ziel). Auf dem Ziel als „<Ordnername>/…“ mit
+    /// gleicher Unterordner-Struktur.
+    pub folders: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -159,6 +162,28 @@ fn plan(c: &Connection, t: &Target) -> Result<Plan> {
             (file, root.to_path_buf())
         };
         pls.push((m3u_rel, playlists::m3u8(&on_device, &base)));
+    }
+    // Ordner: Struktur 1:1 übernehmen – Ziel/<Ordnername>/<Unterordner>/<Datei>
+    if !t.folders.is_empty() {
+        let all = db::all_tracks(c)?;
+        for folder in &t.folders {
+            let src = PathBuf::from(folder);
+            let name = src.file_name().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "Ordner".into());
+            let mut tracks: Vec<&Track> = all.iter().filter(|tr| crate::dirs::under_any(&tr.path, std::slice::from_ref(&src))).collect();
+            tracks.sort_by(|a, b| a.path.cmp(&b.path));
+            for tr in tracks {
+                // Pfad unterhalb des Quellordners (Präfix ist durch under_any gesichert)
+                let base_len = folder.trim_end_matches(['/', '\\']).len() + 1;
+                let Some(rel) = tr.path.get(base_len..) else { continue };
+                let r = format!("{}/{}", paths::sanitize(&name), rel.replace('\\', "/"));
+                let n = used.entry(r.to_lowercase()).or_insert(0);
+                *n += 1;
+                if *n > 1 {
+                    continue; // schon aus einer Playlist/einem anderen Ordner an genau dieser Stelle
+                }
+                files.push((PathBuf::from(&tr.path), r, tr.size.max(0) as u64));
+            }
+        }
     }
     Ok(Plan { files, playlists: pls })
 }
@@ -404,6 +429,26 @@ mod tests {
         assert!(m3u.contains("\n01 - Band - Eins.mp3"), "{m3u}");
         assert!(!base.join("stick/Auto.m3u8").exists());
         assert!(!base.join("stick/Musik/Band/Platte/Eins.mp3").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn folder_source_keeps_structure() {
+        let base = std::env::temp_dir().join(format!("mlsyncdir{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("quelle/Sets/2026")).unwrap();
+        std::fs::create_dir_all(base.join("stick")).unwrap();
+        std::fs::write(base.join("quelle/Sets/2026/a.mp3"), b"aaaa").unwrap();
+        std::fs::write(base.join("quelle/b.mp3"), b"bb").unwrap();
+        let conn = Mutex::new(db::open(&base.join("t.db")).unwrap());
+        for (p, sz) in [("quelle/Sets/2026/a.mp3", 4), ("quelle/b.mp3", 2)] {
+            conn.lock().unwrap().execute("INSERT INTO tracks(path, size) VALUES(?1, ?2)", params![base.join(p).to_string_lossy(), sz]).unwrap();
+        }
+        let t = Target { name: "S".into(), path: base.join("stick").to_string_lossy().into(), folders: vec![base.join("quelle").to_string_lossy().into()], mirror: true, ..Default::default() };
+        let id = save(&conn.lock().unwrap(), &t).unwrap();
+        run(&conn, id, &AtomicBool::new(false), &|_, _, _| {}).unwrap();
+        assert!(base.join("stick/quelle/Sets/2026/a.mp3").exists());
+        assert!(base.join("stick/quelle/b.mp3").exists());
         let _ = std::fs::remove_dir_all(&base);
     }
 }

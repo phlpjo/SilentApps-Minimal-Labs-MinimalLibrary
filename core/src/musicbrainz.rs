@@ -1,6 +1,7 @@
 //! Optionale Online-Suche nach Tags und Covern (MusicBrainz + Cover Art Archive).
 //! Wird nur auf ausdrücklichen Klick genutzt.
 
+use crate::webcache::{self, Cache};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -91,29 +92,86 @@ fn esc(s: &str) -> String {
 
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(15)))
+        .timeout_global(Some(Duration::from_secs(20)))
         .user_agent(UA)
+        .http_status_as_error(false)
         .build()
         .into()
 }
 
-pub fn search(artist: &str, title: &str, album: Option<&str>) -> Result<Vec<Candidate>> {
+/// MusicBrainz erlaubt ~1 Anfrage pro Sekunde und Client: alle Anfragen laufen nacheinander mit Abstand.
+fn throttle() -> std::sync::MutexGuard<'static, Option<std::time::Instant>> {
+    static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let guard = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(t) = *guard {
+        let wait = Duration::from_millis(1100).saturating_sub(t.elapsed());
+        if !wait.is_zero() {
+            std::thread::sleep(wait);
+        }
+    }
+    guard
+}
+
+/// GET mit Zwischenspeicher (3 Tage), Drosselung und Wiederholung bei 503/429 (2 s, 4 s, 8 s, 16 s).
+pub fn fetch(cache: Cache, url: &str, what: &str) -> Result<Vec<u8>> {
+    if let Some(b) = webcache::get(cache, url) {
+        return Ok(b);
+    }
+    let mut delay = 2;
+    for attempt in 0..5 {
+        let resp = {
+            let mut last = throttle(); // hält die Sperre während der Anfrage → nie parallel
+            let r = agent().get(url).header("Accept", "application/json").call();
+            *last = Some(std::time::Instant::now());
+            r
+        };
+        let mut resp = resp.map_err(|e| anyhow!("{what} nicht erreichbar: {e}"))?;
+        let status = resp.status().as_u16();
+        match status {
+            200..=299 => {
+                let body = resp.body_mut().with_config().limit(25 * 1024 * 1024).read_to_vec()?;
+                webcache::put(cache, url, &body);
+                return Ok(body);
+            }
+            503 | 429 | 502 | 504 if attempt < 4 => {
+                // Server überlastet oder zu schnell gefragt → warten und erneut versuchen
+                let retry_after = resp
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.trim().parse::<u64>().ok())
+                    .unwrap_or(delay)
+                    .min(30);
+                std::thread::sleep(Duration::from_secs(retry_after.max(delay)));
+                delay *= 2;
+            }
+            404 => return Err(anyhow!("{what}: nichts gefunden")),
+            _ => return Err(anyhow!("{what}: Antwort {status}")),
+        }
+    }
+    Err(anyhow!("{what} ist gerade überlastet – bitte später erneut versuchen"))
+}
+
+fn url_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+pub fn search(cache: Cache, artist: &str, title: &str, album: Option<&str>) -> Result<Vec<Candidate>> {
     let mut q = format!("recording:\"{}\"", esc(title));
     if !artist.trim().is_empty() {
         q.push_str(&format!(" AND artist:\"{}\"", esc(artist)));
     }
     if let Some(a) = album.filter(|a| !a.trim().is_empty()) {
-        q.push_str(&format!(" OR release:\"{}\"", esc(a)));
+        q.push_str(&format!(" AND release:\"{}\"", esc(a)));
     }
-    let resp: RecResp = agent()
-        .get("https://musicbrainz.org/ws/2/recording")
-        .query("query", &q)
-        .query("fmt", "json")
-        .query("limit", "15")
-        .call()
-        .map_err(|e| anyhow!("MusicBrainz nicht erreichbar: {e}"))?
-        .body_mut()
-        .read_json()?;
+    let url = format!("https://musicbrainz.org/ws/2/recording?query={}&fmt=json&limit=15", url_encode(&q));
+    let body = fetch(cache, &url, "MusicBrainz")?;
+    let resp: RecResp = serde_json::from_slice(&body).map_err(|e| anyhow!("MusicBrainz: unerwartete Antwort ({e})"))?;
     let mut out = Vec::new();
     for r in resp.recordings {
         let genre = r
@@ -160,8 +218,7 @@ pub fn search(artist: &str, title: &str, album: Option<&str>) -> Result<Vec<Cand
 }
 
 /// Front-Cover (500 px) eines Releases laden.
-pub fn cover(release_id: &str) -> Result<Vec<u8>> {
+pub fn cover(cache: Cache, release_id: &str) -> Result<Vec<u8>> {
     let url = format!("https://coverartarchive.org/release/{release_id}/front-500");
-    let mut resp = agent().get(&url).call().map_err(|e| anyhow!("Kein Cover gefunden: {e}"))?;
-    Ok(resp.body_mut().with_config().limit(20 * 1024 * 1024).read_to_vec()?)
+    fetch(cache, &url, "Cover Art Archive")
 }

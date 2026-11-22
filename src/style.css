@@ -309,3 +309,7 @@ table.rip .known { cursor: pointer; text-decoration: underline dotted; color: va
 table.rip .known:hover { color: var(--ink); }
 textarea { background: var(--panel2); border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; outline: none; font: inherit; color: inherit; }
 textarea:focus { border-color: var(--line); }
+
+/* Klickbare Interpreten */
+.artist-link { cursor: pointer; border-radius: 3px; }
+.artist-link:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }

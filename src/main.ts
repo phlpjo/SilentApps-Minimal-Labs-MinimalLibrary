@@ -7,11 +7,11 @@ import { api, type LibraryChange } from "./api";
 import { Inspector } from "./inspector";
 import { player } from "./player";
 import { store } from "./store";
-import { clear, contextMenu, fmtTime, h, sheet, toast, type MenuItem } from "./ui";
+import { artistLinks, clear, contextMenu, fmtTime, h, onArtistClick, sheet, toast, type MenuItem } from "./ui";
 import { drawWave, waveElement } from "./waveform";
 import { dropTarget } from "./dnd";
 import { duplicatesView } from "./views/duplicates";
-import { libraryView } from "./views/library";
+import { libraryView, trackMenu } from "./views/library";
 import { foldersView } from "./views/folders";
 import { historyView, undo } from "./views/history";
 import { ripperView } from "./views/ripper";
@@ -108,6 +108,14 @@ export function nav(name: ViewName, arg?: number[], path?: string, fromBack = fa
   store.emit("selection");
   renderSide();
 }
+
+/** Klick auf einen Interpreten: Bibliothek nach diesem Namen durchsuchen */
+export function searchArtist(name: string) {
+  sessionStorage.setItem("ml.query", name);
+  sessionStorage.setItem("ml.filter", "all");
+  nav("library");
+}
+onArtistClick(searchArtist);
 
 // ---------- Seitenleiste ----------
 const plList = h("div", { class: "pl-list" });
@@ -324,9 +332,26 @@ function buildPlayer() {
     const h2 = items.length * 36 + 20;
     contextMenu(r.left, r.top - h2, items);
   });
+  const nowInfo = h("div", { style: { minWidth: "0" } }, t1, t2);
+  // Rechtsklick auf den laufenden Titel: gleiches Menü wie in der Liste
+  for (const el of [cover, nowInfo]) {
+    el.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const t = player.current;
+      if (t) contextMenu(e.clientX, e.clientY - 40, trackMenu([t.id]));
+    });
+  }
+  t1.addEventListener("click", () => {
+    // Klick auf den Titel: in der Bibliothek zeigen
+    const t = player.current;
+    if (!t) return;
+    store.selection.clear();
+    store.selection.add(t.id);
+    store.emit("selection");
+  });
   playerBar.append(
     cover,
-    h("div", { style: { minWidth: "0" } }, t1, t2),
+    nowInfo,
     h("div", { class: "ctrls" },
       shuffleBtn,
       h("button", { class: "btn", onclick: () => player.prev() }, "Zurück"),
@@ -341,7 +366,8 @@ function buildPlayer() {
     const t = player.current;
     playBtn.textContent = player.playing ? "Pause" : "Abspielen";
     t1.textContent = t ? store.label(t) : "–";
-    t2.textContent = t ? [t.artist, t.album].filter(Boolean).join(" · ") : "Doppelklick oder Klick in eine Wellenform";
+    if (t) t2.replaceChildren(artistLinks(t.artist, "Unbekannter Künstler"), t.album ? ` · ${t.album}` : "");
+    else t2.textContent = "Doppelklick oder Klick in eine Wellenform";
     tDur.textContent = fmtTime(player.duration);
     if (t && coverFor !== t.id) {
       coverFor = t.id;

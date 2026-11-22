@@ -398,8 +398,9 @@ async fn remove_cover(state: State<'_, AppState>, ids: Vec<i64>) -> R<Vec<String
 // ---------- MusicBrainz ----------
 
 #[tauri::command]
-async fn mb_search(artist: String, title: String, album: Option<String>) -> R<Vec<musicbrainz::Candidate>> {
-    blocking(move || musicbrainz::search(&artist, &title, album.as_deref())).await
+async fn mb_search(state: State<'_, AppState>, artist: String, title: String, album: Option<String>) -> R<Vec<musicbrainz::Candidate>> {
+    let db = state.db.clone();
+    blocking(move || musicbrainz::search(Some(&db), &artist, &title, album.as_deref())).await
 }
 
 /// Titel am Klang erkennen (AcoustID)
@@ -412,7 +413,7 @@ async fn acoustid_lookup(state: State<'_, AppState>, id: i64) -> R<Vec<musicbrai
         let (fp, dur): (Option<Vec<u8>>, f64) = c.query_row("SELECT fingerprint, duration FROM tracks WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))?;
         drop(c);
         let fp = db::bytes_to_u32(&fp.unwrap_or_default());
-        acoustid::lookup(&key, &fp, dur)
+        acoustid::lookup(Some(&db), &key, &fp, dur)
     })
     .await
 }
@@ -421,7 +422,7 @@ async fn acoustid_lookup(state: State<'_, AppState>, id: i64) -> R<Vec<musicbrai
 async fn mb_cover(state: State<'_, AppState>, ids: Vec<i64>, release_id: String) -> R<Vec<String>> {
     let db = state.db.clone();
     blocking(move || {
-        let data = musicbrainz::cover(&release_id)?;
+        let data = musicbrainz::cover(Some(&db), &release_id)?;
         apply_cover(&db, &ids, Some(data))
     })
     .await
@@ -923,6 +924,7 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             let conn = db::open(&dir.join("library.db"))?;
+            musiccore::webcache::purge(&conn); // Online-Zwischenspeicher nach 3 Tagen löschen
             for r in load_settings(&conn).roots {
                 let _ = app.asset_protocol_scope().allow_directory(&r, true);
             }

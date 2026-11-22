@@ -1,5 +1,5 @@
 use base64::Engine;
-use musiccore::{acoustid, analysis, cast, ripper, sync, db, dirs, duplicates, history, watch, export, musicbrainz, organize, playlists, scanner, tags};
+use musiccore::{acoustid, analysis, pioneer, cast, ripper, sync, db, dirs, duplicates, history, watch, export, musicbrainz, organize, playlists, scanner, tags};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -73,6 +73,8 @@ struct Settings {
     rip_dir: Option<String>,
     rip_format: String,
     close_to_tray: bool,
+    /// Pioneer-Export (Beatgrid, Pioneer-Wellenform, Cues, OneLibrary/rekordbox-XML) – erst nach Einschalten aktiv
+    pioneer: bool,
 }
 
 impl Default for Settings {
@@ -89,6 +91,7 @@ impl Default for Settings {
             rip_dir: None,
             rip_format: "mp3".into(),
             close_to_tray: true,
+            pioneer: false,
         }
     }
 }
@@ -182,11 +185,12 @@ async fn analyze(app: AppHandle, state: State<'_, AppState>, ids: Option<Vec<i64
     let db = state.db.clone();
     let cancel = state.cancel.clone();
     cancel.store(false, Ordering::Relaxed);
-    let threads = load_settings(&db.lock().unwrap()).threads;
+    let s = load_settings(&db.lock().unwrap());
+    let (threads, pioneer) = (s.threads, s.pioneer);
     let prog = emitter(&app, "analyze");
     let app2 = app.clone();
     blocking(move || {
-        analysis::analyze_pending(&db, ids, threads, &cancel, &prog, &|id| {
+        analysis::analyze_pending_with(&db, ids, threads, pioneer, &cancel, &prog, &|id| {
             let _ = app2.emit("analyzed", id);
         })
     })
@@ -643,6 +647,98 @@ async fn export_playlists(app: AppHandle, state: State<'_, AppState>, ids: Vec<i
     cancel.store(false, Ordering::Relaxed);
     let prog = emitter(&app, "export");
     blocking(move || export::export(&db, &ids, Path::new(&dest), layout, &cancel, &prog)).await
+}
+
+// ---------- Pioneer-Export (nur wenn eingeschaltet) ----------
+
+fn pioneer_on(db: &Db) -> Result<(), String> {
+    if load_settings(&db.lock().unwrap()).pioneer { Ok(()) } else { Err("Pioneer-Export ist in den Einstellungen ausgeschaltet".into()) }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PioneerTrack {
+    grid: Option<pioneer::Grid>,
+    cues: Vec<pioneer::Cue>,
+    /// 150 Werte/s × [Spitze, Bass, Mitten, Höhen], Base64
+    frames: Option<String>,
+}
+
+#[tauri::command]
+fn pioneer_track(state: State<AppState>, id: i64) -> R<PioneerTrack> {
+    pioneer_on(&state.db)?;
+    use base64::Engine;
+    let c = state.db.lock().unwrap();
+    Ok(PioneerTrack {
+        grid: pioneer::grid(&c, id).map_err(err)?,
+        cues: pioneer::cues(&c, id).map_err(err)?,
+        frames: pioneer::frames(&c, id).map_err(err)?.map(|f| base64::engine::general_purpose::STANDARD.encode(f)),
+    })
+}
+
+#[tauri::command]
+fn pioneer_set_grid(state: State<AppState>, id: i64, bpm: f64, downbeat_ms: f64, what: String) -> R<i64> {
+    pioneer_on(&state.db)?;
+    pioneer::set_grid(&state.db.lock().unwrap(), id, bpm, downbeat_ms, &what).map_err(err)
+}
+
+#[tauri::command]
+fn pioneer_set_cue(state: State<AppState>, id: i64, cue: pioneer::Cue) -> R<i64> {
+    pioneer_on(&state.db)?;
+    pioneer::set_cue(&state.db.lock().unwrap(), id, &cue).map_err(err)
+}
+
+#[tauri::command]
+fn pioneer_delete_cue(state: State<AppState>, id: i64, cue_id: i64) -> R<i64> {
+    pioneer_on(&state.db)?;
+    pioneer::delete_cue(&state.db.lock().unwrap(), id, cue_id).map_err(err)
+}
+
+#[tauri::command]
+async fn pioneer_preview(app: AppHandle, state: State<'_, AppState>, options: pioneer::export::Options) -> R<pioneer::export::Preview> {
+    pioneer_on(&state.db)?;
+    let db = state.db.clone();
+    let ff = ripper::find(&tools_dir(&app), ripper::FFMPEG).is_some();
+    blocking(move || pioneer::export::preview(&db.lock().unwrap(), &options, ff)).await
+}
+
+/// Export: fehlende Analysen nachholen, dann auf das Laufwerk schreiben
+#[tauri::command]
+async fn pioneer_export(app: AppHandle, state: State<'_, AppState>, options: pioneer::export::Options) -> R<pioneer::export::Report> {
+    pioneer_on(&state.db)?;
+    let db = state.db.clone();
+    let cancel = state.cancel.clone();
+    cancel.store(false, Ordering::Relaxed);
+    let threads = load_settings(&db.lock().unwrap()).threads;
+    let ffmpeg = ripper::find(&tools_dir(&app), ripper::FFMPEG);
+    let prog = emitter(&app, "pioneer");
+    let app2 = app.clone();
+    blocking(move || {
+        let missing = pioneer::export::preview(&db.lock().unwrap(), &options, ffmpeg.is_some())?.missing_analysis;
+        if !missing.is_empty() {
+            analysis::analyze_pending_with(&db, Some(missing), threads, true, &cancel, &prog, &|id| {
+                let _ = app2.emit("analyzed", id);
+            })?;
+        }
+        if cancel.load(Ordering::Relaxed) {
+            anyhow::bail!("Abgebrochen");
+        }
+        pioneer::export::run(&db, &options, ffmpeg.as_deref(), true, &cancel, &prog)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn pioneer_xml(app: AppHandle, state: State<'_, AppState>, playlists: Vec<i64>, file: String) -> R<()> {
+    pioneer_on(&state.db)?;
+    let db = state.db.clone();
+    let version = app.package_info().version.to_string();
+    blocking(move || {
+        let x = pioneer::xml::build(&db.lock().unwrap(), &playlists, &version)?;
+        std::fs::write(&file, x)?;
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1144,6 +1240,13 @@ pub fn run() {
             export_size,
             export_playlists,
             sync_playlist_folder,
+            pioneer_track,
+            pioneer_set_grid,
+            pioneer_set_cue,
+            pioneer_delete_cue,
+            pioneer_preview,
+            pioneer_export,
+            pioneer_xml,
             dir_list,
             dir_import_untracked,
             dir_create,

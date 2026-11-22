@@ -6,6 +6,7 @@ import { TrackList } from "../tracklist";
 import { clear, fmtDuration, fmtSize, h, holdButton, reportErrors, sheet, toast } from "../ui";
 import { nav } from "../main";
 import { trackMenu } from "./library";
+import { pioneerExportDialog, pioneerOn } from "../pioneer";
 
 export function playlistView(id: number): { el: HTMLElement; destroy: () => void } {
   const pl = () => store.playlists.find((p) => p.id === id);
@@ -53,6 +54,7 @@ export function playlistView(id: number): { el: HTMLElement; destroy: () => void
         : h("button", { class: "btn", onclick: () => renamePlaylist(p) }, "Umbenennen …"),
       h("button", { class: "btn", onclick: () => saveM3u(p) }, "Als M3U8 speichern …"),
       h("button", { class: "btn primary", onclick: () => exportDialog([p.id]) }, "Exportieren …"),
+      pioneerOn() ? h("button", { class: "btn", title: "Export für Pioneer DJ / AlphaTheta-Player (OneLibrary)", onclick: () => pioneerExportDialog([p.id]) }, "Für Pioneer-Player …") : "",
       holdButton("Löschen", async () => {
         await api.playlistDelete(p.id);
         await store.loadPlaylists();

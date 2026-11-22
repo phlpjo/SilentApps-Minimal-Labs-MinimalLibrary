@@ -2,7 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { store } from "../store";
-import { clear, h, holdButton } from "../ui";
+import { clear, h, holdButton, toast } from "../ui";
 import { analyzeIds, scanNow } from "../main";
 import { applyTheme, themeMode, type ThemeMode } from "../theme";
 import { IS_MAC, FILE_MANAGER } from "../platform";
@@ -53,6 +53,7 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
         ),
         h("div", { class: "note" }, `Die Musikordner werden laufend überwacht: Was du im ${FILE_MANAGER} hinzufügst, verschiebst, umbenennst oder löschst, übernimmt die App sofort – Analyse und Playlisten bleiben beim Verschieben erhalten.`),
       ),
+      pioneerCard(),
       h("div", { class: "card" }, h("h3", {}, "Analyse"),
         h("div", { class: "setting" }, h("span", {}, "Gleichzeitige Analysen"), threads),
         h("div", { class: "setting" }, h("label", { class: "check" }, auto, "Neue Titel automatisch analysieren"), h("span", {})),
@@ -79,6 +80,7 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
       updateCard(version),
       h("div", { class: "card" }, h("h3", {}, "Über"),
         h("div", { class: "setting" }, h("span", {}, "Version"), h("span", { class: "v" }, version)),
+        h("div", { class: "note", style: { margin: "6px 0" } }, "Pioneer DJ, rekordbox und OneLibrary sind Marken der AlphaTheta Corporation. Minimal Library steht in keiner Verbindung zu AlphaTheta."),
         h("div", { class: "setting" }, h("span", {}, "Lizenzen"), h("span", { class: "v" }, "Space Grotesk (OFL 1.1) · Symphonia (MPL-2.0) · Lofty (MIT/Apache-2.0) · rusty-chromaprint (MIT) · Tauri (MIT/Apache-2.0)")),
         h("div", { class: "option", onclick: () => openUrl("https://silentapps-minimal-labs.com/de/") }, "Weitere Apps von SilentApps Minimal Labs", h("small", {}, "›")),
         h("div", { class: "option", onclick: () => openUrl(`mailto:apps@silentapps-minimal-labs.com?subject=${encodeURIComponent("Minimal Library – Feedback")}&body=${encodeURIComponent(`\n\n—\nMinimal Library ${version}\n${navigator.userAgent}`)}`) }, "Fehler melden & Vorschläge", h("small", {}, "›")),
@@ -111,5 +113,26 @@ function updateCard(version: string) {
     u.state === "available" && u.available!.body ? h("div", { class: "note" }, u.available!.body) : null,
     h("label", { class: "check", style: { marginTop: "8px" } }, auto, "Beim Start automatisch installieren (nur wenn gerade keine Musik läuft)"),
     h("div", { class: "note" }, "Updates kommen signiert aus den GitHub-Releases. Die App prüft beim Start und alle 6 Stunden."),
+  );
+}
+
+/** Pioneer DJ / AlphaTheta-Export: erst nach Einschalten gibt es Beatgrid-Analyse, Cues und Export */
+function pioneerCard() {
+  const on = store.settings.pioneer;
+  const box = h("input", { type: "checkbox", checked: on }) as HTMLInputElement;
+  box.addEventListener("change", async () => {
+    await store.saveSettings({ pioneer: box.checked });
+    if (box.checked) {
+      toast("Pioneer-Export eingeschaltet – Beatgrids und Wellenformen werden im Hintergrund berechnet.");
+      analyzeIds(null);
+    }
+  });
+  return h("div", { class: "card" }, h("h3", {}, "Export für Pioneer DJ / AlphaTheta-Player (OneLibrary)"),
+    h("div", { class: "setting" }, h("label", { class: "check" }, box, "Einschalten"), h("span", {})),
+    h("div", { class: "note" },
+      "Für CDJ-3000, CDJ-3000X, XDJ-AZ, OPUS-QUAD, OMNIS-DUO und weitere OneLibrary-Geräte. Eingeschaltet berechnet die Analyse zusätzlich Beatgrid und die Wellenformen der Player; ",
+      "im Inspektor lassen sich Grid und Cues korrigieren, Playlisten kommen per Rechtsklick „Für Pioneer-Player exportieren …“ auf den Stick. ",
+      "Dazu gibt es einen rekordbox-XML-Export. Alles andere in der App bleibt unverändert."),
+    on ? h("div", { class: "line" }, h("button", { class: "btn", onclick: () => analyzeIds(null) }, "Fehlende Pioneer-Analysen nachholen")) : "",
   );
 }

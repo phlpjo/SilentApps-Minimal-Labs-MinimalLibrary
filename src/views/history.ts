@@ -3,7 +3,7 @@ import { store } from "../store";
 import { clear, h, holdButton, reportErrors, toast } from "../ui";
 import { analyzeIds } from "../main";
 
-const KIND: Record<Batch["kind"], string> = { move: "Dateien", tags: "Tags", trash: "Papierkorb", dir: "Ordner" };
+const KIND: Record<Batch["kind"], string> = { move: "Dateien", tags: "Tags", trash: "Papierkorb", dir: "Ordner", grid: "Beatgrid / Cues" };
 
 /** Einen Eintrag rückgängig machen (oder den letzten, wenn id = null). */
 export async function undo(id: number | null) {
@@ -14,6 +14,7 @@ export async function undo(id: number | null) {
     await store.loadPlaylists();
     store.emit("dirs");
     store.emit("history");
+    store.emit("pioneer");
     if (r.newIds.length) analyzeIds(r.newIds);
   } catch (e) {
     toast(String(e));

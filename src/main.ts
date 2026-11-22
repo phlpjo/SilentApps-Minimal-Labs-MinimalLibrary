@@ -21,6 +21,7 @@ import { equalizerView } from "./views/equalizer";
 import { searchView } from "./views/search";
 import { startUpdater, updater } from "./updater";
 import { icon } from "./icons";
+import { pioneerExportDialog, pioneerOn, xmlDialog } from "./pioneer";
 import { currentOutputLabel, outputPopup, restoreOutput } from "./outputs";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { organizeView } from "./views/organize";
@@ -273,6 +274,7 @@ function renderSide() {
         contextMenu(e.clientX, e.clientY, [
           { label: "Öffnen", action: () => nav("playlist", [p.id]) },
           { label: "Exportieren …", action: () => exportDialog([p.id]) },
+          ...(pioneerOn() ? [{ label: "Für Pioneer-Player exportieren …", action: () => pioneerExportDialog([p.id]) }, { label: "rekordbox-XML speichern …", action: () => xmlDialog([p.id]) }] : []),
           ...(p.rules ? [{ label: "Regeln bearbeiten …", action: () => smartEditor(p) }] : []),
         ]);
       });
@@ -317,13 +319,13 @@ export function newPlaylistFromIds(ids: number[]) {
 }
 
 // ---------- Hintergrund-Aufgaben + Fortschritt ----------
-const TASKS: Record<string, string> = { sync: "Sync", rip: "Ripper", tools: "Werkzeuge laden", scan: "Scannen", analyze: "Analysieren", duplicates: "Duplikate", organize: "Sortieren", export: "Exportieren" };
+const TASKS: Record<string, string> = { sync: "Sync", rip: "Ripper", tools: "Werkzeuge laden", scan: "Scannen", analyze: "Analysieren", duplicates: "Duplikate", organize: "Sortieren", export: "Exportieren", pioneer: "Pioneer-Export" };
 let busy = 0;
 let hideTimer = 0;
 function setStatus(task: string, done: number, total: number, msg: string) {
   clearTimeout(hideTimer);
   const pct = total ? Math.round((done / total) * 100) : 0;
-  const cancellable = task === "analyze" || task === "export" || task === "rip" || task === "sync";
+  const cancellable = task === "analyze" || task === "export" || task === "rip" || task === "sync" || task === "pioneer";
   status.replaceChildren(
     h("div", { class: "srow" }, h("span", {}, `${TASKS[task] ?? task}${total ? ` ${done.toLocaleString("de")} / ${total.toLocaleString("de")}` : ""}`),
       cancellable && done < total ? h("span", { class: "act", style: { cursor: "pointer" }, onclick: () => api.cancel() }, "Abbrechen") : null),
@@ -370,6 +372,7 @@ listen<number>("analyzed", (e) => {
       analyzedIds = [];
       analyzedTimer = 0;
       await store.refreshTracks(ids);
+      store.emit("pioneer");
     }, 700);
 });
 listen<{ task: string; done: number; total: number; message: string }>("progress", (e) => setStatus(e.payload.task, e.payload.done, e.payload.total, e.payload.message));

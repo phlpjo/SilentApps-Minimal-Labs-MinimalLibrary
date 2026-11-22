@@ -374,3 +374,15 @@ html.mac #titlebar { padding-left: 78px; }
 .space-bar { height: 6px; border-radius: 3px; background: var(--line-soft); margin: 8px 0 2px; overflow: hidden; }
 .space-bar > div { height: 100%; background: var(--ink); border-radius: 3px; }
 .space-bar.over > div { width: 100% !important; opacity: .5; }
+
+/* Pioneer: Beatgrid & Cues */
+.pio .pio-wave { width: 100%; height: 96px; display: block; border-radius: 10px; background: var(--panel); cursor: crosshair; margin-bottom: 6px; }
+.pio .pio-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.pio .pio-row .btn { padding: 5px 9px; }
+.pio .pio-hot { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; margin: 8px 0 4px; }
+.pio .pio-cue { height: 30px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--weak); cursor: pointer; font: inherit; font-weight: 500; border-bottom-width: 3px; }
+.pio .pio-cue.set { color: var(--ink); background: var(--panel); }
+.pio .pio-cue-row { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 12px; }
+.pio .pio-cue-row select { max-width: 76px; }
+.pio .pio-tag { width: 14px; font-weight: 600; text-align: center; }
+.pio .mono { font-family: var(--mono); font-size: 11px; white-space: nowrap; }

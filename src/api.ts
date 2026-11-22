@@ -37,7 +37,20 @@ export interface Settings {
   ripDir: string | null;
   ripFormat: "mp3" | "original";
   closeToTray: boolean;
+  /** Pioneer DJ / AlphaTheta-Export eingeschaltet (Beatgrid, Cues, OneLibrary, rekordbox-XML) */
+  pioneer: boolean;
 }
+
+export interface PioneerGrid { bpm: number; downbeatMs: number; edited: boolean }
+/** kind 0 = Memory Cue, 1–8 = Hot Cue A–H */
+export interface PioneerCue { id: number; kind: number; startMs: number; endMs: number | null; color: number | null; comment: string | null }
+export interface PioneerTrack { grid: PioneerGrid | null; cues: PioneerCue[]; frames: string | null }
+export interface PioneerOptions { dest: string; playlists: number[]; unsupported: "skip" | "convert" }
+export interface PioneerPreview {
+  tracks: number; bytes: number; toCopy: number; copyBytes: number; missingAnalysis: number[];
+  unsupported: [number, string, string][]; free: number | null; existingLibrary: boolean; duplicatesInPlaylists: number; ffmpeg: boolean;
+}
+export interface PioneerReport { tracks: number; copied: number; converted: number; skipped: number; playlists: number; bytes: number; errors: string[] }
 
 export interface ScanReport { found: number; added: number; updated: number; removed: number; errors: string[] }
 
@@ -50,7 +63,7 @@ export interface DupGroup { trackIds: number[]; reasons: string[]; audioSimilari
 
 export interface PlannedMove { trackId: number; from: string; to: string; renamed: boolean; unchanged: boolean }
 export interface ApplyReport { batchId: number; moved: number; errors: string[] }
-export interface Batch { id: number; kind: "move" | "tags" | "trash" | "dir"; created: number; description: string; count: number; undone: boolean }
+export interface Batch { id: number; kind: "move" | "tags" | "trash" | "dir" | "grid"; created: number; description: string; count: number; undone: boolean }
 export interface UndoReport { restored: number; errors: string[]; newIds: number[] }
 export interface LibraryChange { added: number[]; updated: number; moved: number; removed: number }
 
@@ -140,6 +153,13 @@ export const api = {
   ripResolve: (url: string) => invoke<{ name: string; entries: RipEntry[] }>("rip_resolve", { url }),
   ripDownload: (entries: RipEntry[], dir: string, format: "mp3" | "original") => invoke<{ ids: number[]; errors: string[] }>("rip_download", { entries, dir, format }),
   syncTargets: () => invoke<SyncTargetState[]>("sync_targets"),
+  pioneerTrack: (id: number) => invoke<PioneerTrack>("pioneer_track", { id }),
+  pioneerSetGrid: (id: number, bpm: number, downbeatMs: number, what: string) => invoke<number>("pioneer_set_grid", { id, bpm, downbeatMs, what }),
+  pioneerSetCue: (id: number, cue: PioneerCue) => invoke<number>("pioneer_set_cue", { id, cue }),
+  pioneerDeleteCue: (id: number, cueId: number) => invoke<number>("pioneer_delete_cue", { id, cueId }),
+  pioneerPreview: (options: PioneerOptions) => invoke<PioneerPreview>("pioneer_preview", { options }),
+  pioneerExport: (options: PioneerOptions) => invoke<PioneerReport>("pioneer_export", { options }),
+  pioneerXml: (playlists: number[], file: string) => invoke<void>("pioneer_xml", { playlists, file }),
   syncSave: (target: SyncTarget) => invoke<number>("sync_save", { target }),
   syncDelete: (id: number) => invoke<void>("sync_delete", { id }),
   syncPreview: (id: number) => invoke<SyncPreview>("sync_preview", { id }),

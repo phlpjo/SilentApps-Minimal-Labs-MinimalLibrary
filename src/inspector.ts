@@ -4,6 +4,7 @@ import { api, type Candidate, type TagUpdate, type Track } from "./api";
 import { store } from "./store";
 import { basename, clear, ext, fmtSize, fmtTime, h, holdButton, keyLabel, reportErrors, sheet, toast } from "./ui";
 import { SHOW_IN } from "./platform";
+import { pioneerOn, pioneerPanel } from "./pioneer";
 
 type FieldKey = keyof TagUpdate;
 const FIELDS: { key: FieldKey; label: string; get: (t: Track) => string }[] = [
@@ -127,6 +128,9 @@ export class Inspector {
         one ? h("button", { class: "btn", onclick: () => revealItemInDir(one.path) }, SHOW_IN) : null,
       ),
     );
+
+    // Pioneer: Beatgrid & Cues (nur wenn eingeschaltet)
+    if (one && pioneerOn()) this.el.append(pioneerPanel(one.id));
 
     // Infos
     if (one) {

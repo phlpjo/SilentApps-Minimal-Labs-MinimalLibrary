@@ -81,12 +81,20 @@ struct MbTag {
 }
 
 fn credit(c: &[Credit]) -> String {
-    c.iter().map(|x| format!("{}{}", x.name, x.joinphrase)).collect::<String>()
+    c.iter()
+        .map(|x| format!("{}{}", x.name, x.joinphrase))
+        .collect::<String>()
 }
 
 fn esc(s: &str) -> String {
     s.chars()
-        .flat_map(|c| if "+-&|!(){}[]^\"~*?:\\/".contains(c) { vec!['\\', c] } else { vec![c] })
+        .flat_map(|c| {
+            if "+-&|!(){}[]^\"~*?:\\/".contains(c) {
+                vec!['\\', c]
+            } else {
+                vec![c]
+            }
+        })
         .collect()
 }
 
@@ -129,7 +137,11 @@ pub fn fetch(cache: Cache, url: &str, what: &str) -> Result<Vec<u8>> {
         let status = resp.status().as_u16();
         match status {
             200..=299 => {
-                let body = resp.body_mut().with_config().limit(25 * 1024 * 1024).read_to_vec()?;
+                let body = resp
+                    .body_mut()
+                    .with_config()
+                    .limit(25 * 1024 * 1024)
+                    .read_to_vec()?;
                 webcache::put(cache, url, &body);
                 return Ok(body);
             }
@@ -149,19 +161,28 @@ pub fn fetch(cache: Cache, url: &str, what: &str) -> Result<Vec<u8>> {
             _ => return Err(anyhow!("{what}: Antwort {status}")),
         }
     }
-    Err(anyhow!("{what} ist gerade überlastet – bitte später erneut versuchen"))
+    Err(anyhow!(
+        "{what} ist gerade überlastet – bitte später erneut versuchen"
+    ))
 }
 
 fn url_encode(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
             _ => format!("%{b:02X}"),
         })
         .collect()
 }
 
-pub fn search(cache: Cache, artist: &str, title: &str, album: Option<&str>) -> Result<Vec<Candidate>> {
+pub fn search(
+    cache: Cache,
+    artist: &str,
+    title: &str,
+    album: Option<&str>,
+) -> Result<Vec<Candidate>> {
     let mut q = format!("recording:\"{}\"", esc(title));
     if !artist.trim().is_empty() {
         q.push_str(&format!(" AND artist:\"{}\"", esc(artist)));
@@ -169,33 +190,47 @@ pub fn search(cache: Cache, artist: &str, title: &str, album: Option<&str>) -> R
     if let Some(a) = album.filter(|a| !a.trim().is_empty()) {
         q.push_str(&format!(" AND release:\"{}\"", esc(a)));
     }
-    let url = format!("https://musicbrainz.org/ws/2/recording?query={}&fmt=json&limit=15", url_encode(&q));
+    let url = format!(
+        "https://musicbrainz.org/ws/2/recording?query={}&fmt=json&limit=15",
+        url_encode(&q)
+    );
     let body = fetch(cache, &url, "MusicBrainz")?;
-    let resp: RecResp = serde_json::from_slice(&body).map_err(|e| anyhow!("MusicBrainz: unerwartete Antwort ({e})"))?;
+    let resp: RecResp = serde_json::from_slice(&body)
+        .map_err(|e| anyhow!("MusicBrainz: unerwartete Antwort ({e})"))?;
     let mut out = Vec::new();
     for r in resp.recordings {
-        let genre = r
-            .tags
-            .iter()
-            .max_by_key(|t| t.count.unwrap_or(0))
-            .map(|t| {
-                let mut c = t.name.chars();
-                c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
-            });
+        let genre = r.tags.iter().max_by_key(|t| t.count.unwrap_or(0)).map(|t| {
+            let mut c = t.name.chars();
+            c.next()
+                .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+                .unwrap_or_default()
+        });
         // Offizielle Alben bevorzugen
         let mut rels: Vec<&Release> = r.releases.iter().collect();
         rels.sort_by_key(|x| {
             let official = x.status.as_deref() == Some("Official");
-            let album = x.release_group.as_ref().and_then(|g| g.primary_type.as_deref()) == Some("Album");
-            (!official, !album, x.date.clone().unwrap_or_else(|| "9999".into()))
+            let album = x
+                .release_group
+                .as_ref()
+                .and_then(|g| g.primary_type.as_deref())
+                == Some("Album");
+            (
+                !official,
+                !album,
+                x.date.clone().unwrap_or_else(|| "9999".into()),
+            )
         });
         let base = |rel: Option<&Release>| Candidate {
             score: r.score.unwrap_or(0),
             title: r.title.clone(),
             artist: credit(&r.artist_credit),
             album: rel.map(|x| x.title.clone()),
-            album_artist: rel.map(|x| credit(&x.artist_credit)).filter(|s| !s.is_empty()),
-            year: rel.and_then(|x| x.date.as_ref()).map(|d| d.chars().take(4).collect()),
+            album_artist: rel
+                .map(|x| credit(&x.artist_credit))
+                .filter(|s| !s.is_empty()),
+            year: rel
+                .and_then(|x| x.date.as_ref())
+                .map(|d| d.chars().take(4).collect()),
             track_no: rel
                 .and_then(|x| x.media.first())
                 .and_then(|m| m.track.first())

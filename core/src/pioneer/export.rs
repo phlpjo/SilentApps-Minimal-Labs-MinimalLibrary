@@ -90,11 +90,22 @@ struct Entry {
 }
 
 fn ext_of(p: &str) -> String {
-    Path::new(p).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default()
+    Path::new(p)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default()
 }
 
 fn label(t: &Track) -> String {
-    format!("{} – {}", t.artist.as_deref().unwrap_or("?"), t.title.clone().unwrap_or_else(|| Path::new(&t.path).file_name().unwrap_or_default().to_string_lossy().to_string()))
+    format!(
+        "{} – {}",
+        t.artist.as_deref().unwrap_or("?"),
+        t.title.clone().unwrap_or_else(|| Path::new(&t.path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string())
+    )
 }
 
 fn on_disk(root: &Path, device_path: &str) -> PathBuf {
@@ -102,11 +113,17 @@ fn on_disk(root: &Path, device_path: &str) -> PathBuf {
 }
 
 fn read_manifest(root: &Path) -> Manifest {
-    std::fs::read(root.join(MANIFEST)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    std::fs::read(root.join(MANIFEST))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
 }
 
 /// Titel der gewählten Playlisten (Reihenfolge der ersten Fundstelle) und Playlist-Inhalte ohne Doppelte
-fn collect(c: &Connection, pls: &[i64]) -> Result<(Vec<Track>, Vec<(i64, String, Vec<i64>)>, usize)> {
+fn collect(
+    c: &Connection,
+    pls: &[i64],
+) -> Result<(Vec<Track>, Vec<(i64, String, Vec<i64>)>, usize)> {
     let mut seen = HashSet::new();
     let mut order = Vec::new();
     let mut lists = Vec::new();
@@ -135,10 +152,16 @@ pub fn preview(c: &Connection, o: &Options, ffmpeg: bool) -> Result<Preview> {
     let root = Path::new(&o.dest);
     let (tracks, _, dups) = collect(c, &o.playlists)?;
     let man = read_manifest(root);
-    let mut p = Preview { tracks: tracks.len(), duplicates_in_playlists: dups, ffmpeg, ..Default::default() };
+    let mut p = Preview {
+        tracks: tracks.len(),
+        duplicates_in_playlists: dups,
+        ffmpeg,
+        ..Default::default()
+    };
     let analysed: HashSet<i64> = {
         let mut st = c.prepare("SELECT track_id FROM pioneer_analysis WHERE frames IS NOT NULL")?;
-        st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+        st.query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?
     };
     for t in &tracks {
         let size = t.size.max(0) as u64;
@@ -150,7 +173,10 @@ pub fn preview(c: &Connection, o: &Options, ffmpeg: bool) -> Result<Preview> {
         if !analysed.contains(&t.id) {
             p.missing_analysis.push(t.id);
         }
-        let present = man.tracks.get(&t.id).is_some_and(|e| std::fs::metadata(on_disk(root, &e.path)).is_ok());
+        let present = man
+            .tracks
+            .get(&t.id)
+            .is_some_and(|e| std::fs::metadata(on_disk(root, &e.path)).is_ok());
         if !present {
             p.to_copy += 1;
             p.copy_bytes += size;
@@ -170,7 +196,9 @@ fn free_device_path(root: &Path, wanted: &str, ours: &HashSet<String>) -> String
         let s = q.to_string_lossy().replace('\\', "/");
         on_disk(root, &s).exists() && !ours.contains(&s)
     };
-    paths::unique_path(&p, &taken).to_string_lossy().replace('\\', "/")
+    paths::unique_path(&p, &taken)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 /// Kurzer, stabiler Ordnername für die Analysedateien (wie rekordbox: P + 3 Hex / 8 Hex)
@@ -180,7 +208,11 @@ fn anlz_path(device_path: &str) -> String {
         h ^= *b as u64;
         h = h.wrapping_mul(0x0100_0000_01b3);
     }
-    format!("/{ANLZ_DIR}/P{:03X}/{:08X}/ANLZ0000.DAT", (h >> 52) & 0xFFF, h as u32)
+    format!(
+        "/{ANLZ_DIR}/P{:03X}/{:08X}/ANLZ0000.DAT",
+        (h >> 52) & 0xFFF,
+        h as u32
+    )
 }
 
 fn copy_file(src: &Path, dst: &Path) -> std::io::Result<()> {
@@ -198,7 +230,21 @@ fn convert(ffmpeg: &Path, src: &Path, dst: &Path) -> Result<()> {
     }
     let tmp = dst.with_extension("part.mp3");
     let mut cmd = std::process::Command::new(ffmpeg);
-    cmd.args(["-hide_banner", "-loglevel", "error", "-y", "-i"]).arg(src).args(["-map", "0:a:0", "-map_metadata", "0", "-codec:a", "libmp3lame", "-b:a", "320k", "-id3v2_version", "3"]).arg(&tmp);
+    cmd.args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .arg(src)
+        .args([
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "0",
+            "-codec:a",
+            "libmp3lame",
+            "-b:a",
+            "320k",
+            "-id3v2_version",
+            "3",
+        ])
+        .arg(&tmp);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -207,7 +253,13 @@ fn convert(ffmpeg: &Path, src: &Path, dst: &Path) -> Result<()> {
     let out = cmd.output()?;
     if !out.status.success() {
         let _ = std::fs::remove_file(&tmp);
-        bail!("Umwandlung fehlgeschlagen: {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or(""));
+        bail!(
+            "Umwandlung fehlgeschlagen: {}",
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .last()
+                .unwrap_or("")
+        );
     }
     std::fs::rename(&tmp, dst)?;
     Ok(())
@@ -219,19 +271,38 @@ fn key_name(k: &str) -> String {
 }
 
 /// Export ausführen. Fehlende Pioneer-Analysen müssen vorher nachgeholt sein (macht die App).
-pub fn run(conn: &Mutex<Connection>, o: &Options, ffmpeg: Option<&Path>, encrypted: bool, cancel: &AtomicBool, progress: Progress) -> Result<Report> {
+pub fn run(
+    conn: &Mutex<Connection>,
+    o: &Options,
+    ffmpeg: Option<&Path>,
+    encrypted: bool,
+    cancel: &AtomicBool,
+    progress: Progress,
+) -> Result<Report> {
     let root = PathBuf::from(&o.dest);
     if !root.is_dir() {
         bail!("Ziel „{}“ ist nicht erreichbar", o.dest);
     }
     let (tracks, lists, _) = collect(&conn.lock().unwrap(), &o.playlists)?;
     let mut man = read_manifest(&root);
-    let ours_paths: HashSet<String> = man.tracks.values().flat_map(|e| [e.path.clone(), e.anlz.clone()]).collect();
+    let ours_paths: HashSet<String> = man
+        .tracks
+        .values()
+        .flat_map(|e| [e.path.clone(), e.anlz.clone()])
+        .collect();
     // Platz prüfen (ungefähr: alles, was noch nicht da ist)
-    let need: u64 = tracks.iter().filter(|t| !man.tracks.contains_key(&t.id)).map(|t| t.size.max(0) as u64).sum();
+    let need: u64 = tracks
+        .iter()
+        .filter(|t| !man.tracks.contains_key(&t.id))
+        .map(|t| t.size.max(0) as u64)
+        .sum();
     if let Ok(free) = fs4::available_space(&root) {
         if need > free + 1024 * 1024 {
-            bail!("Nicht genug Platz: {:.1} GB nötig, {:.1} GB frei", need as f64 / 1e9, free as f64 / 1e9);
+            bail!(
+                "Nicht genug Platz: {:.1} GB nötig, {:.1} GB frei",
+                need as f64 / 1e9,
+                free as f64 / 1e9
+            );
         }
     }
     let (db, _) = ol::open(&root.join(ol::DB_REL), encrypted)?;
@@ -261,8 +332,12 @@ pub fn run(conn: &Mutex<Connection>, o: &Options, ffmpeg: Option<&Path>, encrypt
             let device_path = match &prev {
                 Some(e) if ext_of(&e.path) == out_ext => e.path.clone(),
                 _ => {
-                    let rel = crate::organize::render("{albumartist}/{album}/{artist} - {title}", t);
-                    let wanted = format!("/{CONTENTS}/{}.{out_ext}", rel.to_string_lossy().replace('\\', "/"));
+                    let rel =
+                        crate::organize::render("{albumartist}/{album}/{artist} - {title}", t);
+                    let wanted = format!(
+                        "/{CONTENTS}/{}.{out_ext}",
+                        rel.to_string_lossy().replace('\\', "/")
+                    );
                     let mut allowed = ours_paths.clone();
                     allowed.retain(|p| !new_paths.contains(p));
                     free_device_path(&root, &wanted, &allowed)
@@ -272,17 +347,27 @@ pub fn run(conn: &Mutex<Connection>, o: &Options, ffmpeg: Option<&Path>, encrypt
             let dst = on_disk(&root, &device_path);
             let size_now = std::fs::metadata(&dst).map(|m| m.len()).ok();
             let need_copy = match (&prev, size_now) {
-                (Some(e), Some(s)) => playable && s != t.size.max(0) as u64 || e.path != device_path,
+                (Some(e), Some(s)) => {
+                    playable && s != t.size.max(0) as u64 || e.path != device_path
+                }
                 (_, None) => true,
                 (None, Some(_)) => false, // fremde Datei: free_device_path verhindert das – zur Sicherheit nicht anfassen
             };
             if need_copy {
-                let r = if playable { copy_file(&src, &dst).map_err(anyhow::Error::from) } else { convert(ffmpeg.unwrap(), &src, &dst) };
+                let r = if playable {
+                    copy_file(&src, &dst).map_err(anyhow::Error::from)
+                } else {
+                    convert(ffmpeg.unwrap(), &src, &dst)
+                };
                 if let Err(e) = r {
                     rep.errors.push(format!("{}: {e}", label(t)));
                     continue;
                 }
-                if playable { rep.copied += 1 } else { rep.converted += 1 }
+                if playable {
+                    rep.copied += 1
+                } else {
+                    rep.converted += 1
+                }
                 rep.bytes += std::fs::metadata(&dst).map(|m| m.len()).unwrap_or(0);
             }
             let file_size = std::fs::metadata(&dst).map(|m| m.len()).unwrap_or(0);
@@ -290,7 +375,11 @@ pub fn run(conn: &Mutex<Connection>, o: &Options, ffmpeg: Option<&Path>, encrypt
             // Analysedateien
             let (grid, frames, cues) = {
                 let c = conn.lock().unwrap();
-                (super::grid(&c, t.id)?, super::frames(&c, t.id)?.unwrap_or_default(), super::cues(&c, t.id)?)
+                (
+                    super::grid(&c, t.id)?,
+                    super::frames(&c, t.id)?.unwrap_or_default(),
+                    super::cues(&c, t.id)?,
+                )
             };
             let anlz_dev = prev.as_ref().map(|e| e.anlz.clone()).unwrap_or_else(|| {
                 let mut p = anlz_path(&device_path);
@@ -302,7 +391,13 @@ pub fn run(conn: &Mutex<Connection>, o: &Options, ffmpeg: Option<&Path>, encrypt
                 p
             });
             let duration_ms = t.duration * 1000.0;
-            let a = anlz::TrackAnalysis { device_path: &device_path, duration_ms, grid, frames: &frames, cues: &cues };
+            let a = anlz::TrackAnalysis {
+                device_path: &device_path,
+                duration_ms,
+                grid,
+                frames: &frames,
+                cues: &cues,
+            };
             let dat = on_disk(&root, &anlz_dev);
             if let Some(d) = dat.parent() {
                 std::fs::create_dir_all(d)?;
@@ -341,16 +436,40 @@ pub fn run(conn: &Mutex<Connection>, o: &Options, ffmpeg: Option<&Path>, encrypt
                 _ => None,
             };
             let bpm = grid.map(|g| g.bpm).or(t.bpm).unwrap_or(0.0);
-            let title = t.title.clone().unwrap_or_else(|| Path::new(&t.path).file_stem().unwrap_or_default().to_string_lossy().to_string());
-            let file_name = Path::new(&device_path).file_name().unwrap_or_default().to_string_lossy().to_string();
-            let year: Option<i64> = t.year.as_deref().and_then(|y| y.get(0..4)).and_then(|y| y.parse().ok());
+            let title = t.title.clone().unwrap_or_else(|| {
+                Path::new(&t.path)
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
+            });
+            let file_name = Path::new(&device_path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let year: Option<i64> = t
+                .year
+                .as_deref()
+                .and_then(|y| y.get(0..4))
+                .and_then(|y| y.parse().ok());
             let ftype = ol::file_type(&out_ext).unwrap_or(1);
-            let bitrate = if playable { t.bitrate.unwrap_or(0) as i64 } else { 320 };
+            let bitrate = if playable {
+                t.bitrate.unwrap_or(0) as i64
+            } else {
+                320
+            };
             let rate = t.sample_rate.unwrap_or(44_100) as i64;
             // OFFEN: Bittiefe ist bei verlustbehafteten Formaten ohne Bedeutung; 16 als üblicher Wert
             let bits = 16i64;
             let existing: Option<i64> = match &prev {
-                Some(e) => db.query_row("SELECT content_id FROM content WHERE content_id = ?1", [e.content_id], |r| r.get(0)).optional()?,
+                Some(e) => db
+                    .query_row(
+                        "SELECT content_id FROM content WHERE content_id = ?1",
+                        [e.content_id],
+                        |r| r.get(0),
+                    )
+                    .optional()?,
                 None => None,
             };
             let content_id = match existing {
@@ -389,7 +508,15 @@ pub fn run(conn: &Mutex<Connection>, o: &Options, ffmpeg: Option<&Path>, encrypt
                         q.end_ms.map(|e| (e * 1000.0).round() as i64), (q.start_ms * 0.15).round() as i64, q.end_ms.map(|e| (e * 0.15).round() as i64)],
                 )?;
             }
-            man.tracks.insert(t.id, Entry { content_id, path: device_path, anlz: anlz_dev, size: file_size });
+            man.tracks.insert(
+                t.id,
+                Entry {
+                    content_id,
+                    path: device_path,
+                    anlz: anlz_dev,
+                    size: file_size,
+                },
+            );
             rep.tracks += 1;
         }
 
@@ -400,12 +527,21 @@ pub fn run(conn: &Mutex<Connection>, o: &Options, ffmpeg: Option<&Path>, encrypt
             }
             progress(tracks.len() + rep.playlists, total, name);
             let existing: Option<i64> = match man.playlists.get(pid) {
-                Some(id) => db.query_row("SELECT playlist_id FROM playlist WHERE playlist_id = ?1", [id], |r| r.get(0)).optional()?,
+                Some(id) => db
+                    .query_row(
+                        "SELECT playlist_id FROM playlist WHERE playlist_id = ?1",
+                        [id],
+                        |r| r.get(0),
+                    )
+                    .optional()?,
                 None => None,
             };
             let plid = match existing {
                 Some(id) => {
-                    db.execute("UPDATE playlist SET name = ?2 WHERE playlist_id = ?1", params![id, name])?;
+                    db.execute(
+                        "UPDATE playlist SET name = ?2 WHERE playlist_id = ?1",
+                        params![id, name],
+                    )?;
                     id
                 }
                 None => {
@@ -414,7 +550,10 @@ pub fn run(conn: &Mutex<Connection>, o: &Options, ffmpeg: Option<&Path>, encrypt
                     db.last_insert_rowid()
                 }
             };
-            db.execute("DELETE FROM playlist_content WHERE playlist_id = ?1", [plid])?;
+            db.execute(
+                "DELETE FROM playlist_content WHERE playlist_id = ?1",
+                [plid],
+            )?;
             let mut seq = 1;
             for id in ids {
                 if let Some(e) = man.tracks.get(id) {
@@ -425,7 +564,11 @@ pub fn run(conn: &Mutex<Connection>, o: &Options, ffmpeg: Option<&Path>, encrypt
             man.playlists.insert(*pid, plid);
             rep.playlists += 1;
         }
-        let device = root.file_name().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "USB".into());
+        let device = root
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "USB".into());
         ol::set_property(&db, &device, now())?;
         Ok(())
     })();
@@ -443,7 +586,9 @@ pub fn run(conn: &Mutex<Connection>, o: &Options, ffmpeg: Option<&Path>, encrypt
     std::fs::write(&mf, serde_json::to_vec_pretty(&man)?)?;
     progress(total, total, "Fertig");
     if rep.tracks == 0 && !tracks.is_empty() && rep.errors.is_empty() {
-        return Err(anyhow!("Kein Titel exportiert – alle Formate nicht abspielbar?"));
+        return Err(anyhow!(
+            "Kein Titel exportiert – alle Formate nicht abspielbar?"
+        ));
     }
     Ok(rep)
 }
@@ -460,7 +605,11 @@ mod tests {
         std::fs::create_dir_all(base.join("lib")).unwrap();
         std::fs::create_dir_all(base.join("stick/Contents/Band/Platte")).unwrap();
         // fremde Datei am Wunschort → darf nicht überschrieben werden
-        std::fs::write(base.join("stick/Contents/Band/Platte/Band - Eins.mp3"), b"fremd").unwrap();
+        std::fs::write(
+            base.join("stick/Contents/Band/Platte/Band - Eins.mp3"),
+            b"fremd",
+        )
+        .unwrap();
         let conn = Mutex::new(db::open(&base.join("t.db")).unwrap());
         let mk = |name: &str, title: &str| {
             let f = base.join("lib").join(name);
@@ -474,7 +623,19 @@ mod tests {
         {
             let c = conn.lock().unwrap();
             set_grid(&c, a, 128.0, 100.0, "t").unwrap();
-            set_cue(&c, a, &Cue { id: 0, kind: 1, start_ms: 1000.0, end_ms: None, color: Some(2), comment: None }).unwrap();
+            set_cue(
+                &c,
+                a,
+                &Cue {
+                    id: 0,
+                    kind: 1,
+                    start_ms: 1000.0,
+                    end_ms: None,
+                    color: Some(2),
+                    comment: None,
+                },
+            )
+            .unwrap();
         }
         let pid = {
             let mut c = conn.lock().unwrap();
@@ -482,7 +643,11 @@ mod tests {
             playlists::set_items(&mut c, p, &[a, b, a]).unwrap();
             p
         };
-        let o = Options { dest: base.join("stick").to_string_lossy().into(), playlists: vec![pid], unsupported: Unsupported::Skip };
+        let o = Options {
+            dest: base.join("stick").to_string_lossy().into(),
+            playlists: vec![pid],
+            unsupported: Unsupported::Skip,
+        };
         let pv = preview(&conn.lock().unwrap(), &o, false).unwrap();
         assert_eq!(pv.tracks, 2);
         assert_eq!(pv.unsupported.len(), 1);
@@ -490,19 +655,45 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let r = run(&conn, &o, None, false, &cancel, &|_, _, _| {}).unwrap();
         assert_eq!((r.tracks, r.copied, r.skipped, r.playlists), (1, 1, 1, 1));
-        assert_eq!(std::fs::read(base.join("stick/Contents/Band/Platte/Band - Eins.mp3")).unwrap(), b"fremd");
-        assert!(base.join("stick/Contents/Band/Platte/Band - Eins (2).mp3").exists());
+        assert_eq!(
+            std::fs::read(base.join("stick/Contents/Band/Platte/Band - Eins.mp3")).unwrap(),
+            b"fremd"
+        );
+        assert!(
+            base.join("stick/Contents/Band/Platte/Band - Eins (2).mp3")
+                .exists()
+        );
         // zweiter Lauf: nichts neu kopiert, Datenbank aktualisiert
         let r2 = run(&conn, &o, None, false, &cancel, &|_, _, _| {}).unwrap();
         assert_eq!(r2.copied, 0);
         let (db, created) = ol::open(&base.join("stick").join(ol::DB_REL), false).unwrap();
         assert!(!created);
-        assert_eq!(db.query_row("SELECT count(*) FROM content", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
-        assert_eq!(db.query_row("SELECT count(*) FROM playlist_content", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
-        assert_eq!(db.query_row("SELECT bpmx100 FROM content", [], |r| r.get::<_, i64>(0)).unwrap(), 12800);
-        assert_eq!(db.query_row("SELECT inUsec FROM cue", [], |r| r.get::<_, i64>(0)).unwrap(), 1_000_000);
-        let anlz: String = db.query_row("SELECT analysisDataFilePath FROM content", [], |r| r.get(0)).unwrap();
-        let dat = anlz::parse(&std::fs::read(on_disk(&base.join("stick"), &anlz)).unwrap()).unwrap();
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM content", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM playlist_content", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.query_row("SELECT bpmx100 FROM content", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            12800
+        );
+        assert_eq!(
+            db.query_row("SELECT inUsec FROM cue", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1_000_000
+        );
+        let anlz: String = db
+            .query_row("SELECT analysisDataFilePath FROM content", [], |r| r.get(0))
+            .unwrap();
+        let dat =
+            anlz::parse(&std::fs::read(on_disk(&base.join("stick"), &anlz)).unwrap()).unwrap();
         assert_eq!(dat.path, "/Contents/Band/Platte/Band - Eins (2).mp3");
         assert_eq!(dat.beats[0].1, 12800);
         let _ = std::fs::remove_dir_all(&base);

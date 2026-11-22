@@ -61,7 +61,11 @@ fn number(t: &Track, f: &str) -> Option<f64> {
     match f {
         "bpm" => t.bpm,
         "duration" => Some(t.duration),
-        "year" => t.year.as_deref().and_then(|y| y.get(..4)).and_then(|y| y.parse().ok()),
+        "year" => t
+            .year
+            .as_deref()
+            .and_then(|y| y.get(..4))
+            .and_then(|y| y.parse().ok()),
         "added" => Some(t.added as f64),
         "bitrate" => t.bitrate.map(f64::from),
         _ => None,
@@ -90,7 +94,9 @@ pub fn rule_matches(t: &Track, r: &Rule) -> bool {
             }
         }
         "gt" | "lt" | "between" => {
-            let (Some(n), Some(a)) = (number(t, &r.field), parse_num(&r.value)) else { return false };
+            let (Some(n), Some(a)) = (number(t, &r.field), parse_num(&r.value)) else {
+                return false;
+            };
             match r.op.as_str() {
                 "gt" => n > a,
                 "lt" => n < a,
@@ -131,7 +137,12 @@ pub fn evaluate(all_tracks: &[Track], rules: &SmartRules) -> Vec<i64> {
         "random" => {
             // deterministisch-zufällig pro Tag
             let seed = (now() / 86400) as u64;
-            hits.sort_by_key(|t| (t.id as u64).wrapping_mul(6364136223846793005).wrapping_add(seed).rotate_left(17));
+            hits.sort_by_key(|t| {
+                (t.id as u64)
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(seed)
+                    .rotate_left(17)
+            });
         }
         _ => {}
     }
@@ -148,9 +159,11 @@ pub fn evaluate(all_tracks: &[Track], rules: &SmartRules) -> Vec<i64> {
 pub fn list(conn: &Connection) -> Result<Vec<Playlist>> {
     let all = db::all_tracks(conn)?;
     let dur: std::collections::HashMap<i64, f64> = all.iter().map(|t| (t.id, t.duration)).collect();
-    let mut st = conn.prepare("SELECT id, name, rules FROM playlists ORDER BY name COLLATE NOCASE")?;
-    let rows: Vec<(i64, String, Option<String>)> =
-        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
+    let mut st =
+        conn.prepare("SELECT id, name, rules FROM playlists ORDER BY name COLLATE NOCASE")?;
+    let rows: Vec<(i64, String, Option<String>)> = st
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?;
     let mut out = Vec::new();
     for (id, name, rules) in rows {
         let rules: Option<SmartRules> = rules.and_then(|r| serde_json::from_str(&r).ok());
@@ -170,14 +183,19 @@ pub fn list(conn: &Connection) -> Result<Vec<Playlist>> {
 }
 
 fn item_ids(conn: &Connection, id: i64) -> Result<Vec<i64>> {
-    let mut st = conn.prepare("SELECT track_id FROM playlist_items WHERE playlist_id = ?1 ORDER BY pos")?;
-    Ok(st.query_map([id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
+    let mut st =
+        conn.prepare("SELECT track_id FROM playlist_items WHERE playlist_id = ?1 ORDER BY pos")?;
+    Ok(st
+        .query_map([id], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?)
 }
 
 /// Titel-IDs einer Playlist (bei smarten Playlisten frisch ausgewertet).
 pub fn track_ids(conn: &Connection, id: i64) -> Result<Vec<i64>> {
     let rules: Option<String> = conn
-        .query_row("SELECT rules FROM playlists WHERE id = ?1", [id], |r| r.get(0))
+        .query_row("SELECT rules FROM playlists WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
         .optional()?
         .flatten();
     match rules.and_then(|r| serde_json::from_str::<SmartRules>(&r).ok()) {
@@ -187,18 +205,28 @@ pub fn track_ids(conn: &Connection, id: i64) -> Result<Vec<i64>> {
 }
 
 pub fn name(conn: &Connection, id: i64) -> Result<String> {
-    Ok(conn.query_row("SELECT name FROM playlists WHERE id = ?1", [id], |r| r.get(0))?)
+    Ok(
+        conn.query_row("SELECT name FROM playlists WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })?,
+    )
 }
 
 pub fn create(conn: &Connection, name: &str, rules: Option<&SmartRules>) -> Result<i64> {
     let rules = rules.map(serde_json::to_string).transpose()?;
-    conn.execute("INSERT INTO playlists(name, rules, created) VALUES(?1, ?2, ?3)", params![name, rules, now()])?;
+    conn.execute(
+        "INSERT INTO playlists(name, rules, created) VALUES(?1, ?2, ?3)",
+        params![name, rules, now()],
+    )?;
     Ok(conn.last_insert_rowid())
 }
 
 pub fn update(conn: &Connection, id: i64, name: &str, rules: Option<&SmartRules>) -> Result<()> {
     let rules = rules.map(serde_json::to_string).transpose()?;
-    conn.execute("UPDATE playlists SET name = ?2, rules = ?3 WHERE id = ?1", params![id, name, rules])?;
+    conn.execute(
+        "UPDATE playlists SET name = ?2, rules = ?3 WHERE id = ?1",
+        params![id, name, rules],
+    )?;
     Ok(())
 }
 
@@ -211,7 +239,8 @@ pub fn set_items(conn: &mut Connection, id: i64, ids: &[i64]) -> Result<()> {
     let tx = conn.transaction()?;
     tx.execute("DELETE FROM playlist_items WHERE playlist_id = ?1", [id])?;
     {
-        let mut st = tx.prepare("INSERT INTO playlist_items(playlist_id, pos, track_id) VALUES(?1, ?2, ?3)")?;
+        let mut st = tx
+            .prepare("INSERT INTO playlist_items(playlist_id, pos, track_id) VALUES(?1, ?2, ?3)")?;
         for (pos, t) in ids.iter().enumerate() {
             st.execute(params![id, pos as i64, t])?;
         }
@@ -222,7 +251,12 @@ pub fn set_items(conn: &mut Connection, id: i64, ids: &[i64]) -> Result<()> {
 
 pub fn add_items(conn: &mut Connection, id: i64, ids: &[i64]) -> Result<()> {
     let mut cur = item_ids(conn, id)?;
-    cur.extend(ids.iter().copied().filter(|i| !cur.contains(i)).collect::<Vec<_>>());
+    cur.extend(
+        ids.iter()
+            .copied()
+            .filter(|i| !cur.contains(i))
+            .collect::<Vec<_>>(),
+    );
     set_items(conn, id, &cur)
 }
 
@@ -233,9 +267,16 @@ pub fn m3u8(tracks: &[Track], base_dir: &Path) -> String {
         let label = match (&t.artist, &t.title) {
             (Some(a), Some(ti)) => format!("{a} - {ti}"),
             (None, Some(ti)) => ti.clone(),
-            _ => Path::new(&t.path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_default(),
+            _ => Path::new(&t.path)
+                .file_stem()
+                .map(|x| x.to_string_lossy().to_string())
+                .unwrap_or_default(),
         };
-        s.push_str(&format!("#EXTINF:{},{}\n", t.duration.round() as i64, label.replace('\n', " ")));
+        s.push_str(&format!(
+            "#EXTINF:{},{}\n",
+            t.duration.round() as i64,
+            label.replace('\n', " ")
+        ));
         s.push_str(&paths::relative_to(base_dir, Path::new(&t.path)));
         s.push('\n');
     }
@@ -277,7 +318,11 @@ pub fn read_m3u(file: &Path) -> Result<Vec<PathBuf>> {
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(|l| {
             let l = l.strip_prefix("file:///").unwrap_or(l);
-            let p = PathBuf::from(if cfg!(windows) { l.replace('/', "\\") } else { l.to_string() });
+            let p = PathBuf::from(if cfg!(windows) {
+                l.replace('/', "\\")
+            } else {
+                l.to_string()
+            });
             if p.is_absolute() { p } else { dir.join(p) }
         })
         .collect())
@@ -288,13 +333,32 @@ mod tests {
     use super::*;
     #[test]
     fn smart() {
-        let t = |id, bpm: f64, genre: &str| Track { id, bpm: Some(bpm), genre: Some(genre.into()), ..Default::default() };
-        let all = vec![t(1, 124.0, "House"), t(2, 90.0, "Hip-Hop"), t(3, 128.0, "Deep House")];
+        let t = |id, bpm: f64, genre: &str| Track {
+            id,
+            bpm: Some(bpm),
+            genre: Some(genre.into()),
+            ..Default::default()
+        };
+        let all = vec![
+            t(1, 124.0, "House"),
+            t(2, 90.0, "Hip-Hop"),
+            t(3, 128.0, "Deep House"),
+        ];
         let r = SmartRules {
             all: true,
             rules: vec![
-                Rule { field: "genre".into(), op: "contains".into(), value: "house".into(), value2: String::new() },
-                Rule { field: "bpm".into(), op: "between".into(), value: "120".into(), value2: "126".into() },
+                Rule {
+                    field: "genre".into(),
+                    op: "contains".into(),
+                    value: "house".into(),
+                    value2: String::new(),
+                },
+                Rule {
+                    field: "bpm".into(),
+                    op: "between".into(),
+                    value: "120".into(),
+                    value2: "126".into(),
+                },
             ],
             sort: "bpm".into(),
             desc: false,

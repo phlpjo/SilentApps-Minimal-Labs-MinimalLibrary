@@ -17,17 +17,30 @@ pub struct DirEntry {
 }
 
 fn with_sep(p: &str) -> String {
-    if p.ends_with(['/', '\\']) { p.to_string() } else { format!("{p}{MAIN_SEPARATOR}") }
+    if p.ends_with(['/', '\\']) {
+        p.to_string()
+    } else {
+        format!("{p}{MAIN_SEPARATOR}")
+    }
 }
 
 fn has_subdirs(p: &Path) -> bool {
     std::fs::read_dir(p)
-        .map(|r| r.filter_map(|e| e.ok()).any(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false) && !hidden(&e.path())))
+        .map(|r| {
+            r.filter_map(|e| e.ok())
+                .any(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false) && !hidden(&e.path()))
+        })
         .unwrap_or(false)
 }
 
 fn hidden(p: &Path) -> bool {
-    p.file_name().map(|n| n.to_string_lossy().starts_with('.') || n == "$RECYCLE.BIN" || n == "System Volume Information").unwrap_or(false)
+    p.file_name()
+        .map(|n| {
+            n.to_string_lossy().starts_with('.')
+                || n == "$RECYCLE.BIN"
+                || n == "System Volume Information"
+        })
+        .unwrap_or(false)
 }
 
 /// Unterordner von `path` mit Titelanzahl (alphabetisch).
@@ -38,11 +51,16 @@ pub fn list(conn: &Connection, path: &Path) -> Result<Vec<DirEntry>> {
         .map(|e| e.path())
         .filter(|p| !hidden(p))
         .collect();
-    dirs.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default());
+    dirs.sort_by_key(|p| {
+        p.file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default()
+    });
     let all: Vec<String> = {
         let prefix = with_sep(&path.to_string_lossy());
         let mut st = conn.prepare("SELECT path FROM tracks WHERE substr(path, 1, ?2) = ?1")?;
-        st.query_map(params![prefix, prefix.chars().count() as i64], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+        st.query_map(params![prefix, prefix.chars().count() as i64], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?
     };
     Ok(dirs
         .into_iter()
@@ -50,7 +68,10 @@ pub fn list(conn: &Connection, path: &Path) -> Result<Vec<DirEntry>> {
             let p = d.to_string_lossy().to_string();
             let pre = with_sep(&p);
             DirEntry {
-                name: d.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                name: d
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default(),
                 tracks: all.iter().filter(|t| t.starts_with(&pre)).count(),
                 has_children: has_subdirs(&d),
                 path: p,
@@ -98,10 +119,16 @@ pub fn move_dir_raw(conn: &Connection, from: &Path, to: &Path) -> Result<PathBuf
     }
     let case_only = paths::same_path(from, to);
     if to.exists() && !case_only {
-        bail!("Es gibt dort schon einen Ordner „{}“", to.file_name().unwrap_or_default().to_string_lossy());
+        bail!(
+            "Es gibt dort schon einen Ordner „{}“",
+            to.file_name().unwrap_or_default().to_string_lossy()
+        );
     }
     if case_only {
-        let tmp = to.with_file_name(format!("{}.mltmp", to.file_name().unwrap_or_default().to_string_lossy()));
+        let tmp = to.with_file_name(format!(
+            "{}.mltmp",
+            to.file_name().unwrap_or_default().to_string_lossy()
+        ));
         std::fs::rename(from, &tmp)?;
         std::fs::rename(&tmp, to)?;
     } else {
@@ -113,13 +140,20 @@ pub fn move_dir_raw(conn: &Connection, from: &Path, to: &Path) -> Result<PathBuf
 
 pub fn rename(conn: &Connection, path: &Path, new_name: &str) -> Result<PathBuf> {
     let name = paths::sanitize(new_name.trim());
-    let parent = path.parent().ok_or_else(|| anyhow!("Musikordner selbst kann hier nicht umbenannt werden"))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("Musikordner selbst kann hier nicht umbenannt werden"))?;
     move_dir_raw(conn, path, &parent.join(name))
 }
 
 pub fn move_into(conn: &Connection, path: &Path, target_parent: &Path) -> Result<PathBuf> {
-    let name = path.file_name().ok_or_else(|| anyhow!("Ungültiger Ordner"))?;
-    if path.parent().is_some_and(|p| paths::same_path(p, target_parent)) {
+    let name = path
+        .file_name()
+        .ok_or_else(|| anyhow!("Ungültiger Ordner"))?;
+    if path
+        .parent()
+        .is_some_and(|p| paths::same_path(p, target_parent))
+    {
         return Ok(path.to_path_buf());
     }
     move_dir_raw(conn, path, &target_parent.join(name))
@@ -142,9 +176,14 @@ pub fn under_any(path: &str, roots: &[PathBuf]) -> bool {
 pub fn prune_outside(conn: &Connection, roots: &[PathBuf]) -> Result<usize> {
     let rows: Vec<(i64, String)> = {
         let mut st = conn.prepare("SELECT id, path FROM tracks")?;
-        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?
     };
-    let gone: Vec<i64> = rows.into_iter().filter(|(_, p)| !under_any(p, roots)).map(|(id, _)| id).collect();
+    let gone: Vec<i64> = rows
+        .into_iter()
+        .filter(|(_, p)| !under_any(p, roots))
+        .map(|(id, _)| id)
+        .collect();
     if gone.is_empty() {
         return Ok(0);
     }
@@ -163,7 +202,10 @@ pub fn prune_outside(conn: &Connection, roots: &[PathBuf]) -> Result<usize> {
 
 pub fn remove_tracks_under(conn: &Connection, path: &Path) -> Result<usize> {
     let p = with_sep(&path.to_string_lossy());
-    Ok(conn.execute("DELETE FROM tracks WHERE substr(path, 1, ?2) = ?1", params![p, p.chars().count() as i64])?)
+    Ok(conn.execute(
+        "DELETE FROM tracks WHERE substr(path, 1, ?2) = ?1",
+        params![p, p.chars().count() as i64],
+    )?)
 }
 
 #[cfg(test)]
@@ -171,14 +213,27 @@ mod tests {
     use super::*;
     #[test]
     fn prune_keeps_only_roots() {
-        let c = crate::db::open(&std::env::temp_dir().join(format!("mlprune{}.db", std::process::id()))).unwrap();
+        let c = crate::db::open(
+            &std::env::temp_dir().join(format!("mlprune{}.db", std::process::id())),
+        )
+        .unwrap();
         for p in ["/m/a/1.mp3", "/m/ab/2.mp3", "/x/3.mp3", "C:\\Musik\\4.mp3"] {
-            c.execute("INSERT INTO tracks(path, size) VALUES(?1, 1)", [p]).unwrap();
+            c.execute("INSERT INTO tracks(path, size) VALUES(?1, 1)", [p])
+                .unwrap();
         }
         let n = prune_outside(&c, &[PathBuf::from("/m/a"), PathBuf::from("C:\\Musik\\")]).unwrap();
         assert_eq!(n, 2);
-        let left: Vec<String> = c.prepare("SELECT path FROM tracks ORDER BY path").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
-        assert_eq!(left, vec!["/m/a/1.mp3".to_string(), "C:\\Musik\\4.mp3".to_string()]);
+        let left: Vec<String> = c
+            .prepare("SELECT path FROM tracks ORDER BY path")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(
+            left,
+            vec!["/m/a/1.mp3".to_string(), "C:\\Musik\\4.mp3".to_string()]
+        );
     }
 
     #[test]
@@ -189,12 +244,18 @@ mod tests {
         std::fs::create_dir_all(base.join("B")).unwrap();
         std::fs::write(base.join("A").join("Sub").join("x.mp3"), b"x").unwrap();
         let conn = crate::db::open(&base.join("t.db")).unwrap();
-        conn.execute("INSERT INTO tracks(path) VALUES(?1)", [base.join("A").join("Sub").join("x.mp3").to_string_lossy()]).unwrap();
+        conn.execute(
+            "INSERT INTO tracks(path) VALUES(?1)",
+            [base.join("A").join("Sub").join("x.mp3").to_string_lossy()],
+        )
+        .unwrap();
         let l = list(&conn, &base).unwrap();
         assert_eq!(l.iter().find(|d| d.name == "A").unwrap().tracks, 1);
         let new = rename(&conn, &base.join("A"), "Alt").unwrap();
         let moved = move_into(&conn, &new.join("Sub"), &base.join("B")).unwrap();
-        let p: String = conn.query_row("SELECT path FROM tracks", [], |r| r.get(0)).unwrap();
+        let p: String = conn
+            .query_row("SELECT path FROM tracks", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(Path::new(&p), moved.join("x.mp3"));
         assert!(move_into(&conn, &base.join("B"), &base.join("B/Sub")).is_err());
         let _ = std::fs::remove_dir_all(&base);

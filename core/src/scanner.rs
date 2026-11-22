@@ -64,7 +64,11 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
     progress(0, 0, "Dateien suchen …");
     let mut files: Vec<PathBuf> = Vec::new();
     for root in roots {
-        for e in walkdir::WalkDir::new(root).follow_links(false).into_iter().filter_map(|e| e.ok()) {
+        for e in walkdir::WalkDir::new(root)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
             if e.file_type().is_file() && is_audio(e.path()) {
                 files.push(e.into_path());
                 if files.len() % 500 == 0 {
@@ -127,7 +131,10 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
             }
         }
         // Verschwundene Dateien innerhalb der Musikordner entfernen
-        let found: HashSet<String> = files.iter().map(|f| f.to_string_lossy().to_string()).collect();
+        let found: HashSet<String> = files
+            .iter()
+            .map(|f| f.to_string_lossy().to_string())
+            .collect();
         for path in existing.keys() {
             let inside = roots.iter().any(|r| Path::new(path).starts_with(r));
             if inside && !found.contains(path) {
@@ -155,8 +162,13 @@ pub fn add_files(conn: &Mutex<Connection>, paths: &[PathBuf]) -> Result<Vec<i64>
             files.push(p.clone());
         }
     }
-    let read: Vec<(PathBuf, tags::TagData)> =
-        files.into_par_iter().map(|p| { let t = tags::read(&p).unwrap_or_default(); (p, t) }).collect();
+    let read: Vec<(PathBuf, tags::TagData)> = files
+        .into_par_iter()
+        .map(|p| {
+            let t = tags::read(&p).unwrap_or_default();
+            (p, t)
+        })
+        .collect();
     let c = conn.lock().unwrap();
     let mut ids = Vec::new();
     for (p, t) in read {

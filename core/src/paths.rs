@@ -24,7 +24,12 @@ pub fn sanitize(name: &str) -> String {
     }
     // Einzelne Segmente kurz halten (MAX_PATH-Reserve)
     if s.chars().count() > 120 {
-        s = s.chars().take(120).collect::<String>().trim_end_matches(['.', ' ']).to_string();
+        s = s
+            .chars()
+            .take(120)
+            .collect::<String>()
+            .trim_end_matches(['.', ' '])
+            .to_string();
     }
     s
 }
@@ -36,7 +41,8 @@ pub fn relative_to(base_dir: &Path, target: &Path) -> String {
     let t: Vec<Component> = target.components().collect();
     let same_root = match (b.first(), t.first()) {
         (Some(Component::Prefix(x)), Some(Component::Prefix(y))) => {
-            x.as_os_str().to_string_lossy().to_lowercase() == y.as_os_str().to_string_lossy().to_lowercase()
+            x.as_os_str().to_string_lossy().to_lowercase()
+                == y.as_os_str().to_string_lossy().to_lowercase()
         }
         (Some(x), Some(y)) => x == y,
         _ => false,
@@ -46,7 +52,8 @@ pub fn relative_to(base_dir: &Path, target: &Path) -> String {
     }
     let eq = |a: &Component, c: &Component| {
         if cfg!(windows) {
-            a.as_os_str().to_string_lossy().to_lowercase() == c.as_os_str().to_string_lossy().to_lowercase()
+            a.as_os_str().to_string_lossy().to_lowercase()
+                == c.as_os_str().to_string_lossy().to_lowercase()
         } else {
             a == c
         }
@@ -70,8 +77,14 @@ pub fn unique_path(p: &Path, taken: &dyn Fn(&Path) -> bool) -> PathBuf {
     if !taken(p) {
         return p.to_path_buf();
     }
-    let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-    let ext = p.extension().map(|s| format!(".{}", s.to_string_lossy())).unwrap_or_default();
+    let stem = p
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let ext = p
+        .extension()
+        .map(|s| format!(".{}", s.to_string_lossy()))
+        .unwrap_or_default();
     let dir = p.parent().map(Path::to_path_buf).unwrap_or_default();
     for n in 2..10_000 {
         let cand = dir.join(format!("{stem} ({n}){ext}"));
@@ -110,7 +123,9 @@ pub fn remove_empty_dirs(mut dir: PathBuf, stop: &[PathBuf]) {
         if stop.iter().any(|s| same_path(s, &dir)) {
             return;
         }
-        let empty = std::fs::read_dir(&dir).map(|mut r| r.next().is_none()).unwrap_or(false);
+        let empty = std::fs::read_dir(&dir)
+            .map(|mut r| r.next().is_none())
+            .unwrap_or(false);
         if !empty || std::fs::remove_dir(&dir).is_err() {
             return;
         }
@@ -132,7 +147,13 @@ mod tests {
     }
     #[test]
     fn relative_works() {
-        assert_eq!(relative_to(Path::new("/m/pl"), Path::new("/m/a/b.mp3")), "../a/b.mp3");
-        assert_eq!(relative_to(Path::new("/m"), Path::new("/m/a/b.mp3")), "a/b.mp3");
+        assert_eq!(
+            relative_to(Path::new("/m/pl"), Path::new("/m/a/b.mp3")),
+            "../a/b.mp3"
+        );
+        assert_eq!(
+            relative_to(Path::new("/m"), Path::new("/m/a/b.mp3")),
+            "a/b.mp3"
+        );
     }
 }

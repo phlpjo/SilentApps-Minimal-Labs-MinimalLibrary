@@ -64,24 +64,43 @@ pub struct Cue {
 }
 
 pub fn grid(c: &Connection, track: i64) -> Result<Option<Grid>> {
-    Ok(c.query_row("SELECT bpm, downbeat_ms, grid_edited FROM pioneer_analysis WHERE track_id = ?1", [track], |r| {
-        Ok(Grid { bpm: r.get(0)?, downbeat_ms: r.get(1)?, edited: r.get::<_, i64>(2)? != 0 })
-    })
+    Ok(c.query_row(
+        "SELECT bpm, downbeat_ms, grid_edited FROM pioneer_analysis WHERE track_id = ?1",
+        [track],
+        |r| {
+            Ok(Grid {
+                bpm: r.get(0)?,
+                downbeat_ms: r.get(1)?,
+                edited: r.get::<_, i64>(2)? != 0,
+            })
+        },
+    )
     .optional()?)
 }
 
 /// Pioneer-Wellenform (150 Werte/s × [Spitze, Bass, Mitten, Höhen])
 pub fn frames(c: &Connection, track: i64) -> Result<Option<Vec<u8>>> {
-    Ok(c.query_row("SELECT frames FROM pioneer_analysis WHERE track_id = ?1", [track], |r| r.get::<_, Option<Vec<u8>>>(0))
-        .optional()?
-        .flatten())
+    Ok(c.query_row(
+        "SELECT frames FROM pioneer_analysis WHERE track_id = ?1",
+        [track],
+        |r| r.get::<_, Option<Vec<u8>>>(0),
+    )
+    .optional()?
+    .flatten())
 }
 
 pub fn cues(c: &Connection, track: i64) -> Result<Vec<Cue>> {
     let mut st = c.prepare("SELECT id, kind, start_ms, end_ms, color, comment FROM cues WHERE track_id = ?1 ORDER BY kind, start_ms")?;
     let v = st
         .query_map([track], |r| {
-            Ok(Cue { id: r.get(0)?, kind: r.get::<_, i64>(1)? as u8, start_ms: r.get(2)?, end_ms: r.get(3)?, color: r.get::<_, Option<i64>>(4)?.map(|v| v as u8), comment: r.get(5)? })
+            Ok(Cue {
+                id: r.get(0)?,
+                kind: r.get::<_, i64>(1)? as u8,
+                start_ms: r.get(2)?,
+                end_ms: r.get(3)?,
+                color: r.get::<_, Option<i64>>(4)?.map(|v| v as u8),
+                comment: r.get(5)?,
+            })
         })?
         .collect::<rusqlite::Result<_>>()?;
     Ok(v)
@@ -93,7 +112,12 @@ fn backup(c: &Connection, batch: i64, track: i64) -> Result<()> {
     let cs = cues(c, track)?;
     c.execute(
         "INSERT INTO grid_backups(batch_id, track_id, grid, cues) VALUES(?1, ?2, ?3, ?4)",
-        params![batch, track, g.map(|g| serde_json::to_string(&g)).transpose()?, serde_json::to_string(&cs)?],
+        params![
+            batch,
+            track,
+            g.map(|g| serde_json::to_string(&g)).transpose()?,
+            serde_json::to_string(&cs)?
+        ],
     )?;
     Ok(())
 }
@@ -120,11 +144,18 @@ pub fn set_cue(c: &Connection, track: i64, cue: &Cue) -> Result<i64> {
     if cue.kind > 8 {
         return Err(anyhow!("Ungültiger Cue"));
     }
-    let what = if cue.kind == 0 { "Memory Cue gesetzt".to_string() } else { format!("Hot Cue {} gesetzt", (b'A' + cue.kind - 1) as char) };
+    let what = if cue.kind == 0 {
+        "Memory Cue gesetzt".to_string()
+    } else {
+        format!("Hot Cue {} gesetzt", (b'A' + cue.kind - 1) as char)
+    };
     let batch = history::begin(c, "grid", &what)?;
     backup(c, batch, track)?;
     if cue.kind > 0 {
-        c.execute("DELETE FROM cues WHERE track_id = ?1 AND kind = ?2", params![track, cue.kind])?;
+        c.execute(
+            "DELETE FROM cues WHERE track_id = ?1 AND kind = ?2",
+            params![track, cue.kind],
+        )?;
     }
     c.execute(
         "INSERT INTO cues(track_id, kind, start_ms, end_ms, color, comment) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
@@ -137,7 +168,10 @@ pub fn set_cue(c: &Connection, track: i64, cue: &Cue) -> Result<i64> {
 pub fn delete_cue(c: &Connection, track: i64, cue_id: i64) -> Result<i64> {
     let batch = history::begin(c, "grid", "Cue gelöscht")?;
     backup(c, batch, track)?;
-    let n = c.execute("DELETE FROM cues WHERE id = ?1 AND track_id = ?2", params![cue_id, track])?;
+    let n = c.execute(
+        "DELETE FROM cues WHERE id = ?1 AND track_id = ?2",
+        params![cue_id, track],
+    )?;
     history::finish(c, batch, n)?;
     Ok(batch)
 }
@@ -145,8 +179,10 @@ pub fn delete_cue(c: &Connection, track: i64, cue_id: i64) -> Result<i64> {
 /// Rückgängig: Grid und Cues auf den gesicherten Stand zurücksetzen
 pub fn undo(c: &Connection, batch: i64) -> Result<usize> {
     let rows: Vec<(i64, Option<String>, String)> = {
-        let mut st = c.prepare("SELECT track_id, grid, cues FROM grid_backups WHERE batch_id = ?1")?;
-        st.query_map([batch], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?
+        let mut st =
+            c.prepare("SELECT track_id, grid, cues FROM grid_backups WHERE batch_id = ?1")?;
+        st.query_map([batch], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<rusqlite::Result<_>>()?
     };
     for (track, g, cs) in &rows {
         match g {
@@ -158,7 +194,10 @@ pub fn undo(c: &Connection, batch: i64) -> Result<usize> {
                 )?;
             }
             None => {
-                c.execute("DELETE FROM pioneer_analysis WHERE track_id = ?1 AND frames IS NULL", [track])?;
+                c.execute(
+                    "DELETE FROM pioneer_analysis WHERE track_id = ?1 AND frames IS NULL",
+                    [track],
+                )?;
             }
         }
         let cs: Vec<Cue> = serde_json::from_str(cs)?;
@@ -179,18 +218,52 @@ mod tests {
 
     #[test]
     fn grid_beats_and_undo() {
-        let g = Grid { bpm: 120.0, downbeat_ms: 1250.0, edited: false };
+        let g = Grid {
+            bpm: 120.0,
+            downbeat_ms: 1250.0,
+            edited: false,
+        };
         let b = g.beats(4000.0);
         // 120 BPM = 500 ms: Schläge bei 250 (4), 750 (… ) – erster Downbeat bei 1250
         assert_eq!(b[0], (250.0, 3));
         assert_eq!(b.iter().find(|x| x.1 == 1).unwrap().0, 1250.0);
         assert_eq!(b.len(), 8);
 
-        let c = crate::db::open(&std::env::temp_dir().join(format!("mlgrid{}.db", std::process::id()))).unwrap();
-        c.execute("INSERT INTO tracks(id, path, size) VALUES(1, '/x.mp3', 1)", []).unwrap();
+        let c =
+            crate::db::open(&std::env::temp_dir().join(format!("mlgrid{}.db", std::process::id())))
+                .unwrap();
+        c.execute(
+            "INSERT INTO tracks(id, path, size) VALUES(1, '/x.mp3', 1)",
+            [],
+        )
+        .unwrap();
         set_grid(&c, 1, 128.0, 100.0, "Test").unwrap();
-        let b2 = set_cue(&c, 1, &Cue { id: 0, kind: 1, start_ms: 500.0, end_ms: None, color: Some(3), comment: Some("Drop".into()) }).unwrap();
-        set_cue(&c, 1, &Cue { id: 0, kind: 1, start_ms: 900.0, end_ms: None, color: None, comment: None }).unwrap();
+        let b2 = set_cue(
+            &c,
+            1,
+            &Cue {
+                id: 0,
+                kind: 1,
+                start_ms: 500.0,
+                end_ms: None,
+                color: Some(3),
+                comment: Some("Drop".into()),
+            },
+        )
+        .unwrap();
+        set_cue(
+            &c,
+            1,
+            &Cue {
+                id: 0,
+                kind: 1,
+                start_ms: 900.0,
+                end_ms: None,
+                color: None,
+                comment: None,
+            },
+        )
+        .unwrap();
         assert_eq!(cues(&c, 1).unwrap().len(), 1);
         assert_eq!(cues(&c, 1).unwrap()[0].start_ms, 900.0);
         undo(&c, b2 + 1).unwrap();

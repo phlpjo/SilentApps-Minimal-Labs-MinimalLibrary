@@ -31,19 +31,32 @@ impl Change {
 
 fn ignored(p: &Path) -> bool {
     let s = p.to_string_lossy();
-    s.ends_with(".mltmp") || p.components().any(|c| {
-        let n = c.as_os_str().to_string_lossy();
-        n.starts_with('.') || n == "$RECYCLE.BIN"
-    })
+    s.ends_with(".mltmp")
+        || p.components().any(|c| {
+            let n = c.as_os_str().to_string_lossy();
+            n.starts_with('.') || n == "$RECYCLE.BIN"
+        })
 }
 
 fn track_id(c: &Connection, p: &Path) -> Option<i64> {
-    c.query_row("SELECT id FROM tracks WHERE path = ?1", [p.to_string_lossy()], |r| r.get(0)).optional().ok().flatten()
+    c.query_row(
+        "SELECT id FROM tracks WHERE path = ?1",
+        [p.to_string_lossy()],
+        |r| r.get(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
 }
 
 fn stat(p: &Path) -> Option<(i64, i64)> {
     let m = std::fs::metadata(p).ok()?;
-    let mt = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64;
+    let mt = m
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64;
     Some((m.len() as i64, mt))
 }
 
@@ -54,19 +67,31 @@ fn adopt_or_add(conn: &Mutex<Connection>, files: Vec<PathBuf>, ch: &mut Change) 
     {
         let c = conn.lock().unwrap();
         for f in files {
-            let Some((size, mtime)) = stat(&f) else { continue };
+            let Some((size, mtime)) = stat(&f) else {
+                continue;
+            };
             let lost: Option<i64> = c
                 .prepare("SELECT id, path FROM tracks WHERE size = ?1 AND mtime = ?2")
                 .and_then(|mut st| {
-                    let rows: Vec<(i64, String)> =
-                        st.query_map(params![size, mtime], |r| Ok((r.get(0)?, r.get(1)?)))?.filter_map(|r| r.ok()).collect();
-                    Ok(rows.into_iter().find(|(_, p)| !Path::new(p).exists()).map(|(id, _)| id))
+                    let rows: Vec<(i64, String)> = st
+                        .query_map(params![size, mtime], |r| Ok((r.get(0)?, r.get(1)?)))?
+                        .filter_map(|r| r.ok())
+                        .collect();
+                    Ok(rows
+                        .into_iter()
+                        .find(|(_, p)| !Path::new(p).exists())
+                        .map(|(id, _)| id))
                 })
                 .ok()
                 .flatten();
             match lost {
                 Some(id) => {
-                    if c.execute("UPDATE tracks SET path = ?2 WHERE id = ?1", params![id, f.to_string_lossy()]).is_ok() {
+                    if c.execute(
+                        "UPDATE tracks SET path = ?2 WHERE id = ?1",
+                        params![id, f.to_string_lossy()],
+                    )
+                    .is_ok()
+                    {
                         ch.moved += 1;
                     }
                 }
@@ -97,7 +122,10 @@ fn sync_path(conn: &Mutex<Connection>, p: &Path, ch: &mut Change) {
             .collect();
         let new: Vec<PathBuf> = {
             let c = conn.lock().unwrap();
-            found.into_iter().filter(|f| track_id(&c, f).is_none()).collect()
+            found
+                .into_iter()
+                .filter(|f| track_id(&c, f).is_none())
+                .collect()
         };
         adopt_or_add(conn, new, ch);
         return;
@@ -113,8 +141,11 @@ fn sync_path(conn: &Mutex<Connection>, p: &Path, ch: &mut Change) {
                 adopt_or_add(conn, vec![p.to_path_buf()], ch);
             }
             Some(id) => {
-                let known: Option<(i64, i64)> =
-                    c.query_row("SELECT size, mtime FROM tracks WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).ok();
+                let known: Option<(i64, i64)> = c
+                    .query_row("SELECT size, mtime FROM tracks WHERE id = ?1", [id], |r| {
+                        Ok((r.get(0)?, r.get(1)?))
+                    })
+                    .ok();
                 drop(c);
                 // Tags ohne Datenbank-Sperre lesen – bei Cloud-Dateien kann das dauern (Download)
                 if stat(p) != known {
@@ -156,7 +187,12 @@ fn rename(conn: &Mutex<Connection>, from: &Path, to: &Path, ch: &mut Change) {
     }
     match track_id(&c, from) {
         Some(id) if is_audio(to) => {
-            if c.execute("UPDATE tracks SET path = ?2 WHERE id = ?1", params![id, to.to_string_lossy()]).is_ok() {
+            if c.execute(
+                "UPDATE tracks SET path = ?2 WHERE id = ?1",
+                params![id, to.to_string_lossy()],
+            )
+            .is_ok()
+            {
                 ch.moved += 1;
             }
         }
@@ -184,7 +220,9 @@ pub fn start(
         let mut touched: BTreeSet<PathBuf> = BTreeSet::new();
         for ev in events {
             match ev.event.kind {
-                EventKind::Modify(ModifyKind::Name(RenameMode::Both)) if ev.event.paths.len() == 2 => {
+                EventKind::Modify(ModifyKind::Name(RenameMode::Both))
+                    if ev.event.paths.len() == 2 =>
+                {
                     rename(&conn, &ev.event.paths[0], &ev.event.paths[1], &mut ch);
                 }
                 EventKind::Access(_) => {}
@@ -222,7 +260,10 @@ mod tests {
         }
         let conn = Arc::new(Mutex::new(crate::db::open(&base.join("t.db")).unwrap()));
         let (tx, rx) = std::sync::mpsc::channel();
-        let _w = start(conn.clone(), &[base.join("m")], move |c| { let _ = tx.send(c); }).unwrap();
+        let _w = start(conn.clone(), &[base.join("m")], move |c| {
+            let _ = tx.send(c);
+        })
+        .unwrap();
         std::thread::sleep(Duration::from_millis(300));
         std::fs::copy(&fixture, base.join("m/A/x.mp3")).unwrap();
         let c = rx.recv_timeout(Duration::from_secs(8)).expect("neue Datei");
@@ -232,11 +273,22 @@ mod tests {
         std::fs::rename(base.join("m/A/x.mp3"), base.join("m/B/y.mp3")).unwrap();
         let mut path = String::new();
         for _ in 0..3 {
-            if rx.recv_timeout(Duration::from_secs(8)).is_err() { break; }
-            path = conn.lock().unwrap().query_row("SELECT path FROM tracks WHERE id = ?1", [id], |r| r.get(0)).unwrap_or_default();
-            if path.ends_with("y.mp3") { break; }
+            if rx.recv_timeout(Duration::from_secs(8)).is_err() {
+                break;
+            }
+            path = conn
+                .lock()
+                .unwrap()
+                .query_row("SELECT path FROM tracks WHERE id = ?1", [id], |r| r.get(0))
+                .unwrap_or_default();
+            if path.ends_with("y.mp3") {
+                break;
+            }
         }
-        assert!(path.ends_with("y.mp3"), "ID bleibt beim Verschieben erhalten: {path}");
+        assert!(
+            path.ends_with("y.mp3"),
+            "ID bleibt beim Verschieben erhalten: {path}"
+        );
         std::fs::remove_file(base.join("m/B/y.mp3")).unwrap();
         let c = rx.recv_timeout(Duration::from_secs(8)).expect("gelöscht");
         assert_eq!(c.removed, 1);

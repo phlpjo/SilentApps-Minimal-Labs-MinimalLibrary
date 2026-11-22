@@ -23,7 +23,13 @@ fn artists(v: &Value) -> String {
     v.as_array()
         .map(|a| {
             a.iter()
-                .map(|x| format!("{}{}", x["name"].as_str().unwrap_or(""), x["joinphrase"].as_str().unwrap_or("")))
+                .map(|x| {
+                    format!(
+                        "{}{}",
+                        x["name"].as_str().unwrap_or(""),
+                        x["joinphrase"].as_str().unwrap_or("")
+                    )
+                })
                 .collect::<String>()
         })
         .unwrap_or_default()
@@ -31,7 +37,9 @@ fn artists(v: &Value) -> String {
 
 fn error_text(v: &Value) -> String {
     let code = v["error"]["code"].as_i64().unwrap_or(0);
-    let msg = v["error"]["message"].as_str().unwrap_or("unbekannter Fehler");
+    let msg = v["error"]["message"]
+        .as_str()
+        .unwrap_or("unbekannter Fehler");
     match code {
         4 => "Ungültiger Schlüssel. Bitte den Anwendungs-Schlüssel (API key) von acoustid.org/new-application eintragen – nicht den Benutzer-Schlüssel aus dem Profil.".into(),
         3 => "Fingerabdruck ungültig – Titel bitte neu analysieren.".into(),
@@ -40,7 +48,12 @@ fn error_text(v: &Value) -> String {
     }
 }
 
-pub fn lookup(cache: crate::webcache::Cache, key: &str, fp: &[u32], duration: f64) -> Result<Vec<Candidate>> {
+pub fn lookup(
+    cache: crate::webcache::Cache,
+    key: &str,
+    fp: &[u32],
+    duration: f64,
+) -> Result<Vec<Candidate>> {
     if key.trim().is_empty() {
         bail!("Kein AcoustID-Schlüssel eingetragen (Einstellungen → Online)");
     }
@@ -49,7 +62,11 @@ pub fn lookup(cache: crate::webcache::Cache, key: &str, fp: &[u32], duration: f6
     }
     let dur = (duration.round() as i64).max(1).to_string();
     let fpe = encode(fp);
-    let cache_key = format!("acoustid:{}:{dur}:{}", fpe.len(), &fpe[..fpe.len().min(400)]);
+    let cache_key = format!(
+        "acoustid:{}:{dur}:{}",
+        fpe.len(),
+        &fpe[..fpe.len().min(400)]
+    );
     let body = match crate::webcache::get(cache, &cache_key) {
         Some(b) => b,
         None => {
@@ -70,7 +87,8 @@ pub fn lookup(cache: crate::webcache::Cache, key: &str, fp: &[u32], duration: f6
                 ])
                 .map_err(|e| anyhow!("AcoustID nicht erreichbar: {e}"))?;
             let b = resp.body_mut().read_to_vec()?;
-            let v: Value = serde_json::from_slice(&b).map_err(|_| anyhow!("AcoustID: Antwort {}", resp.status()))?;
+            let v: Value = serde_json::from_slice(&b)
+                .map_err(|_| anyhow!("AcoustID: Antwort {}", resp.status()))?;
             if v["status"] != "ok" {
                 bail!("{}", error_text(&v));
             }
@@ -83,32 +101,45 @@ pub fn lookup(cache: crate::webcache::Cache, key: &str, fp: &[u32], duration: f6
     for res in v["results"].as_array().into_iter().flatten() {
         let score = (res["score"].as_f64().unwrap_or(0.0) * 100.0).round() as u32;
         for rec in res["recordings"].as_array().into_iter().flatten() {
-            let Some(title) = s(&rec["title"]) else { continue };
+            let Some(title) = s(&rec["title"]) else {
+                continue;
+            };
             let artist = artists(&rec["artists"]);
             let length = rec["duration"].as_f64();
             let mut added = false;
             // Alben bevorzugen
-            let mut groups: Vec<&Value> = rec["releasegroups"].as_array().into_iter().flatten().collect();
+            let mut groups: Vec<&Value> = rec["releasegroups"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .collect();
             groups.sort_by_key(|g| if g["type"] == "Album" { 0 } else { 1 });
             for g in groups.into_iter().take(3) {
                 let album_artist = Some(artists(&g["artists"])).filter(|x| !x.is_empty());
-                let mut rels: Vec<&Value> = g["releases"].as_array().into_iter().flatten().collect();
+                let mut rels: Vec<&Value> =
+                    g["releases"].as_array().into_iter().flatten().collect();
                 rels.sort_by_key(|r| r["date"]["year"].as_i64().unwrap_or(9999));
                 let rel = rels.first();
-                let medium = rel.and_then(|r| r["mediums"].as_array()).and_then(|m| m.first());
+                let medium = rel
+                    .and_then(|r| r["mediums"].as_array())
+                    .and_then(|m| m.first());
                 out.push(Candidate {
                     score,
                     title: title.clone(),
                     artist: artist.clone(),
                     album: s(&g["title"]),
                     album_artist,
-                    year: rel.and_then(|r| r["date"]["year"].as_i64()).map(|y| y.to_string()),
+                    year: rel
+                        .and_then(|r| r["date"]["year"].as_i64())
+                        .map(|y| y.to_string()),
                     track_no: medium
                         .and_then(|m| m["tracks"].as_array())
                         .and_then(|t| t.first())
                         .and_then(|t| t["position"].as_u64())
                         .map(|x| x as u32),
-                    disc_no: medium.and_then(|m| m["position"].as_u64()).map(|x| x as u32),
+                    disc_no: medium
+                        .and_then(|m| m["position"].as_u64())
+                        .map(|x| x as u32),
                     genre: None,
                     release_id: rel.and_then(|r| s(&r["id"])),
                     length,
@@ -117,8 +148,17 @@ pub fn lookup(cache: crate::webcache::Cache, key: &str, fp: &[u32], duration: f6
             }
             if !added {
                 out.push(Candidate {
-                    score, title, artist, album: None, album_artist: None, year: None, track_no: None, disc_no: None,
-                    genre: None, release_id: None, length,
+                    score,
+                    title,
+                    artist,
+                    album: None,
+                    album_artist: None,
+                    year: None,
+                    track_no: None,
+                    disc_no: None,
+                    genre: None,
+                    release_id: None,
+                    length,
                 });
             }
         }

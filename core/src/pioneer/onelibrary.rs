@@ -15,14 +15,19 @@ pub const DB_REL: &str = "PIONEER/rekordbox/exportLibrary.db";
 
 /// Schlüssel (XOR-verschleiert, damit er nicht im Klartext im Programm steht)
 const KEY_X: [u8; 64] = [
-    0x3f, 0x51, 0x09, 0x0d, 0x09, 0x0f, 0x1e, 0x78, 0x02, 0x5a, 0x46, 0x56, 0x4a, 0x4a, 0x1d, 0x2e, 0x1c, 0x53, 0x2f, 0x18, 0x18, 0x10,
-    0x0a, 0x19, 0x49, 0x28, 0x05, 0x58, 0x18, 0x14, 0x15, 0x01, 0x2e, 0x5a, 0x16, 0x00, 0x03, 0x10, 0x01, 0x15, 0x7f, 0x5b, 0x0f, 0x21,
-    0x5e, 0x56, 0x04, 0x04, 0x08, 0x4f, 0x79, 0x00, 0x5b, 0x06, 0x55, 0x07, 0x02, 0x3e, 0x18, 0x10, 0x0b, 0x10, 0x1e, 0x0a,
+    0x3f, 0x51, 0x09, 0x0d, 0x09, 0x0f, 0x1e, 0x78, 0x02, 0x5a, 0x46, 0x56, 0x4a, 0x4a, 0x1d, 0x2e,
+    0x1c, 0x53, 0x2f, 0x18, 0x18, 0x10, 0x0a, 0x19, 0x49, 0x28, 0x05, 0x58, 0x18, 0x14, 0x15, 0x01,
+    0x2e, 0x5a, 0x16, 0x00, 0x03, 0x10, 0x01, 0x15, 0x7f, 0x5b, 0x0f, 0x21, 0x5e, 0x56, 0x04, 0x04,
+    0x08, 0x4f, 0x79, 0x00, 0x5b, 0x06, 0x55, 0x07, 0x02, 0x3e, 0x18, 0x10, 0x0b, 0x10, 0x1e, 0x0a,
 ];
 const KEY_MASK: &[u8] = b"MinimalLibrary-OneLibrary";
 
 pub fn key() -> String {
-    KEY_X.iter().enumerate().map(|(i, b)| (b ^ KEY_MASK[i % KEY_MASK.len()]) as char).collect()
+    KEY_X
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (b ^ KEY_MASK[i % KEY_MASK.len()]) as char)
+        .collect()
 }
 
 /// Tabellen wie in pyrekordbox/onelibrary/models.py („key“ ist ein SQL-Schlüsselwort → in Anführungszeichen)
@@ -81,12 +86,29 @@ pub fn open(path: &Path, encrypted: bool) -> Result<(Connection, bool)> {
         c.execute_batch(SCHEMA)?;
     } else {
         // Bestehende Bibliothek: nur prüfen, ob die nötigen Tabellen da sind – nichts umbauen
-        for t in ["content", "playlist", "playlist_content", "cue", "artist", "album", "genre", "key", "image", "property"] {
+        for t in [
+            "content",
+            "playlist",
+            "playlist_content",
+            "cue",
+            "artist",
+            "album",
+            "genre",
+            "key",
+            "image",
+            "property",
+        ] {
             let ok: Option<String> = c
-                .query_row("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1", [t], |r| r.get(0))
+                .query_row(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [t],
+                    |r| r.get(0),
+                )
                 .optional()?;
             if ok.is_none() {
-                return Err(anyhow!("Die Bibliothek auf dem Laufwerk hat ein unbekanntes Format (Tabelle „{t}“ fehlt) – es wurde nichts verändert."));
+                return Err(anyhow!(
+                    "Die Bibliothek auf dem Laufwerk hat ein unbekanntes Format (Tabelle „{t}“ fehlt) – es wurde nichts verändert."
+                ));
             }
         }
     }
@@ -108,14 +130,23 @@ pub fn timestamp(unix: i64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}.000 +00:00", secs / 3600, secs / 60 % 60, secs % 60)
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}.000 +00:00",
+        secs / 3600,
+        secs / 60 % 60,
+        secs % 60
+    )
 }
 
 /// Eintrag mit eindeutigem Namen holen oder anlegen (artist, album, genre, key, label, image)
 pub fn id_for(c: &Connection, table: &str, col: &str, value: &str) -> Result<i64> {
     let idc = format!("{}_id", table.trim_matches('"'));
     if let Some(id) = c
-        .query_row(&format!("SELECT {idc} FROM {table} WHERE {col} = ?1"), [value], |r| r.get(0))
+        .query_row(
+            &format!("SELECT {idc} FROM {table} WHERE {col} = ?1"),
+            [value],
+            |r| r.get(0),
+        )
         .optional()?
     {
         return Ok(id);
@@ -183,10 +214,19 @@ mod tests {
         }
         // ohne Schlüssel nicht lesbar
         let plain = Connection::open(&p).unwrap();
-        assert!(plain.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)).is_err());
+        assert!(
+            plain
+                .query_row("SELECT count(*) FROM sqlite_master", [], |r| r
+                    .get::<_, i64>(0))
+                .is_err()
+        );
         let (c, created) = open(&p, true).unwrap();
         assert!(!created);
-        assert_eq!(c.query_row("SELECT count(*) FROM artist", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM artist", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
         let _ = std::fs::remove_file(&p);
     }
 }

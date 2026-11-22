@@ -59,7 +59,11 @@ fn devices() -> &'static Mutex<HashMap<String, Device>> {
 // ---------- Hilfen ----------
 
 pub fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 fn hms(sec: f64) -> String {
@@ -109,7 +113,13 @@ fn host_ip(url: &str) -> Option<Ipv4Addr> {
 }
 
 fn join(base: &str, path: &str) -> String {
-    if path.starts_with("http") { path.to_string() } else if path.starts_with('/') { format!("{base}{path}") } else { format!("{base}/{path}") }
+    if path.starts_with("http") {
+        path.to_string()
+    } else if path.starts_with('/') {
+        format!("{base}{path}")
+    } else {
+        format!("{base}/{path}")
+    }
 }
 
 /// Lokale IPv4-Adressen mit Netzmaske (ohne Loopback)
@@ -118,7 +128,9 @@ fn local_ifaces() -> Vec<(Ipv4Addr, Ipv4Addr)> {
         .unwrap_or_default()
         .into_iter()
         .filter_map(|i| match i.addr {
-            if_addrs::IfAddr::V4(v) if !v.ip.is_loopback() && !v.ip.is_link_local() => Some((v.ip, v.netmask)),
+            if_addrs::IfAddr::V4(v) if !v.ip.is_loopback() && !v.ip.is_link_local() => {
+                Some((v.ip, v.netmask))
+            }
             _ => None,
         })
         .collect()
@@ -127,14 +139,23 @@ fn local_ifaces() -> Vec<(Ipv4Addr, Ipv4Addr)> {
 /// Eigene Adresse, unter der das Gerät uns erreicht (gleiches Subnetz)
 fn local_ip_for(dev: Ipv4Addr) -> Ipv4Addr {
     let ifs = local_ifaces();
-    let same = |(ip, mask): &(Ipv4Addr, Ipv4Addr)| (u32::from(*ip) & u32::from(*mask)) == (u32::from(dev) & u32::from(*mask));
-    ifs.iter().find(|i| same(i)).or(ifs.first()).map(|i| i.0).unwrap_or(Ipv4Addr::UNSPECIFIED)
+    let same = |(ip, mask): &(Ipv4Addr, Ipv4Addr)| {
+        (u32::from(*ip) & u32::from(*mask)) == (u32::from(dev) & u32::from(*mask))
+    };
+    ifs.iter()
+        .find(|i| same(i))
+        .or(ifs.first())
+        .map(|i| i.0)
+        .unwrap_or(Ipv4Addr::UNSPECIFIED)
 }
 
 // ---------- SOAP ----------
 
 fn soap(control: &str, service: &str, action: &str, args: &[(&str, String)]) -> Result<String> {
-    let body_args: String = args.iter().map(|(k, v)| format!("<{k}>{}</{k}>", xml_escape(v))).collect();
+    let body_args: String = args
+        .iter()
+        .map(|(k, v)| format!("<{k}>{}</{k}>", xml_escape(v)))
+        .collect();
     let body = format!(
         r#"<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:{action} xmlns:u="{service}">{body_args}</u:{action}></s:Body></s:Envelope>"#
     );
@@ -149,7 +170,15 @@ fn soap(control: &str, service: &str, action: &str, args: &[(&str, String)]) -> 
     if status >= 400 {
         let code = tag(&text, "errorCode").unwrap_or_default();
         let desc = tag(&text, "errorDescription").unwrap_or_default();
-        bail!("{action} abgelehnt (HTTP {status}{}{})", if code.is_empty() { "" } else { ", Fehler " }, if desc.is_empty() { code } else { format!("{code} {desc}") });
+        bail!(
+            "{action} abgelehnt (HTTP {status}{}{})",
+            if code.is_empty() { "" } else { ", Fehler " },
+            if desc.is_empty() {
+                code
+            } else {
+                format!("{code} {desc}")
+            }
+        );
     }
     Ok(text)
 }
@@ -157,7 +186,9 @@ fn soap(control: &str, service: &str, action: &str, args: &[(&str, String)]) -> 
 /// Inhalt des ersten Elements mit diesem lokalen Namen (unescaped)
 fn tag(xml: &str, name: &str) -> Option<String> {
     let doc = roxmltree::Document::parse(xml).ok()?;
-    doc.descendants().find(|n| n.tag_name().name() == name).map(|n| n.text().unwrap_or("").to_string())
+    doc.descendants()
+        .find(|n| n.tag_name().name() == name)
+        .map(|n| n.text().unwrap_or("").to_string())
 }
 
 const AVT: &str = "urn:schemas-upnp-org:service:AVTransport:1";
@@ -168,7 +199,10 @@ const ZGT: &str = "urn:schemas-upnp-org:service:ZoneGroupTopology:1";
 // ---------- Suche ----------
 
 fn ssdp_search(timeout: Duration) -> Vec<String> {
-    let targets = ["urn:schemas-upnp-org:device:MediaRenderer:1", "urn:schemas-upnp-org:device:ZonePlayer:1"];
+    let targets = [
+        "urn:schemas-upnp-org:device:MediaRenderer:1",
+        "urn:schemas-upnp-org:device:ZonePlayer:1",
+    ];
     let mut locations: Vec<String> = Vec::new();
     let mut sockets = Vec::new();
     let mut ips: Vec<Ipv4Addr> = local_ifaces().into_iter().map(|i| i.0).collect();
@@ -176,7 +210,9 @@ fn ssdp_search(timeout: Duration) -> Vec<String> {
         ips.push(Ipv4Addr::UNSPECIFIED);
     }
     for ip in ips {
-        let Ok(sock) = UdpSocket::bind(SocketAddrV4::new(ip, 0)) else { continue };
+        let Ok(sock) = UdpSocket::bind(SocketAddrV4::new(ip, 0)) else {
+            continue;
+        };
         let _ = sock.set_multicast_ttl_v4(2);
         let _ = sock.set_read_timeout(Some(Duration::from_millis(200)));
         for st in targets {
@@ -222,13 +258,25 @@ struct Desc {
 fn describe(location: &str) -> Result<Desc> {
     let xml = agent().get(location).call()?.body_mut().read_to_string()?;
     let doc = roxmltree::Document::parse(&xml)?;
-    let root_dev = doc.descendants().find(|n| n.tag_name().name() == "device").context("kein device")?;
+    let root_dev = doc
+        .descendants()
+        .find(|n| n.tag_name().name() == "device")
+        .context("kein device")?;
     let child = |n: roxmltree::Node, name: &str| {
-        n.children().find(|c| c.tag_name().name() == name).and_then(|c| c.text()).unwrap_or("").to_string()
+        n.children()
+            .find(|c| c.tag_name().name() == name)
+            .and_then(|c| c.text())
+            .unwrap_or("")
+            .to_string()
     };
     let mut services = HashMap::new();
-    for s in doc.descendants().filter(|n| n.tag_name().name() == "service") {
-        services.entry(child(s, "serviceType")).or_insert_with(|| child(s, "controlURL"));
+    for s in doc
+        .descendants()
+        .filter(|n| n.tag_name().name() == "service")
+    {
+        services
+            .entry(child(s, "serviceType"))
+            .or_insert_with(|| child(s, "controlURL"));
     }
     Ok(Desc {
         udn: child(root_dev, "UDN"),
@@ -241,16 +289,27 @@ fn describe(location: &str) -> Result<Desc> {
 
 /// Sonos: Gruppen auslesen → ein Eintrag pro Gruppe (Koordinator steuert)
 fn sonos_groups(any_base: &str) -> Result<Vec<(String, String, String, Vec<String>)>> {
-    let resp = soap(&format!("{any_base}/ZoneGroupTopology/Control"), ZGT, "GetZoneGroupState", &[])?;
+    let resp = soap(
+        &format!("{any_base}/ZoneGroupTopology/Control"),
+        ZGT,
+        "GetZoneGroupState",
+        &[],
+    )?;
     let state = tag(&resp, "ZoneGroupState").context("kein ZoneGroupState")?;
     let doc = roxmltree::Document::parse(&state)?;
     let mut out = Vec::new(); // (Koordinator-UUID, Name, Basis-URL)
-    for g in doc.descendants().filter(|n| n.tag_name().name() == "ZoneGroup") {
+    for g in doc
+        .descendants()
+        .filter(|n| n.tag_name().name() == "ZoneGroup")
+    {
         let coord = g.attribute("Coordinator").unwrap_or("").to_string();
         let mut names: Vec<String> = Vec::new();
         let mut base = String::new();
         let mut members: Vec<String> = Vec::new();
-        for m in g.children().filter(|n| n.tag_name().name() == "ZoneGroupMember") {
+        for m in g
+            .children()
+            .filter(|n| n.tag_name().name() == "ZoneGroupMember")
+        {
             if m.attribute("Invisible") == Some("1") {
                 continue; // Sub, Surround-Boxen
             }
@@ -281,19 +340,26 @@ pub fn discover() -> Result<Vec<Device>> {
     for loc in locs {
         let Ok(d) = describe(&loc) else { continue };
         let base = base_of(&loc);
-        let is_sonos = d.manufacturer.to_lowercase().contains("sonos") || d.services.contains_key(ZGT);
+        let is_sonos =
+            d.manufacturer.to_lowercase().contains("sonos") || d.services.contains_key(ZGT);
         if is_sonos {
             sonos_base.get_or_insert(base);
             continue;
         }
-        let Some(av) = d.services.get(AVT) else { continue };
+        let Some(av) = d.services.get(AVT) else {
+            continue;
+        };
         let ip = host_ip(&base).unwrap_or(Ipv4Addr::UNSPECIFIED);
         if found.iter().any(|x| x.id == d.udn) {
             continue;
         }
         found.push(Device {
             id: d.udn.clone(),
-            name: if d.name.is_empty() { d.model.clone() } else { d.name.clone() },
+            name: if d.name.is_empty() {
+                d.model.clone()
+            } else {
+                d.name.clone()
+            },
             kind: "dlna".into(),
             model: d.model.clone(),
             av_control: join(&base, av),
@@ -313,7 +379,9 @@ pub fn discover() -> Result<Vec<Device>> {
                     kind: "sonos".into(),
                     model: "Sonos".into(),
                     av_control: format!("{base}/MediaRenderer/AVTransport/Control"),
-                    rc_control: Some(format!("{base}/MediaRenderer/GroupRenderingControl/Control")),
+                    rc_control: Some(format!(
+                        "{base}/MediaRenderer/GroupRenderingControl/Control"
+                    )),
                     group_volume: true,
                     local_ip: local_ip_for(ip),
                     members,
@@ -330,7 +398,12 @@ pub fn discover() -> Result<Vec<Device>> {
 }
 
 fn device(id: &str) -> Result<Device> {
-    devices().lock().unwrap().get(id).cloned().ok_or_else(|| anyhow!("Gerät nicht mehr gefunden – bitte neu suchen"))
+    devices()
+        .lock()
+        .unwrap()
+        .get(id)
+        .cloned()
+        .ok_or_else(|| anyhow!("Gerät nicht mehr gefunden – bitte neu suchen"))
 }
 
 // ---------- Datei-Server ----------
@@ -348,7 +421,11 @@ fn server() -> Result<&'static Server> {
     }
     let http = tiny_http::Server::http("0.0.0.0:0").map_err(|e| anyhow!("Server: {e}"))?;
     let port = http.server_addr().to_ip().map(|a| a.port()).unwrap_or(0);
-    let _ = S.set(Server { port, files: Mutex::new(HashMap::new()), covers: Mutex::new(HashMap::new()) });
+    let _ = S.set(Server {
+        port,
+        files: Mutex::new(HashMap::new()),
+        covers: Mutex::new(HashMap::new()),
+    });
     let srv = S.get().unwrap();
     std::thread::spawn(move || {
         for req in http.incoming_requests() {
@@ -361,7 +438,12 @@ fn server() -> Result<&'static Server> {
 }
 
 pub fn mime(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
         Some("mp3") => "audio/mpeg",
         Some("flac") => "audio/flac",
         Some("m4a" | "mp4" | "aac") => "audio/mp4",
@@ -375,10 +457,18 @@ pub fn mime(path: &Path) -> &'static str {
 
 fn serve(srv: &Server, req: tiny_http::Request) -> std::io::Result<()> {
     let url = req.url().to_string();
-    let key = url.trim_start_matches('/').split(['.', '?']).next().unwrap_or("").to_string();
-    let header = |n: &str, v: &str| tiny_http::Header::from_bytes(n.as_bytes(), v.as_bytes()).unwrap();
+    let key = url
+        .trim_start_matches('/')
+        .split(['.', '?'])
+        .next()
+        .unwrap_or("")
+        .to_string();
+    let header =
+        |n: &str, v: &str| tiny_http::Header::from_bytes(n.as_bytes(), v.as_bytes()).unwrap();
     if let Some(c) = srv.covers.lock().unwrap().get(&key).cloned() {
-        return req.respond(tiny_http::Response::from_data(c).with_header(header("Content-Type", "image/jpeg")));
+        return req.respond(
+            tiny_http::Response::from_data(c).with_header(header("Content-Type", "image/jpeg")),
+        );
     }
     let Some(path) = srv.files.lock().unwrap().get(&key).cloned() else {
         return req.respond(tiny_http::Response::empty(404));
@@ -405,27 +495,54 @@ fn serve(srv: &Server, req: tiny_http::Request) -> std::io::Result<()> {
         header("Content-Type", mime(&path)),
         header("Accept-Ranges", "bytes"),
         header("transferMode.dlna.org", "Streaming"),
-        header("contentFeatures.dlna.org", "DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000"),
+        header(
+            "contentFeatures.dlna.org",
+            "DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000",
+        ),
     ];
     if status == 206 {
-        headers.push(header("Content-Range", &format!("bytes {start}-{end}/{len}")));
+        headers.push(header(
+            "Content-Range",
+            &format!("bytes {start}-{end}/{len}"),
+        ));
     }
     let is_head = *req.method() == tiny_http::Method::Head;
-    let body: Box<dyn Read + Send> = if is_head { Box::new(std::io::empty()) } else { Box::new(f.take(n)) };
-    req.respond(tiny_http::Response::new(tiny_http::StatusCode(status), headers, body, Some(n as usize), None))
+    let body: Box<dyn Read + Send> = if is_head {
+        Box::new(std::io::empty())
+    } else {
+        Box::new(f.take(n))
+    };
+    req.respond(tiny_http::Response::new(
+        tiny_http::StatusCode(status),
+        headers,
+        body,
+        Some(n as usize),
+        None,
+    ))
 }
 
 fn token() -> String {
     use std::hash::{BuildHasher, Hasher};
     let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
+    h.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
+    );
     format!("{:016x}", h.finish())
 }
 
 // ---------- Steuerung ----------
 
 /// SOAP-Aufruf mit Wiederholung (Sonos lehnt kurz nach Stop/URI-Wechsel gern mit 701 „Transition“ ab)
-fn soap_retry(control: &str, service: &str, action: &str, args: &[(&str, String)], tries: usize) -> Result<String> {
+fn soap_retry(
+    control: &str,
+    service: &str,
+    action: &str,
+    args: &[(&str, String)],
+    tries: usize,
+) -> Result<String> {
     let mut last = None;
     for i in 0..tries {
         match soap(control, service, action, args) {
@@ -452,8 +569,14 @@ pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<()> 
     let d = device(device_id)?;
     let srv = server()?;
     let key = token();
-    srv.files.lock().unwrap().insert(key.clone(), path.to_path_buf());
-    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    srv.files
+        .lock()
+        .unwrap()
+        .insert(key.clone(), path.to_path_buf());
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
     let url = format!("http://{}:{}/{key}.{ext}", d.local_ip, srv.port);
     let art = meta.cover.map(|c| {
         let ck = format!("c{key}");
@@ -467,7 +590,8 @@ pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<()> 
         xml_escape(meta.artist),
         xml_escape(meta.artist),
         xml_escape(meta.album),
-        art.map(|a| format!("<upnp:albumArtURI>{}</upnp:albumArtURI>", xml_escape(&a))).unwrap_or_default(),
+        art.map(|a| format!("<upnp:albumArtURI>{}</upnp:albumArtURI>", xml_escape(&a)))
+            .unwrap_or_default(),
         hms(meta.duration),
         xml_escape(&url),
     );
@@ -477,20 +601,47 @@ pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<()> 
     if !sonos {
         let _ = soap(&d.av_control, AVT, "Stop", &[("InstanceID", "0".into())]);
     }
-    soap_retry(&d.av_control, AVT, "SetAVTransportURI", &[("InstanceID", "0".into()), ("CurrentURI", url), ("CurrentURIMetaData", didl)], 3)?;
+    soap_retry(
+        &d.av_control,
+        AVT,
+        "SetAVTransportURI",
+        &[
+            ("InstanceID", "0".into()),
+            ("CurrentURI", url),
+            ("CurrentURIMetaData", didl),
+        ],
+        3,
+    )?;
     // Einstieg mitten im Titel: wie die Sonos-App erst springen, dann abspielen – kein Anspielen,
     // kein Stumm/Laut. Klappt das Springen vor dem Start nicht (manche DLNA-Geräte), danach springen.
     let mut seeked = start <= 1.0;
     if !seeked {
         for _ in 0..3 {
-            if soap(&d.av_control, AVT, "Seek", &[("InstanceID", "0".into()), ("Unit", "REL_TIME".into()), ("Target", hms(start))]).is_ok() {
+            if soap(
+                &d.av_control,
+                AVT,
+                "Seek",
+                &[
+                    ("InstanceID", "0".into()),
+                    ("Unit", "REL_TIME".into()),
+                    ("Target", hms(start)),
+                ],
+            )
+            .is_ok()
+            {
                 seeked = true;
                 break;
             }
             std::thread::sleep(Duration::from_millis(120));
         }
     }
-    soap_retry(&d.av_control, AVT, "Play", &[("InstanceID", "0".into()), ("Speed", "1".into())], 4)?;
+    soap_retry(
+        &d.av_control,
+        AVT,
+        "Play",
+        &[("InstanceID", "0".into()), ("Speed", "1".into())],
+        4,
+    )?;
     *active().lock().unwrap() = Some(device_id.to_string());
     let my_gen = my;
     if !seeked {
@@ -508,8 +659,15 @@ pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<()> 
         // (und stößt notfalls noch einmal an). Die Oberfläche fragt den Zustand ohnehin ab.
         let d2 = d.clone();
         std::thread::spawn(move || {
-            if !wait_state(&d2, "PLAYING", Duration::from_secs(5)) && GEN.load(std::sync::atomic::Ordering::SeqCst) == my_gen {
-                let _ = soap(&d2.av_control, AVT, "Play", &[("InstanceID", "0".into()), ("Speed", "1".into())]);
+            if !wait_state(&d2, "PLAYING", Duration::from_secs(5))
+                && GEN.load(std::sync::atomic::Ordering::SeqCst) == my_gen
+            {
+                let _ = soap(
+                    &d2.av_control,
+                    AVT,
+                    "Play",
+                    &[("InstanceID", "0".into()), ("Speed", "1".into())],
+                );
             }
         });
     }
@@ -527,18 +685,30 @@ pub fn active_device() -> Option<String> {
 }
 
 fn transport_state(d: &Device) -> Option<String> {
-    soap(&d.av_control, AVT, "GetTransportInfo", &[("InstanceID", "0".into())]).ok().and_then(|x| tag(&x, "CurrentTransportState"))
+    soap(
+        &d.av_control,
+        AVT,
+        "GetTransportInfo",
+        &[("InstanceID", "0".into())],
+    )
+    .ok()
+    .and_then(|x| tag(&x, "CurrentTransportState"))
 }
 
 /// Warten, bis die Abspielposition eine Stelle erreicht hat (Puffer gefüllt, läuft sauber)
 fn wait_position(d: &Device, at: f64, max: Duration) -> bool {
     let end = Instant::now() + max;
     while Instant::now() < end {
-        let pos = soap(&d.av_control, AVT, "GetPositionInfo", &[("InstanceID", "0".into())])
-            .ok()
-            .and_then(|x| tag(&x, "RelTime"))
-            .map(|t| parse_hms(&t))
-            .unwrap_or(0.0);
+        let pos = soap(
+            &d.av_control,
+            AVT,
+            "GetPositionInfo",
+            &[("InstanceID", "0".into())],
+        )
+        .ok()
+        .and_then(|x| tag(&x, "RelTime"))
+        .map(|t| parse_hms(&t))
+        .unwrap_or(0.0);
         if pos >= at {
             return true;
         }
@@ -559,22 +729,47 @@ fn wait_state(d: &Device, want: &str, max: Duration) -> bool {
 }
 
 fn get_mute(d: &Device) -> Result<bool> {
-    let rc = d.rc_control.as_ref().ok_or_else(|| anyhow!("keine Lautstärke"))?;
+    let rc = d
+        .rc_control
+        .as_ref()
+        .ok_or_else(|| anyhow!("keine Lautstärke"))?;
     let r = if d.group_volume {
         soap(rc, GRC, "GetGroupMute", &[("InstanceID", "0".into())])?
     } else {
-        soap(rc, RC, "GetMute", &[("InstanceID", "0".into()), ("Channel", "Master".into())])?
+        soap(
+            rc,
+            RC,
+            "GetMute",
+            &[("InstanceID", "0".into()), ("Channel", "Master".into())],
+        )?
     };
     Ok(tag(&r, "CurrentMute").as_deref() == Some("1"))
 }
 
 fn set_mute(d: &Device, mute: bool) -> Result<()> {
-    let rc = d.rc_control.as_ref().ok_or_else(|| anyhow!("keine Lautstärke"))?;
+    let rc = d
+        .rc_control
+        .as_ref()
+        .ok_or_else(|| anyhow!("keine Lautstärke"))?;
     let v = if mute { "1" } else { "0" }.to_string();
     if d.group_volume {
-        soap(rc, GRC, "SetGroupMute", &[("InstanceID", "0".into()), ("DesiredMute", v)])?;
+        soap(
+            rc,
+            GRC,
+            "SetGroupMute",
+            &[("InstanceID", "0".into()), ("DesiredMute", v)],
+        )?;
     } else {
-        soap(rc, RC, "SetMute", &[("InstanceID", "0".into()), ("Channel", "Master".into()), ("DesiredMute", v)])?;
+        soap(
+            rc,
+            RC,
+            "SetMute",
+            &[
+                ("InstanceID", "0".into()),
+                ("Channel", "Master".into()),
+                ("DesiredMute", v),
+            ],
+        )?;
     }
     Ok(())
 }
@@ -583,7 +778,16 @@ fn set_mute(d: &Device, mute: bool) -> Result<()> {
 fn seek_dev(d: &Device, sec: f64) -> Result<()> {
     let mut last = anyhow!("Springen nicht möglich");
     for _ in 0..12 {
-        match soap(&d.av_control, AVT, "Seek", &[("InstanceID", "0".into()), ("Unit", "REL_TIME".into()), ("Target", hms(sec))]) {
+        match soap(
+            &d.av_control,
+            AVT,
+            "Seek",
+            &[
+                ("InstanceID", "0".into()),
+                ("Unit", "REL_TIME".into()),
+                ("Target", hms(sec)),
+            ],
+        ) {
             Ok(_) => return Ok(()),
             Err(e) => {
                 last = e;
@@ -601,7 +805,13 @@ pub fn pause(device_id: &str) -> Result<()> {
 
 pub fn resume(device_id: &str) -> Result<()> {
     let d = device(device_id)?;
-    soap(&d.av_control, AVT, "Play", &[("InstanceID", "0".into()), ("Speed", "1".into())]).map(|_| ())
+    soap(
+        &d.av_control,
+        AVT,
+        "Play",
+        &[("InstanceID", "0".into()), ("Speed", "1".into())],
+    )
+    .map(|_| ())
 }
 
 pub fn stop(device_id: &str) -> Result<()> {
@@ -623,7 +833,16 @@ pub fn seek(device_id: &str, sec: f64) -> Result<()> {
         if GEN.load(std::sync::atomic::Ordering::SeqCst) != my {
             return Ok(());
         }
-        match soap(&d.av_control, AVT, "Seek", &[("InstanceID", "0".into()), ("Unit", "REL_TIME".into()), ("Target", hms(sec))]) {
+        match soap(
+            &d.av_control,
+            AVT,
+            "Seek",
+            &[
+                ("InstanceID", "0".into()),
+                ("Unit", "REL_TIME".into()),
+                ("Target", hms(sec)),
+            ],
+        ) {
             Ok(_) => return Ok(()),
             Err(e) if i == 7 => return Err(e),
             Err(_) => std::thread::sleep(Duration::from_millis(200)),
@@ -634,40 +853,79 @@ pub fn seek(device_id: &str, sec: f64) -> Result<()> {
 
 pub fn set_volume(device_id: &str, vol: u8) -> Result<()> {
     let d = device(device_id)?;
-    let rc = d.rc_control.clone().ok_or_else(|| anyhow!("Gerät hat keine Lautstärkeregelung"))?;
+    let rc = d
+        .rc_control
+        .clone()
+        .ok_or_else(|| anyhow!("Gerät hat keine Lautstärkeregelung"))?;
     if d.group_volume {
-        soap(&rc, GRC, "SetGroupVolume", &[("InstanceID", "0".into()), ("DesiredVolume", vol.min(100).to_string())])?;
+        soap(
+            &rc,
+            GRC,
+            "SetGroupVolume",
+            &[
+                ("InstanceID", "0".into()),
+                ("DesiredVolume", vol.min(100).to_string()),
+            ],
+        )?;
     } else {
-        soap(&rc, RC, "SetVolume", &[("InstanceID", "0".into()), ("Channel", "Master".into()), ("DesiredVolume", vol.min(100).to_string())])?;
+        soap(
+            &rc,
+            RC,
+            "SetVolume",
+            &[
+                ("InstanceID", "0".into()),
+                ("Channel", "Master".into()),
+                ("DesiredVolume", vol.min(100).to_string()),
+            ],
+        )?;
     }
     Ok(())
 }
 
 pub fn status(device_id: &str) -> Result<Status> {
     let d = device(device_id)?;
-    let ti = soap(&d.av_control, AVT, "GetTransportInfo", &[("InstanceID", "0".into())])?;
-    let pi = soap(&d.av_control, AVT, "GetPositionInfo", &[("InstanceID", "0".into())])?;
+    let ti = soap(
+        &d.av_control,
+        AVT,
+        "GetTransportInfo",
+        &[("InstanceID", "0".into())],
+    )?;
+    let pi = soap(
+        &d.av_control,
+        AVT,
+        "GetPositionInfo",
+        &[("InstanceID", "0".into())],
+    )?;
     // Lautstärke seltener abfragen (jede 5. Abfrage) – weniger Last auf dem Lautsprecher
     static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let ask_volume = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 5 == 0;
     let volume = match &d.rc_control {
         _ if !ask_volume => -1,
-        Some(rc) if d.group_volume => soap(rc, GRC, "GetGroupVolume", &[("InstanceID", "0".into())])
-            .ok()
-            .and_then(|x| tag(&x, "CurrentVolume"))
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(-1),
-        Some(rc) => soap(rc, RC, "GetVolume", &[("InstanceID", "0".into()), ("Channel", "Master".into())])
-            .ok()
-            .and_then(|x| tag(&x, "CurrentVolume"))
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(-1),
+        Some(rc) if d.group_volume => {
+            soap(rc, GRC, "GetGroupVolume", &[("InstanceID", "0".into())])
+                .ok()
+                .and_then(|x| tag(&x, "CurrentVolume"))
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(-1)
+        }
+        Some(rc) => soap(
+            rc,
+            RC,
+            "GetVolume",
+            &[("InstanceID", "0".into()), ("Channel", "Master".into())],
+        )
+        .ok()
+        .and_then(|x| tag(&x, "CurrentVolume"))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(-1),
         None => -1,
     };
     Ok(Status {
         state: tag(&ti, "CurrentTransportState").unwrap_or_default(),
         position: tag(&pi, "RelTime").map(|t| parse_hms(&t)).unwrap_or(0.0),
-        duration: tag(&pi, "TrackDuration").map(|t| parse_hms(&t)).unwrap_or(0.0),
+        duration: tag(&pi, "TrackDuration")
+            .map(|t| parse_hms(&t))
+            .unwrap_or(0.0),
         volume,
     })
 }
@@ -691,18 +949,37 @@ fn rc_of(base: &str) -> String {
 pub fn sound_get(device_id: &str) -> Result<Sound> {
     let d = device(device_id)?;
     let Some(base) = d.members.first() else {
-        return Ok(Sound { supported: false, bass: 0, treble: 0, loudness: false });
+        return Ok(Sound {
+            supported: false,
+            bass: 0,
+            treble: 0,
+            loudness: false,
+        });
     };
     let rc = rc_of(base);
     let num = |action: &str, field: &str| -> i32 {
-        soap(&rc, RC, action, &[("InstanceID", "0".into())]).ok().and_then(|x| tag(&x, field)).and_then(|v| v.parse().ok()).unwrap_or(0)
+        soap(&rc, RC, action, &[("InstanceID", "0".into())])
+            .ok()
+            .and_then(|x| tag(&x, field))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
     };
-    let loud = soap(&rc, RC, "GetLoudness", &[("InstanceID", "0".into()), ("Channel", "Master".into())])
-        .ok()
-        .and_then(|x| tag(&x, "CurrentLoudness"))
-        .map(|v| v == "1")
-        .unwrap_or(false);
-    Ok(Sound { supported: true, bass: num("GetBass", "CurrentBass"), treble: num("GetTreble", "CurrentTreble"), loudness: loud })
+    let loud = soap(
+        &rc,
+        RC,
+        "GetLoudness",
+        &[("InstanceID", "0".into()), ("Channel", "Master".into())],
+    )
+    .ok()
+    .and_then(|x| tag(&x, "CurrentLoudness"))
+    .map(|v| v == "1")
+    .unwrap_or(false);
+    Ok(Sound {
+        supported: true,
+        bass: num("GetBass", "CurrentBass"),
+        treble: num("GetTreble", "CurrentTreble"),
+        loudness: loud,
+    })
 }
 
 /// Gilt für alle Lautsprecher der Gruppe
@@ -713,9 +990,34 @@ pub fn sound_set(device_id: &str, s: &Sound) -> Result<()> {
     }
     for base in &d.members {
         let rc = rc_of(base);
-        soap(&rc, RC, "SetBass", &[("InstanceID", "0".into()), ("DesiredBass", s.bass.clamp(-10, 10).to_string())])?;
-        soap(&rc, RC, "SetTreble", &[("InstanceID", "0".into()), ("DesiredTreble", s.treble.clamp(-10, 10).to_string())])?;
-        let _ = soap(&rc, RC, "SetLoudness", &[("InstanceID", "0".into()), ("Channel", "Master".into()), ("DesiredLoudness", if s.loudness { "1" } else { "0" }.into())]);
+        soap(
+            &rc,
+            RC,
+            "SetBass",
+            &[
+                ("InstanceID", "0".into()),
+                ("DesiredBass", s.bass.clamp(-10, 10).to_string()),
+            ],
+        )?;
+        soap(
+            &rc,
+            RC,
+            "SetTreble",
+            &[
+                ("InstanceID", "0".into()),
+                ("DesiredTreble", s.treble.clamp(-10, 10).to_string()),
+            ],
+        )?;
+        let _ = soap(
+            &rc,
+            RC,
+            "SetLoudness",
+            &[
+                ("InstanceID", "0".into()),
+                ("Channel", "Master".into()),
+                ("DesiredLoudness", if s.loudness { "1" } else { "0" }.into()),
+            ],
+        );
     }
     Ok(())
 }
@@ -727,10 +1029,19 @@ mod tests {
     fn helpers() {
         assert_eq!(hms(3725.4), "1:02:05");
         assert_eq!(parse_hms("0:03:30.123"), 210.0);
-        assert_eq!(base_of("http://192.168.1.5:1400/xml/device_description.xml"), "http://192.168.1.5:1400");
-        assert_eq!(host_ip("http://192.168.1.5:1400/x"), Some(Ipv4Addr::new(192, 168, 1, 5)));
+        assert_eq!(
+            base_of("http://192.168.1.5:1400/xml/device_description.xml"),
+            "http://192.168.1.5:1400"
+        );
+        assert_eq!(
+            host_ip("http://192.168.1.5:1400/x"),
+            Some(Ipv4Addr::new(192, 168, 1, 5))
+        );
         let xml = r#"<s:Envelope xmlns:s="x"><s:Body><u:R xmlns:u="y"><CurrentTransportState>PLAYING</CurrentTransportState></u:R></s:Body></s:Envelope>"#;
-        assert_eq!(tag(xml, "CurrentTransportState").as_deref(), Some("PLAYING"));
+        assert_eq!(
+            tag(xml, "CurrentTransportState").as_deref(),
+            Some("PLAYING")
+        );
     }
 
     /// Datei-Server mit Range-Anfragen
@@ -750,7 +1061,10 @@ mod tests {
         assert_eq!(r.status().as_u16(), 206);
         let body = r.body_mut().read_to_vec().unwrap();
         assert_eq!(body, (10..20u8).collect::<Vec<_>>());
-        let r = agent().get(&format!("http://127.0.0.1:{}/nope.mp3", srv.port)).call().unwrap();
+        let r = agent()
+            .get(&format!("http://127.0.0.1:{}/nope.mp3", srv.port))
+            .call()
+            .unwrap();
         assert_eq!(r.status().as_u16(), 404);
     }
 }

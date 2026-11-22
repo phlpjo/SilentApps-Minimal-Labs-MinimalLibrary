@@ -38,6 +38,10 @@ pub struct Target {
     pub folders: Vec<String>,
     /// Freien Platz nicht prüfen (Cloud-/Netzlaufwerke melden oft nur den lokalen Zwischenspeicher)
     pub ignore_space: bool,
+    /// Handy/Player über MTP (nur Windows): Gerätekennung; leer = Ordner/Laufwerk.
+    /// `path` ist dann der Ordner auf dem Gerät, z. B. „Interner gemeinsamer Speicher/Music“.
+    pub device: String,
+    pub device_name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -50,35 +54,66 @@ pub struct TargetState {
 }
 
 fn ensure(c: &Connection) -> Result<()> {
-    c.execute_batch("CREATE TABLE IF NOT EXISTS sync_targets (id INTEGER PRIMARY KEY, data TEXT NOT NULL);")?;
+    c.execute_batch(
+        "CREATE TABLE IF NOT EXISTS sync_targets (id INTEGER PRIMARY KEY, data TEXT NOT NULL);",
+    )?;
     Ok(())
 }
 
 pub fn list(c: &Connection) -> Result<Vec<TargetState>> {
     ensure(c)?;
     let mut st = c.prepare("SELECT id, data FROM sync_targets ORDER BY id")?;
-    let rows: Vec<(i64, String)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+    let rows: Vec<(i64, String)> = st
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
     Ok(rows
         .into_iter()
         .filter_map(|(id, data)| {
             let mut t: Target = serde_json::from_str(&data).ok()?;
             t.id = id;
+            if !t.device.is_empty() {
+                let (available, free) = device_status(&t);
+                return Some(TargetState {
+                    available,
+                    free,
+                    target: t,
+                });
+            }
             let p = Path::new(&t.path);
             let available = !t.path.is_empty() && p.is_dir();
-            Some(TargetState { free: if available { fs4::available_space(p).ok() } else { None }, available, target: t })
+            Some(TargetState {
+                free: if available {
+                    fs4::available_space(p).ok()
+                } else {
+                    None
+                },
+                available,
+                target: t,
+            })
         })
         .collect())
 }
 
 pub fn get(c: &Connection, id: i64) -> Result<Target> {
-    list(c)?.into_iter().find(|t| t.target.id == id).map(|t| t.target).ok_or_else(|| anyhow!("Sync-Ziel nicht gefunden"))
+    ensure(c)?;
+    let data: String = c
+        .query_row("SELECT data FROM sync_targets WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .map_err(|_| anyhow!("Sync-Ziel nicht gefunden"))?;
+    let mut t: Target = serde_json::from_str(&data)?;
+    t.id = id;
+    Ok(t)
 }
 
 pub fn save(c: &Connection, t: &Target) -> Result<i64> {
     ensure(c)?;
     let data = serde_json::to_string(t)?;
     if t.id > 0 {
-        c.execute("UPDATE sync_targets SET data = ?2 WHERE id = ?1", params![t.id, data])?;
+        c.execute(
+            "UPDATE sync_targets SET data = ?2 WHERE id = ?1",
+            params![t.id, data],
+        )?;
         Ok(t.id)
     } else {
         c.execute("INSERT INTO sync_targets(data) VALUES(?1)", [data])?;
@@ -89,6 +124,7 @@ pub fn save(c: &Connection, t: &Target) -> Result<i64> {
 pub fn delete(c: &Connection, id: i64) -> Result<()> {
     ensure(c)?;
     c.execute("DELETE FROM sync_targets WHERE id = ?1", [id])?;
+    let _ = c.execute("DELETE FROM sync_manifests WHERE id = ?1", [id]);
     Ok(())
 }
 
@@ -101,9 +137,20 @@ struct Manifest {
 /// Zielpfad auf dem Gerät – genau wie „Playlisten exportieren“ (ohne Endung)
 fn rel_of(t: &Track, layout: &str, playlist: &str, pos: usize, digits: usize) -> String {
     let stem = match layout {
-        "numbered" => format!("{}/{}", paths::sanitize(playlist), paths::sanitize(&format!("{:0digits$} - {}", pos, crate::export::label(t)))),
-        "flat" => format!("{}/{}", paths::sanitize(playlist), paths::sanitize(&crate::export::label(t))),
-        _ => format!("{MUSIC_DIR}/{}", organize::render("{albumartist}/{album}/{disc-}{track} - {title}", t).to_string_lossy()),
+        "numbered" => format!(
+            "{}/{}",
+            paths::sanitize(playlist),
+            paths::sanitize(&format!("{:0digits$} - {}", pos, crate::export::label(t)))
+        ),
+        "flat" => format!(
+            "{}/{}",
+            paths::sanitize(playlist),
+            paths::sanitize(&crate::export::label(t))
+        ),
+        _ => format!(
+            "{MUSIC_DIR}/{}",
+            organize::render("{albumartist}/{album}/{disc-}{track} - {title}", t).to_string_lossy()
+        ),
     };
     stem.replace('\\', "/")
 }
@@ -114,7 +161,10 @@ fn per_playlist(layout: &str) -> bool {
 }
 
 fn ext_of(t: &Track) -> String {
-    Path::new(&t.path).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default()
+    Path::new(&t.path)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default()
 }
 
 struct Plan {
@@ -125,7 +175,11 @@ struct Plan {
 }
 
 fn plan(c: &Connection, t: &Target) -> Result<Plan> {
-    let layout = if t.layout.is_empty() { "structured" } else { t.layout.as_str() };
+    let layout = if t.layout.is_empty() {
+        "structured"
+    } else {
+        t.layout.as_str()
+    };
     let mut files: Vec<(PathBuf, String, u64)> = Vec::new();
     // Titel → Zielpfad (bei „je Playlist“ pro Playlist eigene Kopie)
     let mut by_key: HashMap<(i64, i64), String> = HashMap::new();
@@ -133,7 +187,9 @@ fn plan(c: &Connection, t: &Target) -> Result<Plan> {
     let mut pls = Vec::new();
     let root = Path::new(&t.path);
     for &pid in &t.playlists {
-        let Ok(name) = playlists::name(c, pid) else { continue };
+        let Ok(name) = playlists::name(c, pid) else {
+            continue;
+        };
         let tracks = db::tracks_by_ids(c, &playlists::track_ids(c, pid)?)?;
         let digits = tracks.len().to_string().len().max(2);
         let mut on_device: Vec<Track> = Vec::new();
@@ -143,9 +199,15 @@ fn plan(c: &Connection, t: &Target) -> Result<Plan> {
                 let stem = rel_of(&tr, layout, &name, i + 1, digits);
                 let ext = ext_of(&tr);
                 // gleiche Zielnamen (zwei Titel mit gleichem Namen) auseinanderhalten
-                let n = used.entry(format!("{stem}.{ext}").to_lowercase()).or_insert(0);
+                let n = used
+                    .entry(format!("{stem}.{ext}").to_lowercase())
+                    .or_insert(0);
                 *n += 1;
-                let r = if *n > 1 { format!("{stem} ({n}).{ext}") } else { format!("{stem}.{ext}") };
+                let r = if *n > 1 {
+                    format!("{stem} ({n}).{ext}")
+                } else {
+                    format!("{stem}.{ext}")
+                };
                 files.push((PathBuf::from(&tr.path), r.clone(), tr.size.max(0) as u64));
                 r
             });
@@ -159,7 +221,10 @@ fn plan(c: &Connection, t: &Target) -> Result<Plan> {
         let file = format!("{}.m3u8", paths::sanitize(&name));
         // bei „Ordner je Playlist“ liegt die Playlist-Datei im Ordner der Playlist
         let (m3u_rel, base) = if per_playlist(layout) {
-            (format!("{}/{file}", paths::sanitize(&name)), root.join(paths::sanitize(&name)))
+            (
+                format!("{}/{file}", paths::sanitize(&name)),
+                root.join(paths::sanitize(&name)),
+            )
         } else {
             (file, root.to_path_buf())
         };
@@ -170,13 +235,22 @@ fn plan(c: &Connection, t: &Target) -> Result<Plan> {
         let all = db::all_tracks(c)?;
         for folder in &t.folders {
             let src = PathBuf::from(folder);
-            let name = src.file_name().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "Ordner".into());
-            let mut tracks: Vec<&Track> = all.iter().filter(|tr| crate::dirs::under_any(&tr.path, std::slice::from_ref(&src))).collect();
+            let name = src
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "Ordner".into());
+            let mut tracks: Vec<&Track> = all
+                .iter()
+                .filter(|tr| crate::dirs::under_any(&tr.path, std::slice::from_ref(&src)))
+                .collect();
             tracks.sort_by(|a, b| a.path.cmp(&b.path));
             for tr in tracks {
                 // Pfad unterhalb des Quellordners (Präfix ist durch under_any gesichert)
                 let base_len = folder.trim_end_matches(['/', '\\']).len() + 1;
-                let Some(rel) = tr.path.get(base_len..) else { continue };
+                let Some(rel) = tr.path.get(base_len..) else {
+                    continue;
+                };
                 let r = format!("{}/{}", paths::sanitize(&name), rel.replace('\\', "/"));
                 let n = used.entry(r.to_lowercase()).or_insert(0);
                 *n += 1;
@@ -187,7 +261,10 @@ fn plan(c: &Connection, t: &Target) -> Result<Plan> {
             }
         }
     }
-    Ok(Plan { files, playlists: pls })
+    Ok(Plan {
+        files,
+        playlists: pls,
+    })
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -201,23 +278,406 @@ pub struct Preview {
 }
 
 fn read_manifest(root: &Path) -> Manifest {
-    std::fs::read(root.join(MANIFEST)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    std::fs::read(root.join(MANIFEST))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
 }
 
-fn same_file(src: &Path, dst: &Path, size: u64) -> bool {
-    let _ = src;
-    std::fs::metadata(dst).map(|m| m.len() == size).unwrap_or(false)
+/// Handys (MTP): Manifest liegt in der Datenbank, nicht auf dem Gerät
+fn db_manifest(c: &Connection, id: i64) -> Manifest {
+    let _ = c.execute_batch(
+        "CREATE TABLE IF NOT EXISTS sync_manifests (id INTEGER PRIMARY KEY, data TEXT NOT NULL);",
+    );
+    c.query_row("SELECT data FROM sync_manifests WHERE id = ?1", [id], |r| {
+        r.get::<_, String>(0)
+    })
+    .ok()
+    .and_then(|s| serde_json::from_str(&s).ok())
+    .unwrap_or_default()
+}
+
+fn save_db_manifest(c: &Connection, id: i64, m: &Manifest) -> Result<()> {
+    c.execute_batch(
+        "CREATE TABLE IF NOT EXISTS sync_manifests (id INTEGER PRIMARY KEY, data TEXT NOT NULL);",
+    )?;
+    c.execute(
+        "INSERT OR REPLACE INTO sync_manifests(id, data) VALUES(?1, ?2)",
+        params![id, serde_json::to_string(m)?],
+    )?;
+    Ok(())
+}
+
+/// Ziel eines Syncs: Ordner (Stick, Karte, Laufwerk) oder Gerät über MTP (Handy)
+trait Dest {
+    /// Datei schon da und gleich groß?
+    fn has(&mut self, rel: &str, size: u64) -> bool;
+    fn exists(&mut self, rel: &str) -> bool;
+    fn free(&mut self) -> Option<u64>;
+    fn put(&mut self, src: &Path, rel: &str, size: u64, cancel: &AtomicBool) -> Result<()>;
+    fn write(&mut self, rel: &str, data: &[u8]) -> Result<()>;
+    fn remove(&mut self, rel: &str) -> bool;
+    /// leere Ordner oberhalb von `rel` entfernen (nie das Ziel selbst)
+    fn tidy(&mut self, rel: &str);
+}
+
+struct FsDest {
+    root: PathBuf,
+}
+
+impl Dest for FsDest {
+    fn has(&mut self, rel: &str, size: u64) -> bool {
+        std::fs::metadata(self.root.join(rel))
+            .map(|m| m.len() == size)
+            .unwrap_or(false)
+    }
+    fn exists(&mut self, rel: &str) -> bool {
+        self.root.join(rel).exists()
+    }
+    fn free(&mut self) -> Option<u64> {
+        fs4::available_space(&self.root).ok()
+    }
+    fn put(&mut self, src: &Path, rel: &str, _size: u64, _cancel: &AtomicBool) -> Result<()> {
+        let dst = self.root.join(rel);
+        if let Some(d) = dst.parent() {
+            std::fs::create_dir_all(d)?;
+        }
+        // erst als .part schreiben → nie halbe Dateien auf dem Gerät
+        let tmp = dst.with_extension("part");
+        std::fs::copy(src, &tmp)?;
+        std::fs::rename(&tmp, &dst)?;
+        Ok(())
+    }
+    fn write(&mut self, rel: &str, data: &[u8]) -> Result<()> {
+        let f = self.root.join(rel);
+        if let Some(d) = f.parent() {
+            std::fs::create_dir_all(d)?;
+        }
+        std::fs::write(f, data)?;
+        Ok(())
+    }
+    fn remove(&mut self, rel: &str) -> bool {
+        std::fs::remove_file(self.root.join(rel)).is_ok()
+    }
+    fn tidy(&mut self, rel: &str) {
+        if let Some(d) = self.root.join(rel).parent() {
+            paths::remove_empty_dirs(d.to_path_buf(), std::slice::from_ref(&self.root));
+        }
+    }
+}
+
+/// Handy/Player über WPD (nur Windows)
+#[cfg(windows)]
+mod mtp {
+    use super::*;
+    use std::collections::HashSet;
+    use std::time::{Duration, Instant};
+
+    pub struct MtpDest {
+        s: wpd::Session,
+        path: String,
+        tree: wpd::Tree,
+    }
+
+    fn split(rel: &str) -> (&str, &str) {
+        rel.rsplit_once('/').unwrap_or(("", rel))
+    }
+
+    impl MtpDest {
+        pub fn open(device: &str, path: &str) -> Result<MtpDest> {
+            let s = wpd::Session::open(device)?;
+            // Zielordner suchen, fehlende Teile anlegen (der Speicher selbst muss existieren)
+            let parts: Vec<&str> = path.split(['/', '\\']).filter(|p| !p.is_empty()).collect();
+            let storage = parts
+                .first()
+                .ok_or_else(|| anyhow!("Kein Speicher auf dem Gerät gewählt"))?;
+            let mut cur = s
+                .storages()?
+                .into_iter()
+                .find(|o| o.name.eq_ignore_ascii_case(storage))
+                .ok_or_else(|| anyhow!("Speicher „{storage}“ nicht gefunden – ist das Handy entsperrt und auf „Dateiübertragung“ gestellt?"))?
+                .id;
+            for p in &parts[1..] {
+                cur = match s
+                    .children(&cur)?
+                    .into_iter()
+                    .find(|o| o.folder && o.name.eq_ignore_ascii_case(p))
+                {
+                    Some(o) => o.id,
+                    None => s.mkdir(&cur, p)?,
+                };
+            }
+            let tree = s.tree(&cur)?;
+            Ok(MtpDest {
+                s,
+                path: path.to_string(),
+                tree,
+            })
+        }
+
+        fn dir(&mut self, rel_dir: &str) -> Result<String> {
+            let mut key = String::new();
+            let mut cur = self.tree.dirs.get("").cloned().unwrap_or_default();
+            for part in rel_dir.split('/').filter(|p| !p.is_empty()) {
+                key = if key.is_empty() {
+                    part.to_lowercase()
+                } else {
+                    format!("{key}/{}", part.to_lowercase())
+                };
+                cur = match self.tree.dirs.get(&key) {
+                    Some(id) => id.clone(),
+                    None => {
+                        let id = self.s.mkdir(&cur, part)?;
+                        self.tree.dirs.insert(key.clone(), id.clone());
+                        id
+                    }
+                };
+            }
+            Ok(cur)
+        }
+
+        fn upload(
+            &mut self,
+            rel: &str,
+            data: &mut dyn std::io::Read,
+            size: u64,
+            cancel: &AtomicBool,
+        ) -> Result<()> {
+            let (d, name) = split(rel);
+            let parent = self.dir(d)?;
+            // MTP kann nicht überschreiben: alte Fassung zuerst löschen
+            if let Some(old) = self.tree.files.remove(&rel.to_lowercase()) {
+                let _ = self.s.delete(&old.id);
+            }
+            let id = self.s.upload(&parent, name, data, size, &|| {
+                cancel.load(Ordering::Relaxed)
+            })?;
+            self.tree.files.insert(
+                rel.to_lowercase(),
+                wpd::Obj {
+                    id,
+                    name: name.to_string(),
+                    folder: false,
+                    size,
+                },
+            );
+            Ok(())
+        }
+    }
+
+    impl Dest for MtpDest {
+        fn has(&mut self, rel: &str, size: u64) -> bool {
+            self.tree
+                .files
+                .get(&rel.to_lowercase())
+                .is_some_and(|o| o.size == size)
+        }
+        fn exists(&mut self, rel: &str) -> bool {
+            self.tree.files.contains_key(&rel.to_lowercase())
+        }
+        fn free(&mut self) -> Option<u64> {
+            self.s.free(&self.path)
+        }
+        fn put(&mut self, src: &Path, rel: &str, size: u64, cancel: &AtomicBool) -> Result<()> {
+            let mut f = std::io::BufReader::with_capacity(1 << 20, std::fs::File::open(src)?);
+            let size = std::fs::metadata(src).map(|m| m.len()).unwrap_or(size);
+            self.upload(rel, &mut f, size, cancel)
+        }
+        fn write(&mut self, rel: &str, data: &[u8]) -> Result<()> {
+            self.upload(
+                rel,
+                &mut std::io::Cursor::new(data),
+                data.len() as u64,
+                &AtomicBool::new(false),
+            )
+        }
+        fn remove(&mut self, rel: &str) -> bool {
+            match self.tree.files.remove(&rel.to_lowercase()) {
+                Some(o) => self.s.delete(&o.id).is_ok(),
+                None => false,
+            }
+        }
+        fn tidy(&mut self, rel: &str) {
+            let mut d = split(&rel.to_lowercase()).0.to_string();
+            while !d.is_empty() {
+                let Some(id) = self.tree.dirs.get(&d).cloned() else {
+                    break;
+                };
+                let prefix = format!("{d}/");
+                let used = self.tree.files.keys().any(|k| k.starts_with(&prefix))
+                    || self.tree.dirs.keys().any(|k| k.starts_with(&prefix));
+                // nur leere Ordner – vorsichtshalber auch auf dem Gerät nachsehen (fremde Dateien!)
+                if used
+                    || !self.s.children(&id).map(|c| c.is_empty()).unwrap_or(false)
+                    || self.s.delete(&id).is_err()
+                {
+                    break;
+                }
+                self.tree.dirs.remove(&d);
+                d = split(&d).0.to_string();
+            }
+        }
+    }
+
+    // ---- Status für die Anzeige (alle 3 s abgefragt → freier Platz zwischengespeichert) ----
+
+    type FreeCache = HashMap<String, (Instant, Option<u64>)>;
+    static FREE: Mutex<Option<FreeCache>> = Mutex::new(None);
+    pub static BUSY: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+    pub fn resolve(id: &str, name: &str) -> Option<String> {
+        let list = wpd::devices().ok()?;
+        if let Some(d) = list.iter().find(|d| d.id == id) {
+            return Some(d.id.clone());
+        }
+        // gleiches Gerät, neue Kennung (anderer USB-Anschluss): eindeutig über den Namen
+        let same: Vec<_> = list
+            .iter()
+            .filter(|d| !name.is_empty() && d.name == name)
+            .collect();
+        if same.len() == 1 {
+            Some(same[0].id.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn status(id: &str, name: &str, path: &str) -> (bool, Option<u64>) {
+        let Some(dev) = resolve(id, name) else {
+            return (false, None);
+        };
+        let mut g = FREE.lock().unwrap();
+        let cache = g.get_or_insert_with(HashMap::new);
+        let key = format!("{dev}|{path}");
+        let busy = BUSY
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|b| b.contains(&dev));
+        match cache.get(&key) {
+            Some((at, f)) if busy || at.elapsed() < Duration::from_secs(30) => (true, *f),
+            _ => {
+                drop(g);
+                let f = wpd::Session::open(&dev).ok().and_then(|s| s.free(path));
+                FREE.lock()
+                    .unwrap()
+                    .get_or_insert_with(HashMap::new)
+                    .insert(key, (Instant::now(), f));
+                (true, f)
+            }
+        }
+    }
+
+    pub fn forget_free() {
+        if let Some(m) = FREE.lock().unwrap().as_mut() {
+            m.clear();
+        }
+    }
+}
+
+/// Angeschlossene Handys/Player: (Kennung, Name)
+pub fn devices() -> Result<Vec<(String, String)>> {
+    #[cfg(windows)]
+    {
+        Ok(wpd::devices()?
+            .into_iter()
+            .map(|d| (d.id, d.name))
+            .collect())
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(vec![])
+    }
+}
+
+/// Unterordner auf dem Gerät; `path` leer = Speicher (z. B. „Interner gemeinsamer Speicher“)
+pub fn device_folders(device: &str, path: &str) -> Result<Vec<String>> {
+    #[cfg(windows)]
+    {
+        let s = wpd::Session::open(device)?;
+        let id = if path.trim_matches(['/', '\\']).is_empty() {
+            "DEVICE".to_string()
+        } else {
+            s.find(path)?
+                .ok_or_else(|| anyhow!("Ordner nicht gefunden"))?
+        };
+        let mut v: Vec<String> = s
+            .children(&id)?
+            .into_iter()
+            .filter(|o| o.folder && !o.name.starts_with('.'))
+            .map(|o| o.name)
+            .collect();
+        v.sort_by_key(|n| n.to_lowercase());
+        Ok(v)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (device, path);
+        Err(anyhow!("Handys als Ziel gibt es bisher nur unter Windows"))
+    }
+}
+
+fn device_status(t: &Target) -> (bool, Option<u64>) {
+    #[cfg(windows)]
+    {
+        mtp::status(&t.device, &t.device_name, &t.path)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = t;
+        (false, None)
+    }
+}
+
+fn open_dest(t: &Target) -> Result<Box<dyn Dest>> {
+    if t.device.is_empty() {
+        let root = PathBuf::from(&t.path);
+        if !root.is_dir() {
+            return Err(anyhow!("„{}“ ist nicht verbunden", t.name));
+        }
+        return Ok(Box::new(FsDest { root }));
+    }
+    #[cfg(windows)]
+    {
+        let dev = mtp::resolve(&t.device, &t.device_name)
+            .ok_or_else(|| anyhow!("„{}“ ist nicht verbunden", t.name))?;
+        Ok(Box::new(mtp::MtpDest::open(&dev, &t.path)?))
+    }
+    #[cfg(not(windows))]
+    {
+        Err(anyhow!("Handys als Ziel gibt es bisher nur unter Windows"))
+    }
 }
 
 /// Was würde passieren? (für die Anzeige „bereit: 12 neue Titel“)
 pub fn preview(c: &Connection, t: &Target) -> Result<Preview> {
-    let root = Path::new(&t.path);
     let p = plan(c, t)?;
     let mut pv = Preview::default();
     let wanted: BTreeSet<String> = p.files.iter().map(|f| f.1.clone()).collect();
-    for (src, rel, size) in &p.files {
+    if !t.device.is_empty() {
+        // Handy: nicht jedes Mal das Gerät durchsuchen (MTP ist langsam) – Stand vom letzten Sync
+        let m = db_manifest(c, t.id);
+        for (_, rel, size) in &p.files {
+            pv.total_bytes += size;
+            if m.files.contains(rel) {
+                pv.up_to_date += 1;
+            } else {
+                pv.to_copy += 1;
+                pv.copy_bytes += size;
+            }
+        }
+        if t.mirror {
+            pv.to_remove = m.files.iter().filter(|f| !wanted.contains(*f)).count();
+        }
+        return Ok(pv);
+    }
+    let root = Path::new(&t.path);
+    let mut fs = FsDest {
+        root: root.to_path_buf(),
+    };
+    for (_, rel, size) in &p.files {
         pv.total_bytes += size;
-        if root.is_dir() && same_file(src, &root.join(rel), *size) {
+        if root.is_dir() && fs.has(rel, *size) {
             pv.up_to_date += 1;
         } else {
             pv.to_copy += 1;
@@ -225,7 +685,11 @@ pub fn preview(c: &Connection, t: &Target) -> Result<Preview> {
         }
     }
     if t.mirror && root.is_dir() {
-        pv.to_remove = read_manifest(root).files.iter().filter(|f| !wanted.contains(*f)).count();
+        pv.to_remove = read_manifest(root)
+            .files
+            .iter()
+            .filter(|f| !wanted.contains(*f))
+            .count();
     }
     Ok(pv)
 }
@@ -240,26 +704,48 @@ pub struct Report {
     pub errors: Vec<String>,
 }
 
-pub fn run(conn: &Mutex<Connection>, id: i64, cancel: &AtomicBool, progress: Progress) -> Result<Report> {
+pub fn run(
+    conn: &Mutex<Connection>,
+    id: i64,
+    cancel: &AtomicBool,
+    progress: Progress,
+) -> Result<Report> {
     run_with(conn, id, false, cancel, progress)
 }
 
 /// `force = true`: trotz zu wenig gemeldetem Platz synchronisieren
-pub fn run_with(conn: &Mutex<Connection>, id: i64, force: bool, cancel: &AtomicBool, progress: Progress) -> Result<Report> {
+pub fn run_with(
+    conn: &Mutex<Connection>,
+    id: i64,
+    force: bool,
+    cancel: &AtomicBool,
+    progress: Progress,
+) -> Result<Report> {
     let (t, p) = {
         let c = conn.lock().unwrap();
         let t = get(&c, id)?;
         let p = plan(&c, &t)?;
         (t, p)
     };
-    let root = PathBuf::from(&t.path);
-    if !root.is_dir() {
-        return Err(anyhow!("„{}“ ist nicht verbunden", t.name));
+    let device = !t.device.is_empty();
+    if device {
+        progress(0, p.files.len().max(1), "Handy wird gelesen …");
     }
-    let needed: u64 = p.files.iter().filter(|(s, r, z)| !same_file(s, &root.join(r), *z)).map(|f| f.2).sum();
+    #[cfg(windows)]
+    let _busy = device.then(|| Busy::new(&t.device));
+    let mut dest = open_dest(&t)?;
+    let needed: u64 = p
+        .files
+        .iter()
+        .filter(|(_, r, z)| !dest.has(r, *z))
+        .map(|f| f.2)
+        .sum();
     let check = !force && !t.ignore_space;
-    if let Ok(free) = fs4::available_space(&root).map_err(|_| ()).and_then(|f| if check { Ok(f) } else { Err(()) }) {
-        if needed > free + 1024 * 1024 {
+    if check
+        && let Some(free) = dest.free()
+        && needed > free + 1024 * 1024
+    {
+        {
             // „NOSPACE:“ erkennt die Oberfläche und bietet „Trotzdem synchronisieren“ an
             return Err(anyhow!(
                 "NOSPACE:Nicht genug Platz auf „{}“: {:.1} GB nötig, {:.1} GB frei",
@@ -269,8 +755,13 @@ pub fn run_with(conn: &Mutex<Connection>, id: i64, force: bool, cancel: &AtomicB
             ));
         }
     }
+    let root = PathBuf::from(&t.path);
     let mut rep = Report::default();
-    let old = read_manifest(&root);
+    let old = if device {
+        db_manifest(&conn.lock().unwrap(), id)
+    } else {
+        read_manifest(&root)
+    };
     let mut man = Manifest::default();
     let total = p.files.len();
     for (i, (src, rel, size)) in p.files.iter().enumerate() {
@@ -279,61 +770,68 @@ pub fn run_with(conn: &Mutex<Connection>, id: i64, force: bool, cancel: &AtomicB
             break;
         }
         progress(i, total, rel.rsplit('/').next().unwrap_or(rel));
-        let dst = root.join(rel);
         man.files.insert(rel.clone());
-        if same_file(src, &dst, *size) {
+        if dest.has(rel, *size) {
             rep.skipped += 1;
             continue;
         }
-        let res = (|| -> std::io::Result<()> {
-            if let Some(d) = dst.parent() {
-                std::fs::create_dir_all(d)?;
-            }
-            // erst als .part schreiben → nie halbe Dateien auf dem Gerät
-            let tmp = dst.with_extension("part");
-            std::fs::copy(src, &tmp)?;
-            std::fs::rename(&tmp, &dst)
-        })();
-        match res {
+        match dest.put(src, rel, *size, cancel) {
             Ok(()) => {
                 rep.copied += 1;
                 rep.bytes += size;
             }
             Err(e) => {
                 man.files.remove(rel);
+                if cancel.load(Ordering::Relaxed) {
+                    rep.errors.push("Abgebrochen".into());
+                    break;
+                }
                 rep.errors.push(format!("{}: {e}", src.display()));
+                // Handy abgezogen/gesperrt → nicht für jede weitere Datei erneut scheitern
+                if device && rep.copied == 0 && rep.errors.len() >= 3 {
+                    rep.errors
+                        .push("Abgebrochen – ist das Handy noch verbunden und entsperrt?".into());
+                    break;
+                }
             }
         }
     }
     // Playlisten schreiben
     for (rel, content) in &p.playlists {
-        let f = root.join(rel);
-        if let Some(d) = f.parent() {
-            let _ = std::fs::create_dir_all(d);
-        }
-        if std::fs::write(&f, content).is_ok() {
+        if dest.write(rel, content.as_bytes()).is_ok() {
             man.playlists.insert(rel.clone());
         }
     }
     // Nicht mehr gewählte Playlisten der App entfernen (immer) – Musikdateien nur bei „aufräumen“
     for rel in old.playlists.difference(&man.playlists) {
-        let _ = std::fs::remove_file(root.join(rel));
+        if dest.remove(rel) {
+            dest.tidy(rel);
+        }
     }
     if t.mirror && !cancel.load(Ordering::Relaxed) {
         for rel in old.files.difference(&man.files) {
-            let f = root.join(rel);
-            if std::fs::remove_file(&f).is_ok() {
+            if dest.remove(rel) {
                 rep.removed += 1;
-                if let Some(d) = f.parent() {
-                    paths::remove_empty_dirs(d.to_path_buf(), &[root.clone(), root.join(MUSIC_DIR).parent().unwrap_or(&root).to_path_buf()]);
-                }
+                dest.tidy(rel);
             }
         }
     } else {
         // nicht gelöschte alte Dateien bleiben im Manifest, damit sie später noch aufgeräumt werden können
-        man.files.extend(old.files.difference(&man.files.clone()).filter(|r| root.join(r).exists()).cloned());
+        let keep: Vec<String> = old
+            .files
+            .difference(&man.files)
+            .filter(|r| dest.exists(r))
+            .cloned()
+            .collect();
+        man.files.extend(keep);
     }
-    std::fs::write(root.join(MANIFEST), serde_json::to_vec_pretty(&man)?)?;
+    if device {
+        save_db_manifest(&conn.lock().unwrap(), id, &man)?;
+        #[cfg(windows)]
+        mtp::forget_free();
+    } else {
+        std::fs::write(root.join(MANIFEST), serde_json::to_vec_pretty(&man)?)?;
+    }
     {
         let c = conn.lock().unwrap();
         let mut t2 = get(&c, id)?;
@@ -342,6 +840,29 @@ pub fn run_with(conn: &Mutex<Connection>, id: i64, force: bool, cancel: &AtomicB
     }
     progress(total, total, "Fertig");
     Ok(rep)
+}
+
+/// Während eines Handy-Syncs das Gerät nicht zusätzlich für die Anzeige öffnen
+#[cfg(windows)]
+struct Busy(String);
+#[cfg(windows)]
+impl Busy {
+    fn new(dev: &str) -> Busy {
+        mtp::BUSY
+            .lock()
+            .unwrap()
+            .get_or_insert_with(Default::default)
+            .insert(dev.to_string());
+        Busy(dev.to_string())
+    }
+}
+#[cfg(windows)]
+impl Drop for Busy {
+    fn drop(&mut self) {
+        if let Some(b) = mtp::BUSY.lock().unwrap().as_mut() {
+            b.remove(&self.0);
+        }
+    }
 }
 
 /// Laufwerk sicher entfernen
@@ -354,7 +875,9 @@ pub fn eject(path: &str) -> Result<()> {
         if !drive.ends_with(':') {
             return Err(anyhow!("Kein Laufwerk erkannt"));
         }
-        let ps = format!("(New-Object -ComObject Shell.Application).Namespace(17).ParseName('{drive}').InvokeVerb('Eject')");
+        let ps = format!(
+            "(New-Object -ComObject Shell.Application).Namespace(17).ParseName('{drive}').InvokeVerb('Eject')"
+        );
         std::process::Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
             .creation_flags(0x0800_0000)
@@ -366,7 +889,9 @@ pub fn eject(path: &str) -> Result<()> {
                 return Ok(());
             }
         }
-        Err(anyhow!("Konnte nicht ausgeworfen werden – wird das Laufwerk noch benutzt?"))
+        Err(anyhow!(
+            "Konnte nicht ausgeworfen werden – wird das Laufwerk noch benutzt?"
+        ))
     }
     #[cfg(target_os = "macos")]
     {
@@ -378,13 +903,32 @@ pub fn eject(path: &str) -> Result<()> {
                 break;
             }
         }
-        let ok = std::process::Command::new("diskutil").arg("eject").arg(&vol).status()?.success();
-        if ok { Ok(()) } else { Err(anyhow!("Konnte nicht ausgeworfen werden – wird das Laufwerk noch benutzt?")) }
+        let ok = std::process::Command::new("diskutil")
+            .arg("eject")
+            .arg(&vol)
+            .status()?
+            .success();
+        if ok {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "Konnte nicht ausgeworfen werden – wird das Laufwerk noch benutzt?"
+            ))
+        }
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        let ok = std::process::Command::new("gio").args(["mount", "-e"]).arg(p).status().map(|s| s.success()).unwrap_or(false);
-        if ok { Ok(()) } else { Err(anyhow!("Konnte nicht ausgeworfen werden")) }
+        let ok = std::process::Command::new("gio")
+            .args(["mount", "-e"])
+            .arg(p)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            Ok(())
+        } else {
+            Err(anyhow!("Konnte nicht ausgeworfen werden"))
+        }
     }
 }
 
@@ -413,7 +957,17 @@ mod tests {
             playlists::set_items(&mut c, p, &[a, b]).unwrap();
             p
         };
-        let tid = save(&conn.lock().unwrap(), &Target { name: "Stick".into(), path: base.join("stick").to_string_lossy().into(), playlists: vec![pid], mirror: true, ..Default::default() }).unwrap();
+        let tid = save(
+            &conn.lock().unwrap(),
+            &Target {
+                name: "Stick".into(),
+                path: base.join("stick").to_string_lossy().into(),
+                playlists: vec![pid],
+                mirror: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let cancel = AtomicBool::new(false);
         let r = run(&conn, tid, &cancel, &|_, _, _| {}).unwrap();
         assert_eq!(r.copied, 2);
@@ -451,9 +1005,21 @@ mod tests {
         std::fs::write(base.join("quelle/b.mp3"), b"bb").unwrap();
         let conn = Mutex::new(db::open(&base.join("t.db")).unwrap());
         for (p, sz) in [("quelle/Sets/2026/a.mp3", 4), ("quelle/b.mp3", 2)] {
-            conn.lock().unwrap().execute("INSERT INTO tracks(path, size) VALUES(?1, ?2)", params![base.join(p).to_string_lossy(), sz]).unwrap();
+            conn.lock()
+                .unwrap()
+                .execute(
+                    "INSERT INTO tracks(path, size) VALUES(?1, ?2)",
+                    params![base.join(p).to_string_lossy(), sz],
+                )
+                .unwrap();
         }
-        let t = Target { name: "S".into(), path: base.join("stick").to_string_lossy().into(), folders: vec![base.join("quelle").to_string_lossy().into()], mirror: true, ..Default::default() };
+        let t = Target {
+            name: "S".into(),
+            path: base.join("stick").to_string_lossy().into(),
+            folders: vec![base.join("quelle").to_string_lossy().into()],
+            mirror: true,
+            ..Default::default()
+        };
         let id = save(&conn.lock().unwrap(), &t).unwrap();
         run(&conn, id, &AtomicBool::new(false), &|_, _, _| {}).unwrap();
         assert!(base.join("stick/quelle/Sets/2026/a.mp3").exists());

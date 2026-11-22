@@ -33,12 +33,18 @@ pub fn label(t: &Track) -> String {
     match (&t.artist, &t.title) {
         (Some(a), Some(ti)) => format!("{a} - {ti}"),
         (None, Some(ti)) => ti.clone(),
-        _ => Path::new(&t.path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+        _ => Path::new(&t.path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default(),
     }
 }
 
 fn ext(t: &Track) -> String {
-    Path::new(&t.path).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default()
+    Path::new(&t.path)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default()
 }
 
 /// Gesamtgröße für die Anzeige vorab.
@@ -93,7 +99,10 @@ pub fn export(
         let pl_name = paths::sanitize(&name);
         let (m3u_path, mut exported): (PathBuf, Vec<Track>) = match layout {
             Layout::Structured => (dest.join(format!("{pl_name}.m3u8")), Vec::new()),
-            _ => (dest.join(&pl_name).join(format!("{pl_name}.m3u8")), Vec::new()),
+            _ => (
+                dest.join(&pl_name).join(format!("{pl_name}.m3u8")),
+                Vec::new(),
+            ),
         };
         let digits = tracks.len().to_string().len().max(2);
         let mut used = std::collections::HashSet::new();
@@ -113,17 +122,29 @@ pub fn export(
                     ext(t),
                     width = digits
                 ))),
-                Layout::Flat => dest.join(&pl_name).join(paths::sanitize(&format!("{}.{}", label(t), ext(t)))),
+                Layout::Flat => {
+                    dest.join(&pl_name)
+                        .join(paths::sanitize(&format!("{}.{}", label(t), ext(t))))
+                }
                 Layout::Structured => {
-                    let rel = crate::organize::render("{albumartist}/{album}/{disc-}{track} - {title}", t);
+                    let rel = crate::organize::render(
+                        "{albumartist}/{album}/{disc-}{track} - {title}",
+                        t,
+                    );
                     let mut p = dest.join("Musik").join(rel);
-                    let f = format!("{}.{}", p.file_name().unwrap_or_default().to_string_lossy(), ext(t));
+                    let f = format!(
+                        "{}.{}",
+                        p.file_name().unwrap_or_default().to_string_lossy(),
+                        ext(t)
+                    );
                     p.set_file_name(f);
                     p
                 }
             };
             if layout != Layout::Structured {
-                dst = paths::unique_path(&dst, &|p| used.contains(&p.to_string_lossy().to_lowercase()));
+                dst = paths::unique_path(&dst, &|p| {
+                    used.contains(&p.to_string_lossy().to_lowercase())
+                });
                 used.insert(dst.to_string_lossy().to_lowercase());
             }
             match copy_if_needed(src, &dst) {
@@ -144,7 +165,9 @@ pub fn export(
         let dir = m3u_path.parent().map(Path::to_path_buf).unwrap_or_default();
         std::fs::create_dir_all(&dir)?;
         std::fs::write(&m3u_path, playlists::m3u8(&exported, &dir))?;
-        report.playlists.push(m3u_path.to_string_lossy().to_string());
+        report
+            .playlists
+            .push(m3u_path.to_string_lossy().to_string());
     }
     Ok(report)
 }

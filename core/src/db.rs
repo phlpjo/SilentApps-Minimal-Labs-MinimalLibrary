@@ -75,7 +75,8 @@ CREATE TABLE IF NOT EXISTS trash_backups (
 /// Spalten nachrüsten, die in älteren Datenbanken fehlen.
 fn migrate(conn: &Connection) -> Result<()> {
     let has = |table: &str, col: &str| -> bool {
-        conn.prepare(&format!("SELECT {col} FROM {table} LIMIT 0")).is_ok()
+        conn.prepare(&format!("SELECT {col} FROM {table} LIMIT 0"))
+            .is_ok()
     };
     // Pioneer-Export: Beatgrid, Pioneer-Wellenform und Cues (nur genutzt, wenn eingeschaltet)
     conn.execute_batch(
@@ -104,7 +105,9 @@ fn migrate(conn: &Connection) -> Result<()> {
         END;",
     )?;
     if !has("move_batches", "kind") {
-        conn.execute_batch("ALTER TABLE move_batches ADD COLUMN kind TEXT NOT NULL DEFAULT 'move'")?;
+        conn.execute_batch(
+            "ALTER TABLE move_batches ADD COLUMN kind TEXT NOT NULL DEFAULT 'move'",
+        )?;
     }
     Ok(())
 }
@@ -187,7 +190,11 @@ pub fn all_tracks(conn: &Connection) -> Result<Vec<Track>> {
 
 pub fn track(conn: &Connection, id: i64) -> Result<Option<Track>> {
     Ok(conn
-        .query_row(&format!("SELECT {TRACK_COLS} FROM tracks WHERE id = ?1"), [id], row_to_track)
+        .query_row(
+            &format!("SELECT {TRACK_COLS} FROM tracks WHERE id = ?1"),
+            [id],
+            row_to_track,
+        )
         .optional()?)
 }
 
@@ -204,13 +211,16 @@ pub fn tracks_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<Track>> {
 
 pub fn peaks(conn: &Connection, id: i64) -> Result<Option<Vec<u8>>> {
     Ok(conn
-        .query_row("SELECT peaks FROM tracks WHERE id = ?1", [id], |r| r.get::<_, Option<Vec<u8>>>(0))
+        .query_row("SELECT peaks FROM tracks WHERE id = ?1", [id], |r| {
+            r.get::<_, Option<Vec<u8>>>(0)
+        })
         .optional()?
         .flatten())
 }
 
 pub fn fingerprints(conn: &Connection) -> Result<std::collections::HashMap<i64, Vec<u32>>> {
-    let mut st = conn.prepare("SELECT id, fingerprint FROM tracks WHERE fingerprint IS NOT NULL")?;
+    let mut st =
+        conn.prepare("SELECT id, fingerprint FROM tracks WHERE fingerprint IS NOT NULL")?;
     let rows = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)))?;
     let mut map = std::collections::HashMap::new();
     for row in rows {
@@ -225,12 +235,16 @@ pub fn u32_to_bytes(v: &[u32]) -> Vec<u8> {
 }
 
 pub fn bytes_to_u32(b: &[u8]) -> Vec<u32> {
-    b.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+    b.chunks_exact(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
 }
 
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
     Ok(conn
-        .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
+        .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {
+            r.get(0)
+        })
         .optional()?)
 }
 
@@ -247,12 +261,30 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
 pub fn clone_track(conn: &Connection, id: i64, new_path: &str) -> Result<i64> {
     let cols: Vec<String> = {
         let mut st = conn.prepare("PRAGMA table_info(tracks)")?;
-        st.query_map([], |r| r.get::<_, String>(1))?.collect::<rusqlite::Result<_>>()?
+        st.query_map([], |r| r.get::<_, String>(1))?
+            .collect::<rusqlite::Result<_>>()?
     };
     let cols: Vec<&String> = cols.iter().filter(|c| c.as_str() != "id").collect();
-    let names = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
-    let values = cols.iter().map(|c| if c.as_str() == "path" { "?2".to_string() } else { format!("\"{c}\"") }).collect::<Vec<_>>().join(", ");
-    conn.execute(&format!("INSERT INTO tracks({names}) SELECT {values} FROM tracks WHERE id = ?1"), rusqlite::params![id, new_path])?;
+    let names = cols
+        .iter()
+        .map(|c| format!("\"{c}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let values = cols
+        .iter()
+        .map(|c| {
+            if c.as_str() == "path" {
+                "?2".to_string()
+            } else {
+                format!("\"{c}\"")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    conn.execute(
+        &format!("INSERT INTO tracks({names}) SELECT {values} FROM tracks WHERE id = ?1"),
+        rusqlite::params![id, new_path],
+    )?;
     let new_id = conn.last_insert_rowid();
     // Beatgrid/Cues (Pioneer) mitnehmen
     conn.execute(

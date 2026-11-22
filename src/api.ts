@@ -95,7 +95,7 @@ export interface RipEntry { index: number; artist: string; title: string; album:
 export interface RipEvent { index: number; stage: "download" | "convert" | "done" | "error"; percent: number; message: string; trackId: number | null }
 
 export type SyncLayout = "numbered" | "flat" | "structured";
-export interface SyncTarget { id: number; name: string; path: string; playlists: number[]; auto: boolean; mirror: boolean; lastSync: number; layout: SyncLayout | ""; noPlaylistFiles: boolean; folders: string[]; ignoreSpace?: boolean }
+export interface SyncTarget { id: number; name: string; path: string; playlists: number[]; auto: boolean; mirror: boolean; lastSync: number; layout: SyncLayout | ""; noPlaylistFiles: boolean; folders: string[]; ignoreSpace?: boolean; device?: string; deviceName?: string }
 export interface SyncTargetState extends SyncTarget { available: boolean; free: number | null }
 export interface SyncPreview { toCopy: number; copyBytes: number; upToDate: number; toRemove: number; totalBytes: number }
 export interface SyncReport { copied: number; skipped: number; removed: number; bytes: number; errors: string[] }
@@ -184,6 +184,9 @@ export const api = {
   syncPreview: (id: number) => invoke<SyncPreview>("sync_preview", { id }),
   syncRun: (id: number, force = false) => invoke<SyncReport>("sync_run", { id, force }),
   syncEject: (path: string) => invoke<void>("sync_eject", { path }),
+  /** Handys/Player am USB-Kabel (MTP, nur Windows) */
+  syncDevices: () => invoke<{ id: string; name: string }[]>("sync_devices"),
+  syncDeviceFolders: (device: string, path: string) => invoke<string[]>("sync_device_folders", { device, path }),
   castSound: (device: string) => invoke<CastSound>("cast_sound", { device }),
   castSetSound: (device: string, sound: CastSound) => invoke<void>("cast_set_sound", { device, sound }),
   castDevices: () => invoke<CastDevice[]>("cast_devices"),

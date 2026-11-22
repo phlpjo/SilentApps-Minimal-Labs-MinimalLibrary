@@ -2,7 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { api, type SyncLayout, type SyncPreview, type SyncTarget, type SyncTargetState } from "../api";
 import { store } from "../store";
 import { clear, fmtSize, h, holdButton, reportErrors, sheet, toast } from "../ui";
-import { OS } from "../platform";
+import { IS_MAC, OS } from "../platform";
 import { rootOf } from "../fileops";
 
 // ---------- Überwachung: Ziel angeschlossen? ----------
@@ -111,7 +111,7 @@ export function syncView(): { el: HTMLElement; destroy: () => void } {
     clear(box);
     if (!targets.length) {
       box.append(h("div", { class: "empty" }, h("b", {}, "Noch kein Sync-Ziel"), h("br"),
-        "Ein Ziel ist z. B. ein USB-Stick, eine SD-Karte oder eine Festplatte. Du wählst, welche Playlisten darauf sollen – die App kopiert Playlisten und Musikdateien und hält sie aktuell."));
+        `Ein Ziel ist z. B. ein USB-Stick, eine SD-Karte, eine Festplatte${IS_MAC ? "" : " oder ein Handy am USB-Kabel"}. Du wählst, welche Playlisten darauf sollen – die App kopiert Playlisten und Musikdateien und hält sie aktuell.`));
     }
     for (const t of targets) {
       const pv = previews.get(t.id);
@@ -131,7 +131,7 @@ export function syncView(): { el: HTMLElement; destroy: () => void } {
           h("div", { class: "line", style: { margin: "0 0 6px" } },
             h("div", { class: "insp-title", style: { margin: "0" } }, t.name), status, h("span", { class: "spacer" }),
             t.available ? h("button", { class: "btn primary", disabled: running.has(t.id), onclick: () => runSync(t.id) }, "Synchronisieren") : "",
-            t.available ? h("button", { class: "btn", disabled: running.has(t.id), onclick: async () => {
+            t.available && !t.device ? h("button", { class: "btn", disabled: running.has(t.id), onclick: async () => {
               try {
                 await api.syncEject(t.path);
                 toast(`„${t.name}“ kann entfernt werden`);
@@ -142,7 +142,9 @@ export function syncView(): { el: HTMLElement; destroy: () => void } {
             } }, "Auswerfen") : "",
             h("button", { class: "btn", onclick: () => editTarget(t) }, "Bearbeiten"),
           ),
-          h("div", { class: "kv" }, h("span", {}, "Ordner"), h("span", { style: { fontFamily: "var(--mono)" } }, t.path)),
+          t.device
+            ? h("div", { class: "kv" }, h("span", {}, "Handy"), h("span", {}, h("b", {}, t.deviceName || "Handy"), " · ", h("span", { style: { fontFamily: "var(--mono)" } }, t.path)))
+            : h("div", { class: "kv" }, h("span", {}, "Ordner"), h("span", { style: { fontFamily: "var(--mono)" } }, t.path)),
           h("div", { class: "kv" }, h("span", {}, "Playlisten"), h("span", {}, pls.length ? pls.join(", ") : "– keine –")),
           t.folders?.length ? h("div", { class: "kv" }, h("span", {}, "Ordner"), h("span", {}, t.folders.map((f) => f.split(/[\\/]/).filter(Boolean).pop()).join(", "))) : "",
           h("div", { class: "kv" }, h("span", {}, "Modus"), h("span", {}, `${t.auto ? "automatisch beim Anschließen" : "manuell"}${t.mirror ? " · räumt auf" : ""}`)),
@@ -165,7 +167,9 @@ export function syncView(): { el: HTMLElement; destroy: () => void } {
       h("div", { class: "note", style: { marginTop: "6px", lineHeight: "1.6" } },
         "Auf dem Ziel landen die Titel in der gewählten Ablage und je Playlist eine .m3u8 – so findet Minimal Player Lieder und Playlisten. Kopiert wird nur, was fehlt. ",
         "„Aufräumen“ löscht ausschließlich Dateien, die die App selbst dorthin kopiert hat. ",
-        `Hinweis: Android-Handys am Kabel erscheinen unter ${OS} nicht als Laufwerk (MTP) – dafür SD-Karte oder USB-Stick nutzen.`),
+        IS_MAC
+          ? `Hinweis: Android-Handys am Kabel erscheinen unter ${OS} nicht als Laufwerk (MTP) – dafür SD-Karte oder USB-Stick nutzen.`
+          : "Handy als Ziel: per USB-Kabel anschließen, entsperren und in der Benachrichtigung „Dateiübertragung“ wählen. Über das Kabel (MTP) kopiert Windows deutlich langsamer als auf einen Stick – der erste Sync dauert entsprechend."),
     ),
   );
   return { el, destroy: unsub };
@@ -213,7 +217,69 @@ function editTarget(t: SyncTargetState | null) {
   const m3u = h("input", { type: "checkbox", checked: !v.noPlaylistFiles });
   const sizeInfo = h("div", { class: "note", style: { color: "var(--ink)" } });
   const name = h("input", { type: "text", value: v.name, placeholder: "z. B. USB-Stick Auto", style: { width: "100%" } });
-  const path = h("input", { type: "text", value: v.path, placeholder: "Ordner auf dem Gerät, z. B. E:\\", style: { width: "100%" } });
+  const path = h("input", { type: "text", value: v.device ? "" : v.path, placeholder: "Ordner auf dem Gerät, z. B. E:\\", style: { width: "100%" } });
+  // Handy (MTP, nur Windows)
+  let kind: "folder" | "phone" = v.device ? "phone" : "folder";
+  let device = v.device ?? "";
+  let deviceName = v.deviceName ?? "";
+  const phonePath = h("input", { type: "text", value: v.device ? v.path : "", placeholder: "z. B. Interner gemeinsamer Speicher/Music", style: { width: "100%" } }) as HTMLInputElement;
+  const devSel = h("select", { style: { width: "100%" } }) as HTMLSelectElement;
+  const devNote = h("div", { class: "note" });
+  const loadDevices = async () => {
+    devSel.replaceChildren(h("option", { value: "" }, "suche …"));
+    const list = await api.syncDevices().catch(() => []);
+    const opts = list.map((d) => h("option", { value: d.id, selected: d.id === device || (!device && list.length === 1) }, d.name));
+    if (device && !list.some((d) => d.id === device)) opts.unshift(h("option", { value: device, selected: true }, `${deviceName || "Handy"} (nicht verbunden)`));
+    devSel.replaceChildren(...(opts.length ? opts : [h("option", { value: "" }, "kein Handy gefunden")]));
+    devNote.textContent = list.length ? "" : "Handy per USB anschließen, entsperren und „Dateiübertragung“ wählen – dann „Neu suchen“.";
+    pickDevice();
+  };
+  const pickDevice = async () => {
+    const id = devSel.value;
+    if (!id) return;
+    device = id;
+    deviceName = devSel.selectedOptions[0]?.textContent?.replace(/ \(nicht verbunden\)$/, "") ?? "";
+    if (!name.value.trim()) name.value = deviceName;
+    // Vorschlag: Musikordner auf dem (einzigen) Speicher
+    if (!phonePath.value.trim()) {
+      const st = await api.syncDeviceFolders(id, "").catch(() => []);
+      if (st.length) phonePath.value = `${st[0]}/Music`;
+    }
+  };
+  devSel.addEventListener("change", pickDevice);
+  const folderBox = h("div", { class: "field" }, h("label", {}, "Ordner auf dem Gerät"),
+    h("div", { class: "line", style: { margin: "0" } }, h("div", { class: "grow" }, path),
+      h("button", { class: "btn", onclick: async () => {
+        const d = await open({ directory: true });
+        if (d) {
+          path.value = d as string;
+          if (!name.value.trim()) name.value = (d as string).replace(/[\\/]+$/, "").split(/[\\/]/).pop() || (d as string);
+        }
+      } }, "Wählen …")));
+  const phoneBox = h("div", {},
+    h("div", { class: "field" }, h("label", {}, "Handy"),
+      h("div", { class: "line", style: { margin: "0" } }, h("div", { class: "grow" }, devSel), h("button", { class: "btn", onclick: loadDevices }, "Neu suchen")), devNote),
+    h("div", { class: "field" }, h("label", {}, "Ordner auf dem Handy"),
+      h("div", { class: "line", style: { margin: "0" } }, h("div", { class: "grow" }, phonePath),
+        h("button", { class: "btn", onclick: async () => {
+          if (!device) return toast("Erst ein Handy wählen");
+          const p = await browseDevice(device, deviceName, phonePath.value.trim());
+          if (p) phonePath.value = p;
+        } }, "Wählen …")),
+      h("div", { class: "note" }, "Fehlende Ordner legt der Sync an. Minimal Player findet die Musik dort, wenn du den Ordner in der App hinzufügst.")),
+  );
+  const showKind = () => {
+    folderBox.style.display = kind === "folder" ? "" : "none";
+    phoneBox.style.display = kind === "phone" ? "" : "none";
+    if (kind === "phone" && !devSel.options.length) loadDevices();
+  };
+  const kindRadio = (k: "folder" | "phone", label: string) => {
+    const r = h("input", { type: "radio", name: "synckind", checked: kind === k });
+    r.addEventListener("change", () => { kind = k; showKind(); });
+    return h("label", { class: "check", style: { marginRight: "18px" } }, r, label);
+  };
+  const kindRow = IS_MAC ? "" : h("div", { class: "line" }, kindRadio("folder", "Ordner / Laufwerk (Stick, Karte, Festplatte)"), kindRadio("phone", "Handy am USB-Kabel"));
+  showKind();
   const auto = h("input", { type: "checkbox", checked: v.auto });
   const mirror = h("input", { type: "checkbox", checked: v.mirror });
   const ignoreSpace = h("input", { type: "checkbox", checked: !!v.ignoreSpace }) as HTMLInputElement;
@@ -241,15 +307,9 @@ function editTarget(t: SyncTargetState | null) {
   upSize();
   const s = sheet(t ? `„${t.name}“ bearbeiten` : "Neues Sync-Ziel", h("div", {},
     h("div", { class: "field" }, h("label", {}, "Name"), name),
-    h("div", { class: "field" }, h("label", {}, "Ordner auf dem Gerät"),
-      h("div", { class: "line", style: { margin: "0" } }, h("div", { class: "grow" }, path),
-        h("button", { class: "btn", onclick: async () => {
-          const d = await open({ directory: true });
-          if (d) {
-            path.value = d as string;
-            if (!name.value.trim()) name.value = (d as string).replace(/[\\/]+$/, "").split(/[\\/]/).pop() || (d as string);
-          }
-        } }, "Wählen …"))),
+    kindRow,
+    folderBox,
+    phoneBox,
     h("div", { class: "card", style: { marginTop: "10px" } }, h("h3", {}, "Playlisten für dieses Ziel"), plBox),
     h("div", { class: "card" }, h("h3", {}, "Ganze Ordner"), fBox,
       h("div", { class: "note" }, "Nur in eine Richtung: Quellordner → Ziel. Auf dem Ziel als „Ordnername/…“ mit denselben Unterordnern.")),
@@ -266,8 +326,11 @@ function editTarget(t: SyncTargetState | null) {
       h("button", {
         class: "btn primary",
         onclick: async () => {
-          if (!path.value.trim()) return toast("Bitte einen Ordner wählen");
-          const id = await api.syncSave({ ...v, name: name.value.trim() || path.value.trim(), path: path.value.trim(), playlists: [...chosen], auto: auto.checked, mirror: mirror.checked, layout, noPlaylistFiles: !m3u.checked, folders: v.folders, ignoreSpace: ignoreSpace.checked });
+          const phone = kind === "phone";
+          const dest = (phone ? phonePath.value : path.value).trim().replace(/^[\\/]+|[\\/]+$/g, phone ? "" : "$&");
+          if (phone && !device) return toast("Bitte ein Handy wählen");
+          if (!dest) return toast("Bitte einen Ordner wählen");
+          const id = await api.syncSave({ ...v, device: phone ? device : "", deviceName: phone ? deviceName : "", name: name.value.trim() || (phone ? deviceName : dest), path: dest, playlists: [...chosen], auto: auto.checked, mirror: mirror.checked, layout, noPlaylistFiles: !m3u.checked, folders: v.folders, ignoreSpace: ignoreSpace.checked });
           s.close();
           await poll();
           const nt = targets.find((x) => x.id === id);
@@ -277,6 +340,40 @@ function editTarget(t: SyncTargetState | null) {
       }, "Speichern"),
     ),
   ), { wide: true });
+}
+
+/** Ordner auf dem Handy wählen (oberste Ebene = Speicher) */
+function browseDevice(device: string, deviceName: string, start: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    let cur = start.split(/[\\/]/).filter(Boolean);
+    let done = false;
+    const finish = (v: string | null) => { if (!done) { done = true; resolve(v); } s.close(); };
+    const crumbs = h("div", { style: { fontFamily: "var(--mono)", fontSize: "12px", margin: "0 0 8px", wordBreak: "break-all" } });
+    const list = h("div", { style: { maxHeight: "320px", overflowY: "auto", minHeight: "120px" } });
+    const take = h("button", { class: "btn primary", onclick: () => finish(cur.join("/")) }, "Diesen Ordner nehmen") as HTMLButtonElement;
+    const load = async () => {
+      crumbs.textContent = `${deviceName || "Handy"} / ${cur.join(" / ")}`;
+      take.disabled = cur.length === 0; // ein Speicher muss gewählt sein
+      list.replaceChildren(h("div", { class: "note" }, "lese …"));
+      try {
+        const sub = await api.syncDeviceFolders(device, cur.join("/"));
+        const row = (label: string, go: () => void) =>
+          h("div", { class: "setting", style: { cursor: "pointer", padding: "6px 4px" }, onclick: go }, h("span", {}, label));
+        list.replaceChildren(
+          ...(cur.length ? [row("↑ eine Ebene höher", () => { cur = cur.slice(0, -1); load(); })] : []),
+          ...sub.map((n) => row("▸ " + n, () => { cur = [...cur, n]; load(); })),
+          ...(sub.length ? [] : [h("div", { class: "note" }, cur.length ? "Keine Unterordner." : "Kein Speicher sichtbar – ist das Handy entsperrt und auf „Dateiübertragung“ gestellt?")]),
+        );
+      } catch (e) {
+        list.replaceChildren(h("div", { class: "note" }, String(e)));
+      }
+    };
+    const s = sheet("Ordner auf dem Handy", h("div", {}, crumbs, list,
+      h("div", { class: "foot" }, h("span", { class: "spacer" }),
+        h("button", { class: "btn", onclick: () => finish(null) }, "Abbrechen"), take)),
+      { onClose: () => { if (!done) { done = true; resolve(null); } } });
+    load();
+  });
 }
 
 /** Speicher: belegt durch die Playlisten · frei auf dem Gerät (mit Balken) */

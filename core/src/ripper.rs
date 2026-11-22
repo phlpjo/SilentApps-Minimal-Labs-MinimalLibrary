@@ -41,7 +41,9 @@ pub fn find(tools: &Path, name: &str) -> Option<PathBuf> {
     if local.exists() {
         return Some(local);
     }
-    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
     // Mac-Apps aus dem Finder bekommen keinen Homebrew-Pfad mit
     if cfg!(target_os = "macos") {
         dirs.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
@@ -62,14 +64,33 @@ pub fn status(tools: &Path) -> ToolStatus {
         let out = cmd(&p).arg("--version").output().ok()?;
         Some(String::from_utf8_lossy(&out.stdout).trim().to_string()).filter(|v| !v.is_empty())
     });
-    ToolStatus { ytdlp, ffmpeg: find(tools, FFMPEG).is_some(), dir: tools.to_string_lossy().to_string() }
+    ToolStatus {
+        ytdlp,
+        ffmpeg: find(tools, FFMPEG).is_some(),
+        dir: tools.to_string_lossy().to_string(),
+    }
 }
 
 fn download(url: &str, progress: Progress, label: &str) -> Result<Vec<u8>> {
-    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(600))).build().into();
-    let mut resp = agent.get(url).call().map_err(|e| anyhow!("Download fehlgeschlagen ({label}): {e}"))?;
-    let total: usize = resp.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok()).unwrap_or(0);
-    let mut reader = resp.body_mut().with_config().limit(400 * 1024 * 1024).reader();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(600)))
+        .build()
+        .into();
+    let mut resp = agent
+        .get(url)
+        .call()
+        .map_err(|e| anyhow!("Download fehlgeschlagen ({label}): {e}"))?;
+    let total: usize = resp
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let mut reader = resp
+        .body_mut()
+        .with_config()
+        .limit(400 * 1024 * 1024)
+        .reader();
     let mut buf = Vec::with_capacity(total);
     let mut chunk = vec![0u8; 256 * 1024];
     loop {
@@ -114,18 +135,38 @@ pub fn install(tools: &Path, progress: Progress) -> Result<ToolStatus> {
     #[cfg(target_os = "macos")]
     {
         if find(tools, YTDLP).is_none() {
-            let data = download("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos", progress, "yt-dlp")?;
+            let data = download(
+                "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos",
+                progress,
+                "yt-dlp",
+            )?;
             let p = tools.join(YTDLP);
             std::fs::write(&p, data)?;
             make_executable(&p)?;
         }
         if find(tools, FFMPEG).is_none() {
-            let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "amd64" };
-            let data = download(&format!("https://ffmpeg.martin-riedl.de/redirect/latest/macos/{arch}/release/ffmpeg.zip"), progress, "ffmpeg")?;
+            let arch = if cfg!(target_arch = "aarch64") {
+                "arm64"
+            } else {
+                "amd64"
+            };
+            let data = download(
+                &format!(
+                    "https://ffmpeg.martin-riedl.de/redirect/latest/macos/{arch}/release/ffmpeg.zip"
+                ),
+                progress,
+                "ffmpeg",
+            )?;
             let p = tools.join(FFMPEG);
             unzip_one(data, "ffmpeg", &p)?;
             make_executable(&p)?;
-            if let Ok(data) = download(&format!("https://ffmpeg.martin-riedl.de/redirect/latest/macos/{arch}/release/ffprobe.zip"), progress, "ffprobe") {
+            if let Ok(data) = download(
+                &format!(
+                    "https://ffmpeg.martin-riedl.de/redirect/latest/macos/{arch}/release/ffprobe.zip"
+                ),
+                progress,
+                "ffprobe",
+            ) {
                 let p = tools.join("ffprobe");
                 if unzip_one(data, "ffprobe", &p).is_ok() {
                     make_executable(&p)?;
@@ -142,7 +183,11 @@ pub fn install(tools: &Path, progress: Progress) -> Result<ToolStatus> {
         return Ok(st);
     }
     if find(tools, YTDLP).is_none() {
-        let data = download("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe", progress, "yt-dlp")?;
+        let data = download(
+            "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
+            progress,
+            "yt-dlp",
+        )?;
         std::fs::write(tools.join(YTDLP), data)?;
     }
     if find(tools, FFMPEG).is_none() {
@@ -151,7 +196,8 @@ pub fn install(tools: &Path, progress: Progress) -> Result<ToolStatus> {
             progress,
             "ffmpeg",
         )?;
-        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data)).context("ffmpeg-Archiv defekt")?;
+        let mut zip =
+            zip::ZipArchive::new(std::io::Cursor::new(data)).context("ffmpeg-Archiv defekt")?;
         for i in 0..zip.len() {
             let mut f = zip.by_index(i)?;
             let name = f.name()?.replace('\\', "/");
@@ -170,7 +216,11 @@ pub fn install(tools: &Path, progress: Progress) -> Result<ToolStatus> {
 pub fn update(tools: &Path) -> Result<String> {
     let p = find(tools, YTDLP).ok_or_else(|| anyhow!("yt-dlp ist nicht installiert"))?;
     let out = cmd(&p).arg("-U").output()?;
-    Ok(String::from_utf8_lossy(&out.stdout).lines().last().unwrap_or("").to_string())
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .last()
+        .unwrap_or("")
+        .to_string())
 }
 
 // ---------- Links auflösen ----------
@@ -218,14 +268,32 @@ pub fn split_title(raw: &str, uploader: &str) -> (String, String) {
     let mut t = raw.to_string();
     // typische Zusätze entfernen
     let junk = [
-        "official music video", "official video", "official audio", "official lyric video", "lyric video", "lyrics", "official visualizer",
-        "visualizer", "audio", "hd", "hq", "4k", "music video", "videoclip", "clip officiel", "official",
+        "official music video",
+        "official video",
+        "official audio",
+        "official lyric video",
+        "lyric video",
+        "lyrics",
+        "official visualizer",
+        "visualizer",
+        "audio",
+        "hd",
+        "hq",
+        "4k",
+        "music video",
+        "videoclip",
+        "clip officiel",
+        "official",
     ];
     loop {
         let before = t.clone();
         for (o, c) in [('(', ')'), ('[', ']')] {
             if let (Some(a), Some(b)) = (t.rfind(o), t.rfind(c)) {
-                if a < b && junk.iter().any(|j| t[a + 1..b].trim().eq_ignore_ascii_case(j)) {
+                if a < b
+                    && junk
+                        .iter()
+                        .any(|j| t[a + 1..b].trim().eq_ignore_ascii_case(j))
+                {
                     t.replace_range(a..=b, "");
                 }
             }
@@ -242,7 +310,11 @@ pub fn split_title(raw: &str, uploader: &str) -> (String, String) {
             }
         }
     }
-    let up = uploader.trim_end_matches(" - Topic").replace("VEVO", "").trim().to_string();
+    let up = uploader
+        .trim_end_matches(" - Topic")
+        .replace("VEVO", "")
+        .trim()
+        .to_string();
     (up, t.trim_matches('"').to_string())
 }
 
@@ -251,15 +323,23 @@ pub fn split_title(raw: &str, uploader: &str) -> (String, String) {
 pub fn clean_youtube(url: &str) -> String {
     let u = url.trim();
     let lower = u.to_lowercase();
-    if !(lower.contains("youtube.com") || lower.contains("youtu.be")) || lower.contains("/playlist") {
+    if !(lower.contains("youtube.com") || lower.contains("youtu.be")) || lower.contains("/playlist")
+    {
         return u.to_string();
     }
     let id = if let Some(i) = lower.find("youtu.be/") {
-        u[i + 9..].split(['?', '&', '/', '#']).next().map(str::to_string)
+        u[i + 9..]
+            .split(['?', '&', '/', '#'])
+            .next()
+            .map(str::to_string)
     } else if let Some(i) = lower.find("/shorts/") {
-        u[i + 8..].split(['?', '&', '/', '#']).next().map(str::to_string)
+        u[i + 8..]
+            .split(['?', '&', '/', '#'])
+            .next()
+            .map(str::to_string)
     } else {
-        u.split(['?', '&', '#']).find_map(|p| p.strip_prefix("v=").map(str::to_string))
+        u.split(['?', '&', '#'])
+            .find_map(|p| p.strip_prefix("v=").map(str::to_string))
     };
     match id.filter(|i| i.len() >= 6) {
         Some(id) => format!("https://www.youtube.com/watch?v={id}"),
@@ -277,7 +357,13 @@ fn ytdlp_json(tools: &Path, url: &str, flat: bool) -> Result<Value> {
     let out = c.arg(url).output()?;
     if out.stdout.is_empty() {
         let err = String::from_utf8_lossy(&out.stderr);
-        bail!("{}", err.lines().rev().find(|l| l.contains("ERROR")).unwrap_or("Link konnte nicht gelesen werden"));
+        bail!(
+            "{}",
+            err.lines()
+                .rev()
+                .find(|l| l.contains("ERROR"))
+                .unwrap_or("Link konnte nicht gelesen werden")
+        );
     }
     Ok(serde_json::from_slice(&out.stdout)?)
 }
@@ -288,9 +374,18 @@ fn entry_from(v: &Value, index: usize, site: &str) -> Option<Entry> {
     if title.is_empty() || title == "[Private video]" || title == "[Deleted video]" {
         return None;
     }
-    let uploader = v["uploader"].as_str().or(v["channel"].as_str()).unwrap_or("");
-    let (artist, track) = match (v["artist"].as_str().or(v["creator"].as_str()), v["track"].as_str()) {
-        (Some(a), Some(t)) => (a.split(',').next().unwrap_or(a).trim().to_string(), t.to_string()),
+    let uploader = v["uploader"]
+        .as_str()
+        .or(v["channel"].as_str())
+        .unwrap_or("");
+    let (artist, track) = match (
+        v["artist"].as_str().or(v["creator"].as_str()),
+        v["track"].as_str(),
+    ) {
+        (Some(a), Some(t)) => (
+            a.split(',').next().unwrap_or(a).trim().to_string(),
+            t.to_string(),
+        ),
         _ => split_title(&title, uploader),
     };
     Some(Entry {
@@ -314,7 +409,10 @@ fn spotify(url: &str) -> Result<Resolved> {
     if !["track", "album", "playlist"].contains(&kind) {
         bail!("Spotify: nur Titel-, Album- und Playlist-Links");
     }
-    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(20))).build().into();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(20)))
+        .build()
+        .into();
     let html = agent
         .get(&format!("https://open.spotify.com/embed/{kind}/{id}"))
         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36")
@@ -322,31 +420,55 @@ fn spotify(url: &str) -> Result<Resolved> {
         .map_err(|e| anyhow!("Spotify nicht erreichbar: {e}"))?
         .body_mut()
         .read_to_string()?;
-    let start = html.find("id=\"__NEXT_DATA__\"").context("Spotify-Seite unbekannt")?;
-    let json_start = html[start..].find('>').map(|i| start + i + 1).context("Spotify-Seite unbekannt")?;
-    let json_end = html[json_start..].find("</script>").map(|i| json_start + i).context("Spotify-Seite unbekannt")?;
+    let start = html
+        .find("id=\"__NEXT_DATA__\"")
+        .context("Spotify-Seite unbekannt")?;
+    let json_start = html[start..]
+        .find('>')
+        .map(|i| start + i + 1)
+        .context("Spotify-Seite unbekannt")?;
+    let json_end = html[json_start..]
+        .find("</script>")
+        .map(|i| json_start + i)
+        .context("Spotify-Seite unbekannt")?;
     let v: Value = serde_json::from_str(&html[json_start..json_end])?;
     let entity = &v["props"]["pageProps"]["state"]["data"]["entity"];
     if entity.is_null() {
         bail!("Spotify: Inhalt nicht gefunden (privat oder regional gesperrt?)");
     }
-    let name = entity["name"].as_str().or(entity["title"].as_str()).unwrap_or("Spotify").to_string();
-    let album = if kind == "album" { Some(name.clone()) } else { None };
-    let mut entries = Vec::new();
-    let mk = |i: usize, title: &str, artist: &str, dur_ms: Option<f64>, album: Option<String>| Entry {
-        index: i,
-        artist: artist.to_string(),
-        title: title.to_string(),
-        album,
-        duration: dur_ms.map(|d| d / 1000.0),
-        source: format!("ytsearch1:{artist} - {title}"),
-        site: "Spotify".into(),
-        in_library: None,
+    let name = entity["name"]
+        .as_str()
+        .or(entity["title"].as_str())
+        .unwrap_or("Spotify")
+        .to_string();
+    let album = if kind == "album" {
+        Some(name.clone())
+    } else {
+        None
     };
+    let mut entries = Vec::new();
+    let mk =
+        |i: usize, title: &str, artist: &str, dur_ms: Option<f64>, album: Option<String>| Entry {
+            index: i,
+            artist: artist.to_string(),
+            title: title.to_string(),
+            album,
+            duration: dur_ms.map(|d| d / 1000.0),
+            source: format!("ytsearch1:{artist} - {title}"),
+            site: "Spotify".into(),
+            in_library: None,
+        };
     if let Some(list) = entity["trackList"].as_array() {
         for (i, t) in list.iter().enumerate() {
             let title = t["title"].as_str().unwrap_or("");
-            let artist = t["subtitle"].as_str().unwrap_or("").split(',').next().unwrap_or("").trim().to_string();
+            let artist = t["subtitle"]
+                .as_str()
+                .unwrap_or("")
+                .split(',')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
             if !title.is_empty() {
                 entries.push(mk(i, title, &artist, t["duration"].as_f64(), album.clone()));
             }
@@ -377,17 +499,31 @@ pub fn resolve(tools: &Path, url: &str) -> Result<Resolved> {
     let v = ytdlp_json(tools, url, true)?;
     if v["_type"] == "playlist" {
         let name = v["title"].as_str().unwrap_or("Playlist").to_string();
-        let mut entries: Vec<Entry> =
-            v["entries"].as_array().into_iter().flatten().enumerate().filter_map(|(i, e)| entry_from(e, i, &site)).collect();
+        let mut entries: Vec<Entry> = v["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .filter_map(|(i, e)| entry_from(e, i, &site))
+            .collect();
         // SoundCloud-Sets liefern flach oft keine Titel → vollständig lesen
         if entries.is_empty() && v["entries"].as_array().is_some_and(|a| !a.is_empty()) {
             let full = ytdlp_json(tools, url, false)?;
-            entries = full["entries"].as_array().into_iter().flatten().enumerate().filter_map(|(i, e)| entry_from(e, i, &site)).collect();
+            entries = full["entries"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .filter_map(|(i, e)| entry_from(e, i, &site))
+                .collect();
         }
         Ok(Resolved { name, entries })
     } else {
         let e = entry_from(&v, 0, &site).ok_or_else(|| anyhow!("Kein Titel gefunden"))?;
-        Ok(Resolved { name: e.title.clone(), entries: vec![e] })
+        Ok(Resolved {
+            name: e.title.clone(),
+            entries: vec![e],
+        })
     }
 }
 
@@ -397,9 +533,24 @@ pub fn mark_known(entries: &mut [Entry], library: &[Track]) {
     let idx: Vec<(String, String, f64, &Track)> = library
         .iter()
         .filter_map(|t| {
-            let title = t.title.clone().unwrap_or_else(|| Path::new(&t.path).file_stem().unwrap_or_default().to_string_lossy().to_string());
+            let title = t.title.clone().unwrap_or_else(|| {
+                Path::new(&t.path)
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
+            });
             let nt = normalize_text(&title);
-            if nt.is_empty() { None } else { Some((normalize_text(t.artist.as_deref().unwrap_or("")), nt, t.duration, t)) }
+            if nt.is_empty() {
+                None
+            } else {
+                Some((
+                    normalize_text(t.artist.as_deref().unwrap_or("")),
+                    nt,
+                    t.duration,
+                    t,
+                ))
+            }
         })
         .collect();
     for e in entries.iter_mut() {
@@ -419,7 +570,16 @@ pub fn mark_known(entries: &mut [Entry], library: &[Track]) {
             title_ok && artist_ok && dur_ok
         });
         e.in_library = hit.map(|(_, _, _, t)| {
-            (t.id, format!("{} – {}", t.artist.clone().unwrap_or_default(), t.title.clone().unwrap_or_default()).trim_matches([' ', '–']).to_string())
+            (
+                t.id,
+                format!(
+                    "{} – {}",
+                    t.artist.clone().unwrap_or_default(),
+                    t.title.clone().unwrap_or_default()
+                )
+                .trim_matches([' ', '–'])
+                .to_string(),
+            )
         });
     }
 }
@@ -457,7 +617,13 @@ pub fn rip_one(
 ) -> Result<i64> {
     match rip_once(tools, conn, e, dir, format, cancel, on) {
         Err(err) if is_block(&err.to_string()) && !cancel.load(Ordering::Relaxed) => {
-            on(RipEvent { index: e.index, stage: "download".into(), percent: 0.0, message: "YouTube bremst – neuer Versuch in 8 s".into(), track_id: None });
+            on(RipEvent {
+                index: e.index,
+                stage: "download".into(),
+                percent: 0.0,
+                message: "YouTube bremst – neuer Versuch in 8 s".into(),
+                track_id: None,
+            });
             std::thread::sleep(Duration::from_secs(8));
             rip_once(tools, conn, e, dir, format, cancel, on).map_err(|e2| {
                 if is_block(&e2.to_string()) {
@@ -473,7 +639,10 @@ pub fn rip_one(
 
 fn is_block(msg: &str) -> bool {
     let m = msg.to_lowercase();
-    m.contains("page needs to be reloaded") || m.contains("not a bot") || m.contains("http error 403") || m.contains("http error 429")
+    m.contains("page needs to be reloaded")
+        || m.contains("not a bot")
+        || m.contains("http error 403")
+        || m.contains("http error 429")
 }
 
 fn rip_once(
@@ -487,16 +656,39 @@ fn rip_once(
 ) -> Result<i64> {
     let p = find(tools, YTDLP).ok_or_else(|| anyhow!("yt-dlp ist nicht installiert"))?;
     std::fs::create_dir_all(dir)?;
-    let base = if e.artist.is_empty() { e.title.clone() } else { format!("{} - {}", e.artist, e.title) };
+    let base = if e.artist.is_empty() {
+        e.title.clone()
+    } else {
+        format!("{} - {}", e.artist, e.title)
+    };
     let stem = paths::sanitize(&base);
     let out_tpl = dir.join(format!("{stem}.%(ext)s"));
     let mut c = cmd(&p);
-    c.args(["--no-playlist", "--newline", "--no-warnings", "--progress", "--sleep-requests", "1", "-f", "bestaudio/best", "-x"]);
+    c.args([
+        "--no-playlist",
+        "--newline",
+        "--no-warnings",
+        "--progress",
+        "--sleep-requests",
+        "1",
+        "-f",
+        "bestaudio/best",
+        "-x",
+    ]);
     if format == Format::Mp3 {
         c.args(["--audio-format", "mp3", "--audio-quality", "320K"]);
     }
-    c.args(["--embed-thumbnail", "--convert-thumbnails", "jpg", "--embed-metadata", "--no-overwrites"]);
-    c.args(["--progress-template", "download:[ML] %(progress._percent_str)s"]);
+    c.args([
+        "--embed-thumbnail",
+        "--convert-thumbnails",
+        "jpg",
+        "--embed-metadata",
+        "--no-overwrites",
+    ]);
+    c.args([
+        "--progress-template",
+        "download:[ML] %(progress._percent_str)s",
+    ]);
     c.args(["--print", "after_move:[MLFILE]%(filepath)s"]);
     if let Some(ff) = find(tools, FFMPEG) {
         c.arg("--ffmpeg-location").arg(ff.parent().unwrap_or(tools));
@@ -516,18 +708,34 @@ fn rip_once(
         }
     });
     let mut file: Option<PathBuf> = None;
-    let ev = |stage: &str, percent: f64, message: &str| on(RipEvent { index: e.index, stage: stage.into(), percent, message: message.into(), track_id: None });
+    let ev = |stage: &str, percent: f64, message: &str| {
+        on(RipEvent {
+            index: e.index,
+            stage: stage.into(),
+            percent,
+            message: message.into(),
+            track_id: None,
+        })
+    };
     for line in BufReader::new(stdout).lines().map_while(|l| l.ok()) {
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill();
             bail!("Abgebrochen");
         }
         if let Some(rest) = line.strip_prefix("[ML]") {
-            let pct: f64 = rest.trim().trim_end_matches('%').trim().parse().unwrap_or(0.0);
+            let pct: f64 = rest
+                .trim()
+                .trim_end_matches('%')
+                .trim()
+                .parse()
+                .unwrap_or(0.0);
             ev("download", pct, "lädt");
         } else if let Some(f) = line.strip_prefix("[MLFILE]") {
             file = Some(PathBuf::from(f.trim()));
-        } else if line.contains("[ExtractAudio]") || line.contains("[EmbedThumbnail]") || line.contains("[Metadata]") {
+        } else if line.contains("[ExtractAudio]")
+            || line.contains("[EmbedThumbnail]")
+            || line.contains("[Metadata]")
+        {
             ev("convert", 100.0, "wandelt um");
         }
     }
@@ -535,20 +743,34 @@ fn rip_once(
     let _ = err_thread.join();
     let Some(file) = file.filter(|f| f.exists()) else {
         let err = err_buf.lock().unwrap().clone();
-        let msg = err.lines().rev().find(|l| l.contains("ERROR")).unwrap_or(if status.success() { "Datei nicht gefunden" } else { "Download fehlgeschlagen" });
+        let msg = err
+            .lines()
+            .rev()
+            .find(|l| l.contains("ERROR"))
+            .unwrap_or(if status.success() {
+                "Datei nicht gefunden"
+            } else {
+                "Download fehlgeschlagen"
+            });
         bail!("{}", msg.trim_start_matches("ERROR: "));
     };
     // Saubere Tags aus dem Link (statt Kanalname/Videotitel)
     let u = tags::TagUpdate {
         title: Some(e.title.clone()),
-        artist: if e.artist.is_empty() { None } else { Some(e.artist.clone()) },
+        artist: if e.artist.is_empty() {
+            None
+        } else {
+            Some(e.artist.clone())
+        },
         album: e.album.clone(),
         comment: Some(String::new()),
         ..Default::default()
     };
     let _ = tags::write(&file, &u);
     let ids = scanner::add_files(conn, &[file])?;
-    ids.first().copied().ok_or_else(|| anyhow!("Datei konnte nicht aufgenommen werden"))
+    ids.first()
+        .copied()
+        .ok_or_else(|| anyhow!("Datei konnte nicht aufgenommen werden"))
 }
 
 #[cfg(test)]
@@ -556,20 +778,65 @@ mod tests {
     use super::*;
     #[test]
     fn split() {
-        assert_eq!(split_title("Daft Punk - One More Time (Official Video)", "DaftPunkVEVO"), ("Daft Punk".into(), "One More Time".into()));
-        assert_eq!(split_title("Strobe [Official Audio]", "deadmau5 - Topic"), ("deadmau5".into(), "Strobe".into()));
-        assert_eq!(split_title("Artist – Song (Extended Mix)", "x"), ("Artist".into(), "Song (Extended Mix)".into()));
-        assert_eq!(clean_youtube("https://www.youtube.com/watch?v=abcdefgh123&list=RDabc&index=3"), "https://www.youtube.com/watch?v=abcdefgh123");
-        assert_eq!(clean_youtube("https://youtu.be/abcdefgh123?si=x"), "https://www.youtube.com/watch?v=abcdefgh123");
-        assert_eq!(clean_youtube("https://music.youtube.com/watch?v=abcdefgh123&list=OLAK"), "https://www.youtube.com/watch?v=abcdefgh123");
-        assert_eq!(clean_youtube("https://www.youtube.com/playlist?list=PL123"), "https://www.youtube.com/playlist?list=PL123");
+        assert_eq!(
+            split_title("Daft Punk - One More Time (Official Video)", "DaftPunkVEVO"),
+            ("Daft Punk".into(), "One More Time".into())
+        );
+        assert_eq!(
+            split_title("Strobe [Official Audio]", "deadmau5 - Topic"),
+            ("deadmau5".into(), "Strobe".into())
+        );
+        assert_eq!(
+            split_title("Artist – Song (Extended Mix)", "x"),
+            ("Artist".into(), "Song (Extended Mix)".into())
+        );
+        assert_eq!(
+            clean_youtube("https://www.youtube.com/watch?v=abcdefgh123&list=RDabc&index=3"),
+            "https://www.youtube.com/watch?v=abcdefgh123"
+        );
+        assert_eq!(
+            clean_youtube("https://youtu.be/abcdefgh123?si=x"),
+            "https://www.youtube.com/watch?v=abcdefgh123"
+        );
+        assert_eq!(
+            clean_youtube("https://music.youtube.com/watch?v=abcdefgh123&list=OLAK"),
+            "https://www.youtube.com/watch?v=abcdefgh123"
+        );
+        assert_eq!(
+            clean_youtube("https://www.youtube.com/playlist?list=PL123"),
+            "https://www.youtube.com/playlist?list=PL123"
+        );
     }
     #[test]
     fn known() {
-        let lib = vec![Track { id: 7, title: Some("One More Time".into()), artist: Some("Daft Punk".into()), duration: 320.0, ..Default::default() }];
+        let lib = vec![Track {
+            id: 7,
+            title: Some("One More Time".into()),
+            artist: Some("Daft Punk".into()),
+            duration: 320.0,
+            ..Default::default()
+        }];
         let mut e = vec![
-            Entry { index: 0, artist: "Daft Punk".into(), title: "One More Time".into(), album: None, duration: Some(322.0), source: String::new(), site: String::new(), in_library: None },
-            Entry { index: 1, artist: "Daft Punk".into(), title: "Aerodynamic".into(), album: None, duration: None, source: String::new(), site: String::new(), in_library: None },
+            Entry {
+                index: 0,
+                artist: "Daft Punk".into(),
+                title: "One More Time".into(),
+                album: None,
+                duration: Some(322.0),
+                source: String::new(),
+                site: String::new(),
+                in_library: None,
+            },
+            Entry {
+                index: 1,
+                artist: "Daft Punk".into(),
+                title: "Aerodynamic".into(),
+                album: None,
+                duration: None,
+                source: String::new(),
+                site: String::new(),
+                in_library: None,
+            },
         ];
         mark_known(&mut e, &lib);
         assert_eq!(e[0].in_library.as_ref().map(|x| x.0), Some(7));

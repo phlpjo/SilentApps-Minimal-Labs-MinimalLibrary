@@ -46,7 +46,11 @@ impl W {
 fn tag(kind: &[u8; 4], head: &[u8], body: &[u8]) -> Vec<u8> {
     let len_header = 12 + head.len();
     let mut w = W::new();
-    w.bytes(kind).u32(len_header as u32).u32((len_header + body.len()) as u32).bytes(head).bytes(body);
+    w.bytes(kind)
+        .u32(len_header as u32)
+        .u32((len_header + body.len()) as u32)
+        .bytes(head)
+        .bytes(body);
     w.0
 }
 
@@ -79,7 +83,9 @@ fn pqtz(beats: &[(f64, u8)], bpm: f64) -> Vec<u8> {
     let mut body = W::new();
     let tempo = (bpm * 100.0).round() as u16;
     for (t, b) in beats {
-        body.u16(*b as u16).u16(tempo).u32(t.round().max(0.0) as u32);
+        body.u16(*b as u16)
+            .u16(tempo)
+            .u32(t.round().max(0.0) as u32);
     }
     tag(b"PQTZ", &head.0, &body.0)
 }
@@ -115,12 +121,19 @@ fn columns(frames: &[u8], cols: usize) -> Vec<[f32; 4]> {
 
 fn whiteness(f: &[f32; 4]) -> f32 {
     let sum = f[1] + f[2] + f[3];
-    if sum <= 0.0 { 0.0 } else { (f[3] + 0.5 * f[2]) / sum }
+    if sum <= 0.0 {
+        0.0
+    } else {
+        (f[3] + 0.5 * f[2]) / sum
+    }
 }
 
 /// PWAV (400 Spalten) bzw. PWV2 (Mini-Vorschau)
 fn preview(kind: &[u8; 4], frames: &[u8], cols: usize) -> Vec<u8> {
-    let data: Vec<u8> = columns(frames, cols).iter().map(|f| mono_byte(f[0], whiteness(f))).collect();
+    let data: Vec<u8> = columns(frames, cols)
+        .iter()
+        .map(|f| mono_byte(f[0], whiteness(f)))
+        .collect();
     let mut head = W::new();
     head.u32(data.len() as u32).u32(0x0001_0000);
     tag(kind, &head.0, &data)
@@ -131,7 +144,12 @@ fn pwv3(frames: &[u8]) -> Vec<u8> {
     let data: Vec<u8> = frames
         .chunks_exact(4)
         .map(|f| {
-            let v = [f[0] as f32 / 255.0, f[1] as f32 / 255.0, f[2] as f32 / 255.0, f[3] as f32 / 255.0];
+            let v = [
+                f[0] as f32 / 255.0,
+                f[1] as f32 / 255.0,
+                f[2] as f32 / 255.0,
+                f[3] as f32 / 255.0,
+            ];
             mono_byte(v[0], whiteness(&v))
         })
         .collect();
@@ -148,7 +166,12 @@ fn pwv4(frames: &[u8]) -> Vec<u8> {
     let mut body = W::new();
     for f in columns(frames, COLOR_PREVIEW_COLS) {
         let q = |v: f32| (v.clamp(0.0, 1.0) * 127.0).round() as u8;
-        body.u8(0).u8(127).u8(q(1.0 - f[0])).u8(q(f[1] * f[0].max(0.2))).u8(q(f[2] * f[0].max(0.2))).u8(q(f[0]));
+        body.u8(0)
+            .u8(127)
+            .u8(q(1.0 - f[0]))
+            .u8(q(f[1] * f[0].max(0.2)))
+            .u8(q(f[2] * f[0].max(0.2)))
+            .u8(q(f[0]));
     }
     let mut head = W::new();
     head.u32(6).u32(COLOR_PREVIEW_COLS as u32).u32(0);
@@ -166,7 +189,12 @@ fn pwv5(frames: &[u8]) -> Vec<u8> {
     let mut body = W::new();
     let mut n = 0u32;
     for f in frames.chunks_exact(4) {
-        body.u16(color_word(f[0] as f32 / 255.0, f[1] as f32 / 255.0, f[2] as f32 / 255.0, f[3] as f32 / 255.0));
+        body.u16(color_word(
+            f[0] as f32 / 255.0,
+            f[1] as f32 / 255.0,
+            f[2] as f32 / 255.0,
+            f[3] as f32 / 255.0,
+        ));
         n += 1;
     }
     let mut head = W::new();
@@ -199,7 +227,11 @@ fn pcob(hot: bool, cues: &[&Cue]) -> Vec<u8> {
             .u8(0)
             .u16(1000)
             .u32(c.start_ms.round().max(0.0) as u32)
-            .u32(c.end_ms.map(|e| e.round().max(0.0) as u32).unwrap_or(0xFFFF_FFFF))
+            .u32(
+                c.end_ms
+                    .map(|e| e.round().max(0.0) as u32)
+                    .unwrap_or(0xFFFF_FFFF),
+            )
             .zeros(16);
     }
     tag(b"PCOB", &head.0, &body.0)
@@ -227,7 +259,11 @@ fn pco2(hot: bool, cues: &[&Cue]) -> Vec<u8> {
             .u8(if c.end_ms.is_some() { 2 } else { 1 })
             .zeros(3)
             .u32(c.start_ms.round().max(0.0) as u32)
-            .u32(c.end_ms.map(|e| e.round().max(0.0) as u32).unwrap_or(0xFFFF_FFFF))
+            .u32(
+                c.end_ms
+                    .map(|e| e.round().max(0.0) as u32)
+                    .unwrap_or(0xFFFF_FFFF),
+            )
             .u8(c.color.unwrap_or(0))
             .zeros(7)
             .u16(0)
@@ -335,10 +371,14 @@ pub struct Parsed {
 }
 
 fn be32(b: &[u8], i: usize) -> Result<u32> {
-    b.get(i..i + 4).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]])).ok_or_else(|| anyhow!("zu kurz"))
+    b.get(i..i + 4)
+        .map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
+        .ok_or_else(|| anyhow!("zu kurz"))
 }
 fn be16(b: &[u8], i: usize) -> Result<u16> {
-    b.get(i..i + 2).map(|s| u16::from_be_bytes([s[0], s[1]])).ok_or_else(|| anyhow!("zu kurz"))
+    b.get(i..i + 2)
+        .map(|s| u16::from_be_bytes([s[0], s[1]]))
+        .ok_or_else(|| anyhow!("zu kurz"))
 }
 
 pub fn parse(data: &[u8]) -> Result<Parsed> {
@@ -362,14 +402,18 @@ pub fn parse(data: &[u8]) -> Result<Parsed> {
         match kind.as_str() {
             "PPTH" => {
                 let n = be32(t, 12)? as usize;
-                let s: Vec<u16> = t[16..16 + n - 2].chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+                let s: Vec<u16> = t[16..16 + n - 2]
+                    .chunks_exact(2)
+                    .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                    .collect();
                 p.path = String::from_utf16_lossy(&s);
             }
             "PQTZ" => {
                 let n = be32(t, 20)? as usize;
                 for k in 0..n {
                     let o = 24 + k * 8;
-                    p.beats.push((be16(t, o)?, be16(t, o + 2)?, be32(t, o + 4)?));
+                    p.beats
+                        .push((be16(t, o)?, be16(t, o + 2)?, be32(t, o + 4)?));
                 }
             }
             "PCOB" => {
@@ -380,7 +424,11 @@ pub fn parse(data: &[u8]) -> Result<Parsed> {
                         bail!("PCPT-Eintrag defekt");
                     }
                     let lt2 = be32(t, o + 36)?;
-                    p.cues.push((be32(t, o + 12)?, be32(t, o + 32)?, (lt2 != 0xFFFF_FFFF).then_some(lt2)));
+                    p.cues.push((
+                        be32(t, o + 12)?,
+                        be32(t, o + 32)?,
+                        (lt2 != 0xFFFF_FFFF).then_some(lt2),
+                    ));
                 }
             }
             "PCO2" => {
@@ -390,7 +438,10 @@ pub fn parse(data: &[u8]) -> Result<Parsed> {
                     let len_entry = be32(t, o + 8)? as usize;
                     let len_c = be32(t, o + 40)? as usize;
                     if len_c >= 2 {
-                        let s: Vec<u16> = t[o + 44..o + 44 + len_c - 2].chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+                        let s: Vec<u16> = t[o + 44..o + 44 + len_c - 2]
+                            .chunks_exact(2)
+                            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                            .collect();
                         p.comments.push(String::from_utf16_lossy(&s));
                     }
                     o += len_entry;
@@ -398,7 +449,12 @@ pub fn parse(data: &[u8]) -> Result<Parsed> {
             }
             "PWAV" => p.preview = t[lh..].to_vec(),
             "PWV3" => p.detail = t[lh..].to_vec(),
-            "PWV5" => p.color_detail = t[lh..].chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect(),
+            "PWV5" => {
+                p.color_detail = t[lh..]
+                    .chunks_exact(2)
+                    .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                    .collect()
+            }
             _ => {}
         }
         p.tags.push(kind);
@@ -419,28 +475,64 @@ mod tests {
             frames.extend_from_slice(&[(i % 256) as u8, 200, 100, 50]);
         }
         let cues = vec![
-            Cue { id: 1, kind: 0, start_ms: 1000.0, end_ms: None, color: None, comment: None },
-            Cue { id: 2, kind: 1, start_ms: 2500.4, end_ms: None, color: Some(3), comment: Some("Drop ä".into()) },
-            Cue { id: 3, kind: 3, start_ms: 4000.0, end_ms: Some(6000.0), color: Some(6), comment: None },
+            Cue {
+                id: 1,
+                kind: 0,
+                start_ms: 1000.0,
+                end_ms: None,
+                color: None,
+                comment: None,
+            },
+            Cue {
+                id: 2,
+                kind: 1,
+                start_ms: 2500.4,
+                end_ms: None,
+                color: Some(3),
+                comment: Some("Drop ä".into()),
+            },
+            Cue {
+                id: 3,
+                kind: 3,
+                start_ms: 4000.0,
+                end_ms: Some(6000.0),
+                color: Some(6),
+                comment: None,
+            },
         ];
         let a = TrackAnalysis {
             device_path: "/Contents/Künstler/Titel.mp3",
             duration_ms: 10_000.0,
-            grid: Some(Grid { bpm: 128.0, downbeat_ms: 120.0, edited: false }),
+            grid: Some(Grid {
+                bpm: 128.0,
+                downbeat_ms: 120.0,
+                edited: false,
+            }),
             frames: &frames,
             cues: &cues,
         };
         let dat = parse(&build_dat(&a)).unwrap();
-        assert_eq!(dat.tags, ["PPTH", "PVBR", "PQTZ", "PWAV", "PWV2", "PCOB", "PCOB"]);
+        assert_eq!(
+            dat.tags,
+            ["PPTH", "PVBR", "PQTZ", "PWAV", "PWV2", "PCOB", "PCOB"]
+        );
         assert_eq!(dat.path, "/Contents/Künstler/Titel.mp3");
         assert_eq!(dat.beats[0], (1, 12800, 120));
         assert_eq!(dat.beats[1].0, 2);
         assert_eq!(dat.beats.len(), 22);
         assert_eq!(dat.preview.len(), PREVIEW_COLS);
-        assert_eq!(dat.cues, vec![(0, 1000, None), (1, 2500, None), (3, 4000, Some(6000))]);
+        assert_eq!(
+            dat.cues,
+            vec![(0, 1000, None), (1, 2500, None), (3, 4000, Some(6000))]
+        );
 
         let ext = parse(&build_ext(&a)).unwrap();
-        assert_eq!(ext.tags, ["PPTH", "PCOB", "PCOB", "PCO2", "PCO2", "PWV3", "PWV4", "PWV5"]);
+        assert_eq!(
+            ext.tags,
+            [
+                "PPTH", "PCOB", "PCOB", "PCO2", "PCO2", "PWV3", "PWV4", "PWV5"
+            ]
+        );
         assert_eq!(ext.detail.len(), 1500);
         assert_eq!(ext.color_detail.len(), 1500);
         assert_eq!(ext.comments, vec!["Drop ä".to_string()]);

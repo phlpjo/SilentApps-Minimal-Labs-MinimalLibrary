@@ -28,7 +28,9 @@ struct Uf {
 }
 impl Uf {
     fn new(n: usize) -> Self {
-        Uf { p: (0..n).collect() }
+        Uf {
+            p: (0..n).collect(),
+        }
     }
     fn find(&mut self, x: usize) -> usize {
         let mut r = x;
@@ -58,12 +60,22 @@ pub fn normalize_text(s: &str) -> String {
     for (open, close) in [('(', ')'), ('[', ']')] {
         loop {
             let Some(a) = s.find(open) else { break };
-            let Some(b_rel) = s[a..].find(close) else { break };
+            let Some(b_rel) = s[a..].find(close) else {
+                break;
+            };
             let b = a + b_rel;
             let inner = &s[a + 1..b];
-            let drop = ["remaster", "explicit", "album version", "single version", "mono", "stereo", "digital"]
-                .iter()
-                .any(|k| inner.contains(k))
+            let drop = [
+                "remaster",
+                "explicit",
+                "album version",
+                "single version",
+                "mono",
+                "stereo",
+                "digital",
+            ]
+            .iter()
+            .any(|k| inner.contains(k))
                 || (inner.trim().len() == 4 && inner.trim().chars().all(|c| c.is_ascii_digit()));
             if drop {
                 s.replace_range(a..=b, " ");
@@ -96,7 +108,9 @@ pub fn normalize_filename(path: &str) -> String {
         .unwrap_or_default();
     let mut s = stem.trim().to_string();
     // Tracknummer vorne: "01 ", "01. ", "01 - ", "1-02 "
-    let trimmed = s.trim_start_matches(|c: char| c.is_ascii_digit() || c == '-' || c == '.' || c == '_' || c == ' ');
+    let trimmed = s.trim_start_matches(|c: char| {
+        c.is_ascii_digit() || c == '-' || c == '.' || c == '_' || c == ' '
+    });
     if trimmed.len() >= 3 && trimmed.len() < s.len() {
         s = trimmed.to_string();
     }
@@ -117,7 +131,10 @@ pub fn normalize_filename(path: &str) -> String {
             }
         }
         if let Some(i) = t.rfind('_') {
-            if !t[i + 1..].is_empty() && t[i + 1..].len() <= 2 && t[i + 1..].chars().all(|c| c.is_ascii_digit()) {
+            if !t[i + 1..].is_empty()
+                && t[i + 1..].len() <= 2
+                && t[i + 1..].chars().all(|c| c.is_ascii_digit())
+            {
                 s = t[..i].to_string();
                 continue;
             }
@@ -140,7 +157,11 @@ pub fn fp_similarity(a: &[u32], b: &[u32]) -> f32 {
         if n < 40 {
             continue;
         }
-        let errors: u32 = aa[..n].iter().zip(&bb[..n]).map(|(x, y)| (x ^ y).count_ones()).sum();
+        let errors: u32 = aa[..n]
+            .iter()
+            .zip(&bb[..n])
+            .map(|(x, y)| (x ^ y).count_ones())
+            .sum();
         let sim = 1.0 - errors as f32 / (32.0 * n as f32);
         if sim > best {
             best = sim;
@@ -157,7 +178,10 @@ fn quality(t: &Track) -> (i64, i64, i64, i64) {
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
     let lossless = matches!(ext.as_str(), "flac" | "wav" | "aif" | "aiff") as i64;
-    let tags = [&t.title, &t.artist, &t.album, &t.genre, &t.year].iter().filter(|x| x.is_some()).count() as i64
+    let tags = [&t.title, &t.artist, &t.album, &t.genre, &t.year]
+        .iter()
+        .filter(|x| x.is_some())
+        .count() as i64
         + t.has_cover as i64;
     (lossless, t.bitrate.unwrap_or(0) as i64, tags, t.size)
 }
@@ -169,7 +193,13 @@ pub fn pair(a: i64, b: i64) -> (i64, i64) {
     (a.min(b), a.max(b))
 }
 
-pub fn find(tracks: &[Track], fps: &HashMap<i64, Vec<u32>>, modes: Modes, ignored: &Ignored, progress: crate::Progress) -> Vec<DupGroup> {
+pub fn find(
+    tracks: &[Track],
+    fps: &HashMap<i64, Vec<u32>>,
+    modes: Modes,
+    ignored: &Ignored,
+    progress: crate::Progress,
+) -> Vec<DupGroup> {
     find_scoped(tracks, fps, modes, ignored, &|_, _| true, progress)
 }
 
@@ -187,7 +217,8 @@ pub fn find_scoped(
     let mut uf = Uf::new(n);
     let mut reasons: HashMap<(usize, usize), BTreeSet<&'static str>> = HashMap::new();
     let mut audio_sim: HashMap<(usize, usize), f32> = HashMap::new();
-    let is_ignored = |a: usize, b: usize| !scope(a, b) || ignored.contains(&pair(tracks[a].id, tracks[b].id));
+    let is_ignored =
+        |a: usize, b: usize| !scope(a, b) || ignored.contains(&pair(tracks[a].id, tracks[b].id));
     let mut add = |uf: &mut Uf, a: usize, b: usize, why: &'static str| {
         if is_ignored(a, b) {
             return;
@@ -195,13 +226,17 @@ pub fn find_scoped(
         uf.union(a, b);
         reasons.entry((a.min(b), a.max(b))).or_default().insert(why);
     };
-    let dur_close = |a: &Track, b: &Track, tol: f64| a.duration <= 0.0 || b.duration <= 0.0 || (a.duration - b.duration).abs() <= tol;
+    let dur_close = |a: &Track, b: &Track, tol: f64| {
+        a.duration <= 0.0 || b.duration <= 0.0 || (a.duration - b.duration).abs() <= tol
+    };
 
     if modes.metadata {
         progress(0, 3, "Metadaten vergleichen …");
         let mut by_key: HashMap<String, Vec<usize>> = HashMap::new();
         for (i, t) in tracks.iter().enumerate() {
-            let (Some(ar), Some(ti)) = (&t.artist, &t.title) else { continue };
+            let (Some(ar), Some(ti)) = (&t.artist, &t.title) else {
+                continue;
+            };
             let (ar, ti) = (normalize_text(ar), normalize_text(ti));
             if ar.is_empty() || ti.is_empty() {
                 continue;
@@ -242,8 +277,15 @@ pub fn find_scoped(
 
     if modes.audio {
         progress(2, 3, "Audio-Fingerabdrücke vergleichen …");
-        let mut idx: Vec<usize> = (0..n).filter(|&i| fps.get(&tracks[i].id).is_some_and(|f| f.len() >= 40)).collect();
-        idx.sort_by(|&a, &b| tracks[a].duration.partial_cmp(&tracks[b].duration).unwrap_or(std::cmp::Ordering::Equal));
+        let mut idx: Vec<usize> = (0..n)
+            .filter(|&i| fps.get(&tracks[i].id).is_some_and(|f| f.len() >= 40))
+            .collect();
+        idx.sort_by(|&a, &b| {
+            tracks[a]
+                .duration
+                .partial_cmp(&tracks[b].duration)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         let pairs: Vec<(usize, usize, f32)> = (0..idx.len())
             .into_par_iter()
             .flat_map_iter(|x| {
@@ -297,7 +339,11 @@ pub fn find_scoped(
                     }
                 }
             }
-            let keep = g.iter().max_by_key(|&&i| quality(&tracks[i])).map(|&i| tracks[i].id).unwrap_or(0);
+            let keep = g
+                .iter()
+                .max_by_key(|&&i| quality(&tracks[i]))
+                .map(|&i| tracks[i].id)
+                .unwrap_or(0);
             DupGroup {
                 track_ids: g.iter().map(|&i| tracks[i].id).collect(),
                 reasons: rs.into_iter().map(String::from).collect(),
@@ -322,20 +368,46 @@ pub struct DupHit {
 
 /// Haben die `src`-Titel schon Gegenstücke in `cand`? Verglichen wird nur Quelle ↔ Ziel
 /// (Metadaten, Dateiname, Audio). IDs in `cand` dürfen nicht mit `src` kollidieren.
-pub fn check_against(src: &[Track], cand: &[Track], fps: &HashMap<i64, Vec<u32>>, ignored: &Ignored) -> Vec<DupHit> {
+pub fn check_against(
+    src: &[Track],
+    cand: &[Track],
+    fps: &HashMap<i64, Vec<u32>>,
+    ignored: &Ignored,
+) -> Vec<DupHit> {
     let ns = src.len();
     let all: Vec<Track> = src.iter().chain(cand.iter()).cloned().collect();
-    let modes = Modes { metadata: true, filename: true, audio: true };
-    let groups = find_scoped(&all, fps, modes, ignored, &|a, b| (a < ns) != (b < ns), &|_, _, _| {});
+    let modes = Modes {
+        metadata: true,
+        filename: true,
+        audio: true,
+    };
+    let groups = find_scoped(
+        &all,
+        fps,
+        modes,
+        ignored,
+        &|a, b| (a < ns) != (b < ns),
+        &|_, _, _| {},
+    );
     let src_ids: std::collections::HashSet<i64> = src.iter().map(|t| t.id).collect();
     let mut out = Vec::new();
     for g in groups {
-        let matches: Vec<i64> = g.track_ids.iter().copied().filter(|id| !src_ids.contains(id)).collect();
+        let matches: Vec<i64> = g
+            .track_ids
+            .iter()
+            .copied()
+            .filter(|id| !src_ids.contains(id))
+            .collect();
         if matches.is_empty() {
             continue;
         }
         for id in g.track_ids.iter().filter(|id| src_ids.contains(id)) {
-            out.push(DupHit { track_id: *id, matches: matches.clone(), reasons: g.reasons.clone(), audio_similarity: g.audio_similarity });
+            out.push(DupHit {
+                track_id: *id,
+                matches: matches.clone(),
+                reasons: g.reasons.clone(),
+                audio_similarity: g.audio_similarity,
+            });
         }
     }
     out
@@ -364,8 +436,15 @@ mod tests {
             duration: 200.0,
             ..Default::default()
         };
-        let src = vec![mk(1, "/a/Band - Lied.mp3", "Band", "Lied"), mk(2, "/a/Band - Lied (2).mp3", "Band", "Lied"), mk(3, "/a/x.mp3", "Andere", "Sache")];
-        let cand = vec![mk(10, "/b/Band - Lied.flac", "Band", "Lied"), mk(11, "/b/y.mp3", "Wer", "Was")];
+        let src = vec![
+            mk(1, "/a/Band - Lied.mp3", "Band", "Lied"),
+            mk(2, "/a/Band - Lied (2).mp3", "Band", "Lied"),
+            mk(3, "/a/x.mp3", "Andere", "Sache"),
+        ];
+        let cand = vec![
+            mk(10, "/b/Band - Lied.flac", "Band", "Lied"),
+            mk(11, "/b/y.mp3", "Wer", "Was"),
+        ];
         let hits = check_against(&src, &cand, &HashMap::new(), &Ignored::default());
         let mut ids: Vec<i64> = hits.iter().map(|h| h.track_id).collect();
         ids.sort();

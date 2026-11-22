@@ -28,11 +28,13 @@ pub struct TagData {
 }
 
 fn clean(s: Option<std::borrow::Cow<'_, str>>) -> Option<String> {
-    s.map(|v| v.trim().trim_matches('\0').to_string()).filter(|v| !v.is_empty())
+    s.map(|v| v.trim().trim_matches('\0').to_string())
+        .filter(|v| !v.is_empty())
 }
 
 pub fn read(path: &Path) -> Result<TagData> {
-    let tf = lofty::read_from_path(path).with_context(|| format!("Tags lesen: {}", path.display()))?;
+    let tf =
+        lofty::read_from_path(path).with_context(|| format!("Tags lesen: {}", path.display()))?;
     let p = tf.properties();
     let mut d = TagData {
         duration: p.duration().as_secs_f64(),
@@ -48,7 +50,10 @@ pub fn read(path: &Path) -> Result<TagData> {
         d.album = clean(t.album());
         d.genre = clean(t.genre());
         d.comment = clean(t.comment());
-        d.album_artist = t.get_string(ItemKey::AlbumArtist).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        d.album_artist = t
+            .get_string(ItemKey::AlbumArtist)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         d.year = t
             .get_string(ItemKey::RecordingDate)
             .or_else(|| t.get_string(ItemKey::Year))
@@ -62,7 +67,10 @@ pub fn read(path: &Path) -> Result<TagData> {
             .or_else(|| t.get_string(ItemKey::IntegerBpm))
             .and_then(|s| s.trim().replace(',', ".").parse::<f64>().ok())
             .filter(|b| *b > 0.0);
-        d.key = t.get_string(ItemKey::InitialKey).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        d.key = t
+            .get_string(ItemKey::InitialKey)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         d.has_cover = !t.pictures().is_empty();
     }
     // Andere Tags (z. B. ID3v1 neben ID3v2) können ein Cover tragen
@@ -92,8 +100,17 @@ pub struct TagUpdate {
 impl TagUpdate {
     pub fn is_empty(&self) -> bool {
         [
-            &self.title, &self.artist, &self.album, &self.album_artist, &self.genre, &self.year,
-            &self.track_no, &self.disc_no, &self.comment, &self.bpm, &self.key,
+            &self.title,
+            &self.artist,
+            &self.album,
+            &self.album_artist,
+            &self.genre,
+            &self.year,
+            &self.track_no,
+            &self.disc_no,
+            &self.comment,
+            &self.bpm,
+            &self.key,
         ]
         .iter()
         .all(|f| f.is_none())
@@ -111,7 +128,8 @@ fn set(tag: &mut Tag, key: ItemKey, v: &Option<String>) {
 }
 
 fn with_tag<F: FnOnce(&mut Tag)>(path: &Path, f: F) -> Result<()> {
-    let mut tf = lofty::read_from_path(path).with_context(|| format!("Datei lesen: {}", path.display()))?;
+    let mut tf =
+        lofty::read_from_path(path).with_context(|| format!("Datei lesen: {}", path.display()))?;
     let tt = tf.primary_tag_type();
     if tf.tag(tt).is_none() {
         tf.insert_tag(Tag::new(tt));
@@ -165,9 +183,15 @@ pub fn cover(path: &Path) -> Result<Option<(String, Vec<u8>)>> {
     let tf = lofty::read_from_path(path)?;
     for tag in tf.primary_tag().into_iter().chain(tf.tags().iter()) {
         let pics = tag.pictures();
-        let pic = pics.iter().find(|p| p.pic_type() == PictureType::CoverFront).or(pics.first());
+        let pic = pics
+            .iter()
+            .find(|p| p.pic_type() == PictureType::CoverFront)
+            .or(pics.first());
         if let Some(p) = pic {
-            let mime = p.mime_type().map(|m| m.as_str().to_string()).unwrap_or_else(|| sniff_mime(p.data()).to_string());
+            let mime = p
+                .mime_type()
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_else(|| sniff_mime(p.data()).to_string());
             return Ok(Some((mime, p.data().to_vec())));
         }
     }
@@ -194,7 +218,12 @@ pub fn set_cover(path: &Path, data: Vec<u8>) -> Result<()> {
     };
     with_tag(path, move |tag| {
         tag.remove_picture_type(PictureType::CoverFront);
-        tag.push_picture(Picture::unchecked(data).pic_type(PictureType::CoverFront).mime_type(mime).build());
+        tag.push_picture(
+            Picture::unchecked(data)
+                .pic_type(PictureType::CoverFront)
+                .mime_type(mime)
+                .build(),
+        );
     })
 }
 

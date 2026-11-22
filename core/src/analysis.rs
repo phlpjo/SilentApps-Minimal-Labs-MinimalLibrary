@@ -105,7 +105,12 @@ impl Bands {
             return;
         }
         let n = self.n as f64;
-        self.out.push([self.peak, (self.lo / n).sqrt() as f32, (self.mid / n).sqrt() as f32, (self.hi / n).sqrt() as f32]);
+        self.out.push([
+            self.peak,
+            (self.lo / n).sqrt() as f32,
+            (self.mid / n).sqrt() as f32,
+            (self.hi / n).sqrt() as f32,
+        ]);
         self.peak = 0.0;
         self.lo = 0.0;
         self.mid = 0.0;
@@ -117,7 +122,11 @@ impl Bands {
     fn finish(mut self) -> Vec<u8> {
         self.flush();
         let pk = self.out.iter().map(|f| f[0]).fold(1e-6f32, f32::max);
-        let bm = self.out.iter().map(|f| f[1].max(f[2]).max(f[3])).fold(1e-6f32, f32::max);
+        let bm = self
+            .out
+            .iter()
+            .map(|f| f[1].max(f[2]).max(f[3]))
+            .fold(1e-6f32, f32::max);
         let mut v = Vec::with_capacity(self.out.len() * 4);
         for f in &self.out {
             v.push(((f[0] / pk).min(1.0) * 255.0).round() as u8);
@@ -155,9 +164,23 @@ struct Accum {
 impl Accum {
     fn new() -> Self {
         Accum {
-            rate: 0, bands: None, want_pioneer: false, decim: 1, block: 441, b_max: 0.0, b_sq: 0.0, b_n: 0,
-            blocks_max: Vec::new(), blocks_rms: Vec::new(), d_acc: 0.0, d_n: 0, low: Vec::new(),
-            fp: None, fp_buf: Vec::with_capacity(8192), fp_frames: 0, frames: 0,
+            rate: 0,
+            bands: None,
+            want_pioneer: false,
+            decim: 1,
+            block: 441,
+            b_max: 0.0,
+            b_sq: 0.0,
+            b_n: 0,
+            blocks_max: Vec::new(),
+            blocks_rms: Vec::new(),
+            d_acc: 0.0,
+            d_n: 0,
+            low: Vec::new(),
+            fp: None,
+            fp_buf: Vec::with_capacity(8192),
+            fp_frames: 0,
+            frames: 0,
         }
     }
 
@@ -193,7 +216,8 @@ impl Accum {
             self.b_n += 1;
             if self.b_n == self.block {
                 self.blocks_max.push(self.b_max);
-                self.blocks_rms.push((self.b_sq / self.b_n as f64).sqrt() as f32);
+                self.blocks_rms
+                    .push((self.b_sq / self.b_n as f64).sqrt() as f32);
                 self.b_max = 0.0;
                 self.b_sq = 0.0;
                 self.b_n = 0;
@@ -226,9 +250,16 @@ fn decode(path: &Path, acc: &mut Accum, cancel: &AtomicBool) -> Result<()> {
         hint.with_extension(ext);
     }
     let mut format = symphonia::default::get_probe()
-        .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
+        .probe(
+            &hint,
+            mss,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
         .map_err(|e| anyhow!("Format nicht unterstützt: {e}"))?;
-    let track = format.default_track(TrackType::Audio).ok_or_else(|| anyhow!("Keine Audiospur"))?;
+    let track = format
+        .default_track(TrackType::Audio)
+        .ok_or_else(|| anyhow!("Keine Audiospur"))?;
     let params = track
         .codec_params
         .as_ref()
@@ -288,7 +319,8 @@ pub fn analyze_with(path: &Path, cancel: &AtomicBool, pioneer: bool) -> Result<A
     decode(path, &mut acc, cancel)?;
     if acc.b_n > 0 {
         acc.blocks_max.push(acc.b_max);
-        acc.blocks_rms.push((acc.b_sq / acc.b_n as f64).sqrt() as f32);
+        acc.blocks_rms
+            .push((acc.b_sq / acc.b_n as f64).sqrt() as f32);
     }
     let fingerprint = match acc.fp.as_mut() {
         Some(fp) => {
@@ -307,7 +339,10 @@ pub fn analyze_with(path: &Path, cancel: &AtomicBool, pioneer: bool) -> Result<A
             let frames = b.finish();
             let grid = detect_grid(&acc.low, low_rate, bpm);
             Some(PioneerData {
-                bpm: grid.map(|g| g.0).or(bpm.map(|b| (b * 100.0).round() / 100.0)).unwrap_or(0.0),
+                bpm: grid
+                    .map(|g| g.0)
+                    .or(bpm.map(|b| (b * 100.0).round() / 100.0))
+                    .unwrap_or(0.0),
                 downbeat_ms: grid.map(|g| g.1).unwrap_or(0.0),
                 frames,
             })
@@ -465,7 +500,13 @@ pub fn detect_grid(x: &[f32], rate: f32, bpm_hint: Option<f64>) -> Option<(f64, 
     // Onset: Anstieg der log-Energie, gesamt und Bass (Bass für den Taktanfang)
     let a_lp = 1.0 - (-2.0 * std::f32::consts::PI * 150.0 / rate).exp();
     let mut lp = 0.0f32;
-    let bass: Vec<f32> = x.iter().map(|&v| { lp += a_lp * (v - lp); lp }).collect();
+    let bass: Vec<f32> = x
+        .iter()
+        .map(|&v| {
+            lp += a_lp * (v - lp);
+            lp
+        })
+        .collect();
     let env = |sig: &[f32]| -> Vec<f32> {
         let mut e = Vec::with_capacity(frames);
         for f in 0..frames {
@@ -527,7 +568,11 @@ pub fn detect_grid(x: &[f32], rate: f32, bpm_hint: Option<f64>) -> Option<(f64, 
     // Bin-Mitte, mit Nachbarn verfeinert (Parabel)
     let (l, m, r) = (h[(bin + BINS - 1) % BINS], h[bin], h[(bin + 1) % BINS]);
     let den = l - 2.0 * m + r;
-    let off = if den.abs() > 1e-12 { (0.5 * (l - r) / den).clamp(-0.5, 0.5) } else { 0.0 };
+    let off = if den.abs() > 1e-12 {
+        (0.5 * (l - r) / den).clamp(-0.5, 0.5)
+    } else {
+        0.0
+    };
     let phase = ((bin as f64 + 0.5 + off) / BINS as f64).rem_euclid(1.0);
     let first_frame = phase * period;
     // Taktanfang: welcher von 4 Schlägen hat die meiste Bassenergie?
@@ -542,7 +587,9 @@ pub fn detect_grid(x: &[f32], rate: f32, bpm_hint: Option<f64>) -> Option<(f64, 
         bar[k % 4] += (ob[i.saturating_sub(1)] + ob[i] + ob[i + 1]) as f64;
         k += 1;
     }
-    let down = (0..4).max_by(|a, b| bar[*a].partial_cmp(&bar[*b]).unwrap()).unwrap_or(0);
+    let down = (0..4)
+        .max_by(|a, b| bar[*a].partial_cmp(&bar[*b]).unwrap())
+        .unwrap_or(0);
     let beat_s = 60.0 / bpm;
     let mut t = t_of(first_frame + down as f64 * period);
     // frühester Downbeat ≥ 0 (ganze Takte zurück)
@@ -554,9 +601,15 @@ pub fn detect_grid(x: &[f32], rate: f32, bpm_hint: Option<f64>) -> Option<(f64, 
 
 // ---------- Tonart ----------
 
-const NOTES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-const MAJOR: [f32; 12] = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
-const MINOR: [f32; 12] = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+const NOTES: [&str; 12] = [
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+];
+const MAJOR: [f32; 12] = [
+    6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88,
+];
+const MINOR: [f32; 12] = [
+    6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17,
+];
 
 fn pearson(a: &[f32; 12], b: &[f32; 12]) -> f32 {
     let ma = a.iter().sum::<f32>() / 12.0;
@@ -646,7 +699,10 @@ pub fn detect_key(x: &[f32], rate: f32) -> Option<String> {
 // ---------- Bibliothek analysieren ----------
 
 pub fn store(conn: &Connection, id: i64, r: &Result<AnalysisResult>) -> Result<()> {
-    if let Ok(AnalysisResult { pioneer: Some(p), .. }) = r {
+    if let Ok(AnalysisResult {
+        pioneer: Some(p), ..
+    }) = r
+    {
         // Ein von Hand korrigiertes Grid bleibt erhalten, nur die Wellenform wird erneuert
         conn.execute(
             "INSERT INTO pioneer_analysis(track_id, bpm, downbeat_ms, grid_edited, frames, updated) VALUES(?1, ?2, ?3, 0, ?4, ?5)
@@ -702,14 +758,17 @@ pub fn analyze_pending_with(
         match ids {
             Some(ids) => {
                 let mut st = c.prepare("SELECT id, path FROM tracks WHERE id = ?1")?;
-                ids.iter().filter_map(|id| st.query_row([id], |r| Ok((r.get(0)?, r.get(1)?))).ok()).collect()
+                ids.iter()
+                    .filter_map(|id| st.query_row([id], |r| Ok((r.get(0)?, r.get(1)?))).ok())
+                    .collect()
             }
             None => {
                 let mut st = c.prepare(
                     "SELECT id, path FROM tracks WHERE analyzed = 0
                        OR (?1 AND analysis_error IS NULL AND id NOT IN (SELECT track_id FROM pioneer_analysis)) ORDER BY id",
                 )?;
-                st.query_map([pioneer], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?
+                st.query_map([pioneer], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect::<rusqlite::Result<_>>()?
             }
         }
     };
@@ -718,7 +777,9 @@ pub fn analyze_pending_with(
         return Ok(0);
     }
     let done = AtomicUsize::new(0);
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(threads.max(1)).build()?;
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads.max(1))
+        .build()?;
     pool.install(|| {
         jobs.par_iter().for_each(|(id, path)| {
             if cancel.load(Ordering::Relaxed) {
@@ -733,7 +794,10 @@ pub fn analyze_pending_with(
             }
             on_done(*id);
             let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-            let name = Path::new(path).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let name = Path::new(path)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
             progress(n, total, &name);
         });
     });
@@ -763,7 +827,11 @@ mod grid_tests {
                 }
                 let tt = j as f32 / rate;
                 let env = (-tt * 40.0).exp();
-                let v = if down { (2.0 * std::f32::consts::PI * 55.0 * tt).sin() * 0.9 } else { (2.0 * std::f32::consts::PI * 1500.0 * tt).sin() * 0.35 };
+                let v = if down {
+                    (2.0 * std::f32::consts::PI * 55.0 * tt).sin() * 0.9
+                } else {
+                    (2.0 * std::f32::consts::PI * 1500.0 * tt).sin() * 0.35
+                };
                 x[i0 + j] += v * env;
             }
             k += 1;

@@ -31,23 +31,46 @@ fn field(t: &Track, name: &str) -> String {
             .clone()
             .or_else(|| t.artist.clone())
             .unwrap_or_else(|| unknown_artist.into()),
-        "album" => t.album.clone().unwrap_or_else(|| "Unbekanntes Album".into()),
+        "album" => t
+            .album
+            .clone()
+            .unwrap_or_else(|| "Unbekanntes Album".into()),
         "title" => t.title.clone().unwrap_or_else(|| {
-            Path::new(&t.path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
+            Path::new(&t.path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default()
         }),
-        "genre" => t.genre.clone().unwrap_or_else(|| "Unbekanntes Genre".into()),
-        "year" => t.year.as_deref().map(|y| y.chars().take(4).collect()).unwrap_or_else(|| "0000".into()),
+        "genre" => t
+            .genre
+            .clone()
+            .unwrap_or_else(|| "Unbekanntes Genre".into()),
+        "year" => t
+            .year
+            .as_deref()
+            .map(|y| y.chars().take(4).collect())
+            .unwrap_or_else(|| "0000".into()),
         "track" => t.track_no.map(|n| format!("{n:02}")).unwrap_or_default(),
-        "disc" => t.disc_no.map(|n| n.to_string()).unwrap_or_else(|| "1".into()),
+        "disc" => t
+            .disc_no
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "1".into()),
         // nur wenn Disc > 1 vorhanden: "2-"
         "disc-" => match t.disc_no {
             Some(n) if n > 1 => format!("{n}-"),
             _ => String::new(),
         },
-        "bpm" => t.bpm.map(|b| format!("{}", b.round() as i64)).unwrap_or_default(),
+        "bpm" => t
+            .bpm
+            .map(|b| format!("{}", b.round() as i64))
+            .unwrap_or_default(),
         "key" => t.key.clone().unwrap_or_default(),
         "initial" => {
-            let a = t.album_artist.clone().or_else(|| t.artist.clone()).unwrap_or_else(|| "#".into());
+            let a = t
+                .album_artist
+                .clone()
+                .or_else(|| t.artist.clone())
+                .unwrap_or_else(|| "#".into());
             let a = a.strip_prefix("The ").unwrap_or(&a).to_string();
             a.chars()
                 .next()
@@ -103,14 +126,29 @@ pub fn plan(tracks: &[Track], target_root: &Path, pattern: &str) -> Vec<PlannedM
     let mut out = Vec::new();
     for t in tracks {
         let src = Path::new(&t.path);
-        let ext = src.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let ext = src
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
         let rel = render(pattern, t);
         let mut dst = target_root.join(rel);
-        let fname = format!("{}.{}", dst.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(), ext);
+        let fname = format!(
+            "{}.{}",
+            dst.file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            ext
+        );
         dst.set_file_name(fname);
         if paths::same_path(src, &dst) {
             taken.insert(key(&dst));
-            out.push(PlannedMove { track_id: t.id, from: t.path.clone(), to: t.path.clone(), renamed: false, unchanged: true });
+            out.push(PlannedMove {
+                track_id: t.id,
+                from: t.path.clone(),
+                to: t.path.clone(),
+                renamed: false,
+                unchanged: true,
+            });
             continue;
         }
         let is_taken = |p: &Path| {
@@ -133,22 +171,38 @@ pub fn plan(tracks: &[Track], target_root: &Path, pattern: &str) -> Vec<PlannedM
 
 /// Plan für manuelles Verschieben: Dateien behalten ihren Namen und landen direkt in `dir`.
 /// `new_names` (optional, gleiche Reihenfolge) benennt dabei um (ohne Endung).
-pub fn plan_to_folder(tracks: &[Track], dir: &Path, new_names: Option<&[String]>) -> Vec<PlannedMove> {
+pub fn plan_to_folder(
+    tracks: &[Track],
+    dir: &Path,
+    new_names: Option<&[String]>,
+) -> Vec<PlannedMove> {
     let key = |p: &Path| p.to_string_lossy().to_lowercase();
     let sources: HashSet<String> = tracks.iter().map(|t| t.path.to_lowercase()).collect();
     let mut taken: HashSet<String> = HashSet::new();
     let mut out = Vec::new();
     for (i, t) in tracks.iter().enumerate() {
         let src = Path::new(&t.path);
-        let ext = src.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+        let ext = src
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy()))
+            .unwrap_or_default();
         let stem = match new_names.and_then(|n| n.get(i)) {
             Some(n) if !n.trim().is_empty() => sanitize(n.trim()),
-            _ => src.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+            _ => src
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default(),
         };
         let dst = dir.join(format!("{stem}{ext}"));
         if paths::same_path(src, &dst) && src.to_string_lossy() == dst.to_string_lossy() {
             taken.insert(key(&dst));
-            out.push(PlannedMove { track_id: t.id, from: t.path.clone(), to: t.path.clone(), renamed: false, unchanged: true });
+            out.push(PlannedMove {
+                track_id: t.id,
+                from: t.path.clone(),
+                to: t.path.clone(),
+                renamed: false,
+                unchanged: true,
+            });
             continue;
         }
         let is_taken = |p: &Path| {
@@ -196,7 +250,12 @@ pub fn apply(
         )?;
         c.last_insert_rowid()
     };
-    let mut report = ApplyReport { batch_id, moved: 0, errors: vec![], new_ids: vec![] };
+    let mut report = ApplyReport {
+        batch_id,
+        moved: 0,
+        errors: vec![],
+        new_ids: vec![],
+    };
     let todo: Vec<&PlannedMove> = plan.iter().filter(|m| !m.unchanged).collect();
     // Zwei-Phasen bei Kollisionen (A→B und B→A): erst auf temporäre Namen, wenn Ziel noch belegt ist
     for (i, m) in todo.iter().enumerate() {
@@ -211,7 +270,10 @@ pub fn apply(
             continue;
         }
         let res = if copy {
-            to.parent().map(std::fs::create_dir_all).transpose().and_then(|_| std::fs::copy(from, to).map(|_| ()))
+            to.parent()
+                .map(std::fs::create_dir_all)
+                .transpose()
+                .and_then(|_| std::fs::copy(from, to).map(|_| ()))
         } else if paths::same_path(from, to) {
             // nur Groß-/Kleinschreibung → über Zwischennamen
             let tmp = to.with_extension("mltmp");
@@ -229,7 +291,10 @@ pub fn apply(
                     report.new_ids.push(id);
                     id
                 } else {
-                    c.execute("UPDATE tracks SET path = ?2 WHERE id = ?1", params![m.track_id, m.to])?;
+                    c.execute(
+                        "UPDATE tracks SET path = ?2 WHERE id = ?1",
+                        params![m.track_id, m.to],
+                    )?;
                     m.track_id
                 };
                 c.execute(
@@ -248,7 +313,10 @@ pub fn apply(
     }
     {
         let c = conn.lock().unwrap();
-        c.execute("UPDATE move_batches SET count = ?2 WHERE id = ?1", params![batch_id, report.moved as i64])?;
+        c.execute(
+            "UPDATE move_batches SET count = ?2 WHERE id = ?1",
+            params![batch_id, report.moved as i64],
+        )?;
         if report.moved == 0 {
             c.execute("DELETE FROM move_batches WHERE id = ?1", [batch_id])?;
         }
@@ -272,24 +340,48 @@ pub struct Batch {
 pub fn batches(conn: &Connection) -> Result<Vec<Batch>> {
     let mut st = conn.prepare("SELECT id, created, description, count, undone, kind FROM move_batches ORDER BY id DESC LIMIT 100")?;
     let rows = st.query_map([], |r| {
-        Ok(Batch { id: r.get(0)?, created: r.get(1)?, description: r.get(2)?, count: r.get(3)?, undone: r.get::<_, i64>(4)? != 0, kind: r.get(5)? })
+        Ok(Batch {
+            id: r.get(0)?,
+            created: r.get(1)?,
+            description: r.get(2)?,
+            count: r.get(3)?,
+            undone: r.get::<_, i64>(4)? != 0,
+            kind: r.get(5)?,
+        })
     })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 /// Macht einen Vorgang rückgängig (in umgekehrter Reihenfolge).
-pub fn undo(conn: &std::sync::Mutex<Connection>, batch_id: i64, stop_dirs: &[PathBuf]) -> Result<ApplyReport> {
+pub fn undo(
+    conn: &std::sync::Mutex<Connection>,
+    batch_id: i64,
+    stop_dirs: &[PathBuf],
+) -> Result<ApplyReport> {
     let moves: Vec<(Option<i64>, String, String, bool)> = {
         let c = conn.lock().unwrap();
-        let undone: i64 = c.query_row("SELECT undone FROM move_batches WHERE id = ?1", [batch_id], |r| r.get(0))?;
+        let undone: i64 = c.query_row(
+            "SELECT undone FROM move_batches WHERE id = ?1",
+            [batch_id],
+            |r| r.get(0),
+        )?;
         if undone != 0 {
             return Err(anyhow!("Schon rückgängig gemacht"));
         }
-        let mut st = c.prepare("SELECT track_id, src, dst, copied FROM moves WHERE batch_id = ?1 ORDER BY rowid DESC")?;
-        st.query_map([batch_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? != 0)))?
-            .collect::<rusqlite::Result<_>>()?
+        let mut st = c.prepare(
+            "SELECT track_id, src, dst, copied FROM moves WHERE batch_id = ?1 ORDER BY rowid DESC",
+        )?;
+        st.query_map([batch_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? != 0))
+        })?
+        .collect::<rusqlite::Result<_>>()?
     };
-    let mut report = ApplyReport { batch_id, moved: 0, errors: vec![], new_ids: vec![] };
+    let mut report = ApplyReport {
+        batch_id,
+        moved: 0,
+        errors: vec![],
+        new_ids: vec![],
+    };
     for (tid, src, dst, copied) in moves {
         let (s, d) = (Path::new(&src), Path::new(&dst));
         let res = if copied {
@@ -305,10 +397,16 @@ pub fn undo(conn: &std::sync::Mutex<Connection>, batch_id: i64, stop_dirs: &[Pat
                     let c = conn.lock().unwrap();
                     if copied {
                         // Kopie wieder weg → ihren Titel entfernen (nur wenn er wirklich die Kopie ist)
-                        c.execute("DELETE FROM tracks WHERE id = ?1 AND path = ?2", params![id, dst])?;
+                        c.execute(
+                            "DELETE FROM tracks WHERE id = ?1 AND path = ?2",
+                            params![id, dst],
+                        )?;
                         c.execute("DELETE FROM playlist_items WHERE track_id = ?1", [id])?;
                     } else {
-                        c.execute("UPDATE tracks SET path = ?2 WHERE id = ?1", params![id, src])?;
+                        c.execute(
+                            "UPDATE tracks SET path = ?2 WHERE id = ?1",
+                            params![id, src],
+                        )?;
                     }
                 }
                 if let Some(p) = d.parent() {
@@ -319,7 +417,10 @@ pub fn undo(conn: &std::sync::Mutex<Connection>, batch_id: i64, stop_dirs: &[Pat
             Err(e) => report.errors.push(format!("{dst}: {e}")),
         }
     }
-    conn.lock().unwrap().execute("UPDATE move_batches SET undone = 1 WHERE id = ?1", [batch_id])?;
+    conn.lock().unwrap().execute(
+        "UPDATE move_batches SET undone = 1 WHERE id = ?1",
+        [batch_id],
+    )?;
     Ok(report)
 }
 
@@ -336,12 +437,21 @@ mod tests {
             track_no: Some(1),
             ..Default::default()
         };
-        assert_eq!(render(DEFAULT_PATTERN, &t), PathBuf::from("AC_DC/Back in Black/01 - Hells Bells"));
+        assert_eq!(
+            render(DEFAULT_PATTERN, &t),
+            PathBuf::from("AC_DC/Back in Black/01 - Hells Bells")
+        );
         assert_eq!(render("{initial}/{artist}", &t), PathBuf::from("A/AC_DC"));
-        assert_eq!(filename_from_pattern("{track} - {artist} - {title}", &t), "01 - AC_DC - Hells Bells");
+        assert_eq!(
+            filename_from_pattern("{track} - {artist} - {title}", &t),
+            "01 - AC_DC - Hells Bells"
+        );
         let mut u = t.clone();
         u.track_no = None;
-        assert_eq!(filename_from_pattern("{track} - {title}", &u), "Hells Bells");
+        assert_eq!(
+            filename_from_pattern("{track} - {title}", &u),
+            "Hells Bells"
+        );
     }
 
     #[test]
@@ -352,7 +462,13 @@ mod tests {
         std::fs::create_dir_all(base.join("b")).unwrap();
         std::fs::write(base.join("a/x.mp3"), b"abc").unwrap();
         let conn = std::sync::Mutex::new(crate::db::open(&base.join("t.db")).unwrap());
-        conn.lock().unwrap().execute("INSERT INTO tracks(path, size, title) VALUES(?1, 3, 'X')", [base.join("a/x.mp3").to_string_lossy()]).unwrap();
+        conn.lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO tracks(path, size, title) VALUES(?1, 3, 'X')",
+                [base.join("a/x.mp3").to_string_lossy()],
+            )
+            .unwrap();
         let tracks = crate::db::all_tracks(&conn.lock().unwrap()).unwrap();
         let plan = plan_to_folder(&tracks, &base.join("b"), None);
         let r = apply(&conn, &plan, true, "Kopie", &[], &|_, _, _| {}).unwrap();
@@ -363,7 +479,10 @@ mod tests {
         assert!(all.iter().all(|t| t.title.as_deref() == Some("X")));
         undo(&conn, r.batch_id, &[]).unwrap();
         assert!(!base.join("b/x.mp3").exists());
-        assert_eq!(crate::db::all_tracks(&conn.lock().unwrap()).unwrap().len(), 1);
+        assert_eq!(
+            crate::db::all_tracks(&conn.lock().unwrap()).unwrap().len(),
+            1
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 }

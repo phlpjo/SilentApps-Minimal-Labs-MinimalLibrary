@@ -34,14 +34,21 @@ pub fn put(cache: Cache, key: &str, body: &[u8]) {
             "INSERT INTO web_cache(key, created, body) VALUES(?1, ?2, ?3) ON CONFLICT(key) DO UPDATE SET created = excluded.created, body = excluded.body",
             params![key, now(), body],
         );
-        let _ = c.execute("DELETE FROM web_cache WHERE created <= ?1", [now() - TTL_SECS]);
+        let _ = c.execute(
+            "DELETE FROM web_cache WHERE created <= ?1",
+            [now() - TTL_SECS],
+        );
     }
 }
 
 /// Abgelaufene Einträge löschen (beim Start und nach jeder Abfrage)
 pub fn purge(c: &Connection) -> usize {
     ensure(c);
-    c.execute("DELETE FROM web_cache WHERE created <= ?1", [now() - TTL_SECS]).unwrap_or(0)
+    c.execute(
+        "DELETE FROM web_cache WHERE created <= ?1",
+        [now() - TTL_SECS],
+    )
+    .unwrap_or(0)
 }
 
 pub fn clear(c: &Connection) -> usize {

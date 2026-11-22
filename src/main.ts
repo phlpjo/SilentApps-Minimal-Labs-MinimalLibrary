@@ -9,6 +9,7 @@ import { player } from "./player";
 import { store } from "./store";
 import { clear, contextMenu, fmtTime, h, sheet, toast } from "./ui";
 import { drawWave, waveElement } from "./waveform";
+import { dropTarget } from "./dnd";
 import { duplicatesView } from "./views/duplicates";
 import { libraryView } from "./views/library";
 import { foldersView } from "./views/folders";
@@ -84,23 +85,17 @@ function renderSide() {
   plList.replaceChildren(
     ...store.playlists.map((p) => {
       const it = navItem((p.rules ? "◇ " : "") + p.name, n === "playlist" && current?.arg?.[0] === p.id, () => nav("playlist", [p.id]), String(p.count));
-      if (!p.rules) {
-        it.addEventListener("dragover", (e) => {
-          if (e.dataTransfer?.types.includes("application/x-ml-ids")) {
-            e.preventDefault();
-            it.classList.add("drop");
-          }
-        });
-        it.addEventListener("dragleave", () => it.classList.remove("drop"));
-        it.addEventListener("drop", async (e) => {
-          e.preventDefault();
-          it.classList.remove("drop");
-          const ids: number[] = JSON.parse(e.dataTransfer!.getData("application/x-ml-ids") || "[]");
-          await api.playlistAddItems(p.id, ids);
+      // Titel auf die Playlist ziehen → hinzufügen (smarte Playlisten füllen sich selbst)
+      dropTarget(it, {
+        accepts: (pl) => pl.kind === "ids" && !p.rules,
+        drop: async (pl) => {
+          if (pl.kind !== "ids") return;
+          await api.playlistAddItems(p.id, pl.ids);
           await store.loadPlaylists();
-          toast(`${ids.length} Titel → ${p.name}`);
-        });
-      }
+          toast(`${pl.ids.length} Titel → ${p.name}`);
+          if (current?.name === "playlist" && current.arg?.[0] === p.id) nav("playlist", [p.id]);
+        },
+      });
       it.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         contextMenu(e.clientX, e.clientY, [

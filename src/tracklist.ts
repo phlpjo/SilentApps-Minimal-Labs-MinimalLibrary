@@ -4,6 +4,7 @@ import { store } from "./store";
 import { drawWave, waveElement } from "./waveform";
 import { camelot, fmtTime, h, keyLabel, keyOrder, ext, type MenuItem, contextMenu } from "./ui";
 import { renameFileDialog } from "./fileops";
+import { beginDrag, dropTarget } from "./dnd";
 
 export type SortKey = "pos" | "title" | "artist" | "album" | "genre" | "bpm" | "key" | "duration" | "added" | "year";
 
@@ -72,9 +73,16 @@ export class TrackList {
     const theme = () => this.renderRows(true);
     document.addEventListener("themechange", theme);
     this.unsub.push(() => document.removeEventListener("themechange", theme));
-    this.body.addEventListener("dragover", (e) => this.onDragOver(e));
-    this.body.addEventListener("dragleave", () => this.setDrop(-1));
-    this.body.addEventListener("drop", (e) => this.onDrop(e));
+    // Umsortieren in Playlisten (nur bei Sortierung nach "#")
+    dropTarget(this.body, {
+      accepts: (p) => p.kind === "ids" && !!this.opts.reorderable && this.sort === "pos" && !this.desc,
+      over: (_p, e) => {
+        const r = this.body.getBoundingClientRect();
+        this.setDrop(Math.max(0, Math.min(this.view.length, Math.round((e.clientY - r.top + this.body.scrollTop) / ROW_H))));
+      },
+      leave: () => this.setDrop(-1),
+      drop: (p) => p.kind === "ids" && this.dropAt(p.ids),
+    });
   }
 
   /** Spalten an die Breite anpassen (schmale Ansicht: Album/Genre ausblenden) */
@@ -202,22 +210,16 @@ export class TrackList {
         {
           class: "row" + (store.selection.has(id) ? " sel" : "") + (isCur ? " playing" : ""),
           style: { top: i * ROW_H + "px", gridTemplateColumns: tpl },
-          draggable: "true",
           title: t.path,
         },
         ...cells,
       );
-      row.addEventListener("mousedown", (e) => this.onRowDown(e, i));
+      row.addEventListener("pointerdown", (e) => this.onRowDown(e, i));
       row.addEventListener("dblclick", () => player.play(id, 0, this.view));
       row.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         if (!store.selection.has(id)) this.selectOnly(i);
         if (this.opts.menu) contextMenu(e.clientX, e.clientY, this.opts.menu(this.selectedIds()));
-      });
-      row.addEventListener("dragstart", (e) => {
-        if (!store.selection.has(id)) this.selectOnly(i);
-        e.dataTransfer!.setData("application/x-ml-ids", JSON.stringify(this.selectedIds()));
-        e.dataTransfer!.effectAllowed = "copyMove";
       });
       this.body.appendChild(row);
       this.rows.set(id, { row, canvas, idx: i });
@@ -243,10 +245,12 @@ export class TrackList {
     this.updateSel();
   }
 
-  private onRowDown(e: MouseEvent, i: number) {
+  private onRowDown(e: PointerEvent, i: number) {
     if (e.button === 2 && store.selection.has(this.view[i])) return;
+    if (e.button === 0) e.preventDefault(); // keine Textauswahl beim Ziehen
     this.body.focus({ preventScroll: true });
     const id = this.view[i];
+    let reduceOnClick = false;
     if (e.shiftKey && this.anchor >= 0) {
       if (!e.ctrlKey) store.selection.clear();
       const [a, b] = [Math.min(this.anchor, i), Math.max(this.anchor, i)];
@@ -260,18 +264,26 @@ export class TrackList {
       store.selection.add(id);
       this.anchor = i;
     } else {
-      // Klick in eine Mehrfachauswahl: beim Loslassen auf diesen reduzieren (Ziehen bleibt möglich)
-      const up = () => {
-        store.selection.clear();
-        store.selection.add(id);
-        this.anchor = i;
-        this.updateSel();
-      };
-      const row = this.rows.get(id)?.row;
-      row?.addEventListener("mouseup", up, { once: true });
-      row?.addEventListener("dragstart", () => row.removeEventListener("mouseup", up), { once: true });
+      // Klick in eine Mehrfachauswahl: erst beim Loslassen ohne Ziehen auf diesen reduzieren
+      reduceOnClick = true;
     }
     this.updateSel();
+    if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+    beginDrag(
+      e,
+      () => {
+        const ids = this.selectedIds();
+        return ids.length ? { kind: "ids", ids } : null;
+      },
+      (dragged) => {
+        if (!dragged && reduceOnClick) {
+          store.selection.clear();
+          store.selection.add(id);
+          this.anchor = i;
+          this.updateSel();
+        }
+      },
+    );
   }
 
   updateSel() {
@@ -323,20 +335,8 @@ export class TrackList {
     for (const [, r] of this.rows) r.row.classList.toggle("drop-before", r.idx === i);
   }
 
-  private onDragOver(e: DragEvent) {
-    if (!this.opts.reorderable || this.sort !== "pos" || this.desc) return;
-    if (!e.dataTransfer?.types.includes("application/x-ml-ids")) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const r = this.body.getBoundingClientRect();
-    const i = Math.max(0, Math.min(this.view.length, Math.round((e.clientY - r.top + this.body.scrollTop) / ROW_H)));
-    this.setDrop(i);
-  }
-
-  private onDrop(e: DragEvent) {
-    if (!this.opts.reorderable || this.dropIndex < 0) return;
-    e.preventDefault();
-    const moved: number[] = JSON.parse(e.dataTransfer!.getData("application/x-ml-ids") || "[]");
+  private dropAt(moved: number[]) {
+    if (this.dropIndex < 0) return;
     const at = this.dropIndex;
     this.setDrop(-1);
     const before = this.view.slice(0, at).filter((id) => !moved.includes(id));

@@ -16,12 +16,14 @@ export function syncReadyCount() {
   return targets.filter((t) => t.available).length;
 }
 
+/** Aufbau auf dem Gerät – dieselben drei Varianten wie beim Export */
 export const LAYOUTS: [SyncLayout, string, string][] = [
-  ["artist", "Interpret / Album / Titel", "Musik/Interpret/Album/01 - Titel.mp3"],
-  ["album", "Album / Titel", "Musik/Album/01 - Titel.mp3"],
-  ["flat", "Alle in einem Ordner", "Musik/Interpret - Titel.mp3"],
-  ["playlist", "Ein Ordner je Playlist", "Playlist/01 - Interpret - Titel.mp3 (+ Playlist-Datei im Ordner)"],
+  ["numbered", "Ein Ordner pro Playlist, nummeriert", "Ziel/Playlist/001 - Künstler - Titel.mp3 + Playlist.m3u8 – Reihenfolge bleibt auch ohne Playlist erhalten."],
+  ["flat", "Ein Ordner pro Playlist", "Ziel/Playlist/Künstler - Titel.mp3 + Playlist.m3u8"],
+  ["structured", "Gemeinsamer Musikordner", "Ziel/Musik/Künstler/Album/… und alle .m3u8 in Ziel – jede Datei nur einmal, auch wenn sie in mehreren Playlisten ist."],
 ];
+/** Gespeicherten Wert lesen (alte Ziele: gemeinsamer Musikordner) */
+const layoutOf = (t: { layout: string }): SyncLayout => (t.layout === "playlist" ? "numbered" : LAYOUTS.some((l) => l[0] === t.layout) ? (t.layout as SyncLayout) : "structured");
 
 async function refreshPreview(t: SyncTargetState) {
   // auch ohne angeschlossenes Gerät: Größe der Playlisten anzeigen
@@ -120,7 +122,7 @@ export function syncView(): { el: HTMLElement; destroy: () => void } {
           h("div", { class: "kv" }, h("span", {}, "Ordner"), h("span", { style: { fontFamily: "var(--mono)" } }, t.path)),
           h("div", { class: "kv" }, h("span", {}, "Playlisten"), h("span", {}, pls.length ? pls.join(", ") : "– keine –")),
           h("div", { class: "kv" }, h("span", {}, "Modus"), h("span", {}, `${t.auto ? "automatisch beim Anschließen" : "manuell"}${t.mirror ? " · räumt auf" : ""}`)),
-          h("div", { class: "kv" }, h("span", {}, "Ablage"), h("span", {}, (LAYOUTS.find((l) => l[0] === (t.layout || "artist"))?.[1] ?? "") + (t.noPlaylistFiles ? " · ohne Playlist-Dateien" : ""))),
+          h("div", { class: "kv" }, h("span", {}, "Ablage"), h("span", {}, (LAYOUTS.find((l) => l[0] === layoutOf(t))?.[1] ?? "") + (t.noPlaylistFiles ? " · ohne Playlist-Dateien" : ""))),
           spaceBar(pv?.totalBytes ?? null, t.available ? t.free : null, pv && t.available ? pv.copyBytes : 0),
           t.lastSync ? h("div", { class: "kv" }, h("span", {}, "Zuletzt"), h("span", {}, new Date(t.lastSync * 1000).toLocaleString("de"))) : "",
           info ? h("div", { class: "note", style: { marginTop: "8px", color: "var(--ink)" } }, info) : "",
@@ -146,12 +148,13 @@ export function syncView(): { el: HTMLElement; destroy: () => void } {
 }
 
 function editTarget(t: SyncTargetState | null) {
-  const v: SyncTarget = t ? { ...t } : { id: 0, name: "", path: "", playlists: [], auto: false, mirror: true, lastSync: 0, layout: "artist", noPlaylistFiles: false };
-  const layout = h("select", {}, ...LAYOUTS.map(([k, l]) => h("option", { value: k, selected: (v.layout || "artist") === k }, l)));
-  const layoutHint = h("div", { class: "note", style: { fontFamily: "var(--mono)", fontSize: "11px" } });
-  const upLayout = () => (layoutHint.textContent = LAYOUTS.find((l) => l[0] === layout.value)?.[2] ?? "");
-  layout.addEventListener("change", upLayout);
-  upLayout();
+  const v: SyncTarget = t ? { ...t } : { id: 0, name: "", path: "", playlists: [], auto: false, mirror: true, lastSync: 0, layout: "numbered", noPlaylistFiles: false };
+  let layout: SyncLayout = layoutOf(v);
+  const radios = LAYOUTS.map(([k, label, note]) => {
+    const r = h("input", { type: "radio", name: "synclayout", checked: layout === k });
+    r.addEventListener("change", () => (layout = k));
+    return h("div", { style: { margin: "6px 0" } }, h("label", { class: "check" }, r, label), h("div", { class: "note", style: { marginLeft: "23px" } }, note));
+  });
   const m3u = h("input", { type: "checkbox", checked: !v.noPlaylistFiles });
   const sizeInfo = h("div", { class: "note", style: { color: "var(--ink)" } });
   const name = h("input", { type: "text", value: v.name, placeholder: "z. B. USB-Stick Auto", style: { width: "100%" } });
@@ -191,7 +194,7 @@ function editTarget(t: SyncTargetState | null) {
           }
         } }, "Wählen …"))),
     h("div", { class: "card", style: { marginTop: "10px" } }, h("h3", {}, "Playlisten für dieses Ziel"), plBox, sizeInfo),
-    h("div", { class: "field" }, h("label", {}, "Ablage der Titel auf dem Gerät"), layout, layoutHint),
+    h("div", { class: "card" }, h("h3", {}, "Aufbau"), ...radios),
     h("div", { class: "line" }, h("label", { class: "check" }, m3u, "Playlist-Dateien (.m3u8) mit ablegen")),
     h("div", { class: "line" }, h("label", { class: "check" }, auto, "Automatisch synchronisieren, sobald das Gerät angeschlossen wird")),
     h("div", { class: "line" }, h("label", { class: "check" }, mirror, "Aufräumen: von der App kopierte Titel löschen, die in keiner gewählten Playlist mehr sind")),
@@ -203,7 +206,7 @@ function editTarget(t: SyncTargetState | null) {
         class: "btn primary",
         onclick: async () => {
           if (!path.value.trim()) return toast("Bitte einen Ordner wählen");
-          const id = await api.syncSave({ ...v, name: name.value.trim() || path.value.trim(), path: path.value.trim(), playlists: [...chosen], auto: auto.checked, mirror: mirror.checked, layout: layout.value as SyncLayout, noPlaylistFiles: !m3u.checked });
+          const id = await api.syncSave({ ...v, name: name.value.trim() || path.value.trim(), path: path.value.trim(), playlists: [...chosen], auto: auto.checked, mirror: mirror.checked, layout, noPlaylistFiles: !m3u.checked });
           s.close();
           await poll();
           const nt = targets.find((x) => x.id === id);

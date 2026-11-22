@@ -24,7 +24,7 @@ class Player {
   private token = 0;
   private shuffleBag: number[] = [];
   private history: number[] = [];
-  private remote = { playing: false, pos: 0, at: 0, dur: 0, poll: 0, startedAt: 0, seekUntil: 0, loading: false };
+  private remote = { playing: false, pos: 0, at: 0, dur: 0, poll: 0, startedAt: 0, seekUntil: 0, loading: false, pollTick: 0 };
   private volume: number;
   private volTimer = 0;
 
@@ -373,6 +373,10 @@ class Player {
     clearInterval(this.remote.poll);
     this.remote.poll = window.setInterval(async () => {
       if (!this.device) return clearInterval(this.remote.poll);
+      if (this.remote.loading) return; // Gerät schaltet gerade um – nicht zusätzlich abfragen
+      // kurz vor Titelende öfter nachsehen → schneller zum nächsten Titel
+      const left = (this.remote.dur || this.current?.duration || 0) - this.currentTime;
+      if (left > 3 && (this.remote.pollTick = (this.remote.pollTick + 1) % 2) === 1) return;
       const st = await api.castStatus(this.device.id).catch(() => null);
       if (!st) return;
       const r = this.remote;
@@ -401,7 +405,7 @@ class Player {
         if (!dur || this.currentTime >= dur - 8) this.next(true);
         else store.emit("player");
       }
-    }, 1000);
+    }, 400);
   }
 
   /** Ausgabe auf eine Soundkarte dieses PCs legen (beendet ggf. das Streamen ins Heimnetz) */

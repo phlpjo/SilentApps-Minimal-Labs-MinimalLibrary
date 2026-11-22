@@ -29,7 +29,7 @@ pub struct ExportReport {
     pub errors: Vec<String>,
 }
 
-fn label(t: &Track) -> String {
+pub fn label(t: &Track) -> String {
     match (&t.artist, &t.title) {
         (Some(a), Some(ti)) => format!("{a} - {ti}"),
         (None, Some(ti)) => ti.clone(),

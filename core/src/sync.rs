@@ -28,8 +28,8 @@ pub struct Target {
     /// Früher kopierte, nicht mehr benötigte Dateien entfernen
     pub mirror: bool,
     pub last_sync: i64,
-    /// Ablage der Titel: "artist" (Interpret/Album/Titel), "album" (Album/Titel),
-    /// "flat" (alle in einem Ordner), "playlist" (ein Ordner je Playlist)
+    /// Aufbau wie beim Export: "numbered" (Ordner je Playlist, nummeriert), "flat" (Ordner je Playlist),
+    /// "structured" (gemeinsamer Musikordner Künstler/Album, .m3u8 im Ziel). Leer = "structured" (alte Ziele)
     pub layout: String,
     /// Keine .m3u8-Dateien schreiben (Standard: schreiben)
     pub no_playlist_files: bool,
@@ -93,22 +93,19 @@ struct Manifest {
     playlists: BTreeSet<String>,
 }
 
-/// Dateiname/-pfad auf dem Gerät je nach Ablage (ohne Endung)
-fn rel_of(t: &Track, layout: &str, playlist: &str, pos: usize) -> String {
-    let pattern = match layout {
-        "album" => "{album}/{disc-}{track} - {title}",
-        "flat" => "{artist} - {title}",
-        "playlist" => "",
-        _ => "{albumartist}/{album}/{disc-}{track} - {title}",
-    };
-    let stem = if layout == "playlist" {
-        let one = organize::render("{artist} - {title}", t);
-        let one = one.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-        format!("{}/{:02} - {}", paths::sanitize(playlist), pos, one)
-    } else {
-        format!("{MUSIC_DIR}/{}", organize::render(pattern, t).to_string_lossy())
+/// Zielpfad auf dem Gerät – genau wie „Playlisten exportieren“ (ohne Endung)
+fn rel_of(t: &Track, layout: &str, playlist: &str, pos: usize, digits: usize) -> String {
+    let stem = match layout {
+        "numbered" => format!("{}/{}", paths::sanitize(playlist), paths::sanitize(&format!("{:0digits$} - {}", pos, crate::export::label(t)))),
+        "flat" => format!("{}/{}", paths::sanitize(playlist), paths::sanitize(&crate::export::label(t))),
+        _ => format!("{MUSIC_DIR}/{}", organize::render("{albumartist}/{album}/{disc-}{track} - {title}", t).to_string_lossy()),
     };
     stem.replace('\\', "/")
+}
+
+/// Ein Ordner je Playlist (nummeriert oder nicht)?
+fn per_playlist(layout: &str) -> bool {
+    matches!(layout, "numbered" | "flat")
 }
 
 fn ext_of(t: &Track) -> String {
@@ -123,7 +120,7 @@ struct Plan {
 }
 
 fn plan(c: &Connection, t: &Target) -> Result<Plan> {
-    let layout = if t.layout.is_empty() { "artist" } else { t.layout.as_str() };
+    let layout = if t.layout.is_empty() { "structured" } else { t.layout.as_str() };
     let mut files: Vec<(PathBuf, String, u64)> = Vec::new();
     // Titel → Zielpfad (bei „je Playlist“ pro Playlist eigene Kopie)
     let mut by_key: HashMap<(i64, i64), String> = HashMap::new();
@@ -133,11 +130,12 @@ fn plan(c: &Connection, t: &Target) -> Result<Plan> {
     for &pid in &t.playlists {
         let Ok(name) = playlists::name(c, pid) else { continue };
         let tracks = db::tracks_by_ids(c, &playlists::track_ids(c, pid)?)?;
+        let digits = tracks.len().to_string().len().max(2);
         let mut on_device: Vec<Track> = Vec::new();
         for (i, tr) in tracks.into_iter().enumerate() {
-            let key = (if layout == "playlist" { pid } else { 0 }, tr.id);
+            let key = (if per_playlist(layout) { pid } else { 0 }, tr.id);
             let rel = by_key.entry(key).or_insert_with(|| {
-                let stem = rel_of(&tr, layout, &name, i + 1);
+                let stem = rel_of(&tr, layout, &name, i + 1, digits);
                 let ext = ext_of(&tr);
                 // gleiche Zielnamen (zwei Titel mit gleichem Namen) auseinanderhalten
                 let n = used.entry(format!("{stem}.{ext}").to_lowercase()).or_insert(0);
@@ -154,8 +152,8 @@ fn plan(c: &Connection, t: &Target) -> Result<Plan> {
             continue;
         }
         let file = format!("{}.m3u8", paths::sanitize(&name));
-        // bei „je Playlist“ liegt die Playlist-Datei im Ordner der Playlist
-        let (m3u_rel, base) = if layout == "playlist" {
+        // bei „Ordner je Playlist“ liegt die Playlist-Datei im Ordner der Playlist
+        let (m3u_rel, base) = if per_playlist(layout) {
             (format!("{}/{file}", paths::sanitize(&name)), root.join(paths::sanitize(&name)))
         } else {
             (file, root.to_path_buf())
@@ -398,7 +396,7 @@ mod tests {
         assert!(base.join("stick/fremd.txt").exists());
         // Ablage „je Playlist“: Ordner mit Nummern, Playlist-Datei darin
         let mut t = get(&conn.lock().unwrap(), tid).unwrap();
-        t.layout = "playlist".into();
+        t.layout = "numbered".into();
         save(&conn.lock().unwrap(), &t).unwrap();
         run(&conn, tid, &cancel, &|_, _, _| {}).unwrap();
         assert!(base.join("stick/Auto/01 - Band - Eins.mp3").exists());

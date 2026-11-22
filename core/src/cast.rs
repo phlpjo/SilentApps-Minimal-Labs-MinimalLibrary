@@ -465,14 +465,19 @@ pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<()> 
         hms(meta.duration),
         xml_escape(&url),
     );
-    // Stumm schalten, bis der Titel wirklich läuft (und ggf. gesprungen ist) → kein Knacksen/Anspielen
-    let was_muted = get_mute(&d).unwrap_or(false);
-    if !was_muted {
+    let sonos = d.kind == "sonos";
+    // Nur beim Einstieg mitten im Titel stumm schalten (sonst hört man kurz den Anfang).
+    // Beim normalen Start nicht: jedes Stumm/Laut kostet Zeit und kann selbst knacken.
+    let mute_now = start > 1.0 && !get_mute(&d).unwrap_or(true);
+    if mute_now {
         let _ = set_mute(&d, true);
     }
     let result = (|| -> Result<()> {
-        // Manche Geräte verweigern neue URLs während der Wiedergabe → vorher stoppen
-        let _ = soap(&d.av_control, AVT, "Stop", &[("InstanceID", "0".into())]);
+        // Sonos nimmt eine neue Adresse auch während der Wiedergabe an – ein Stop vorher kostet nur Zeit
+        // und lässt den Puffer leer anlaufen. Andere Geräte (DLNA) brauchen ihn oft.
+        if !sonos {
+            let _ = soap(&d.av_control, AVT, "Stop", &[("InstanceID", "0".into())]);
+        }
         soap_retry(&d.av_control, AVT, "SetAVTransportURI", &[("InstanceID", "0".into()), ("CurrentURI", url), ("CurrentURIMetaData", didl)], 3)?;
         let play = || soap_retry(&d.av_control, AVT, "Play", &[("InstanceID", "0".into()), ("Speed", "1".into())], 4);
         play()?;
@@ -485,13 +490,13 @@ pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<()> 
         }
         if start > 1.0 {
             seek_dev(&d, start)?;
-            // kurz warten, bis der Puffer an der neuen Stelle gefüllt ist
+            // erst laut schalten, wenn das Gerät an der neuen Stelle wirklich weiterläuft
             wait_state(&d, "PLAYING", Duration::from_secs(4));
-            std::thread::sleep(Duration::from_millis(250));
+            wait_position(&d, start + 0.5, Duration::from_millis(2500));
         }
         Ok(())
     })();
-    if !was_muted {
+    if mute_now {
         let _ = set_mute(&d, false);
     }
     result?;
@@ -511,6 +516,23 @@ pub fn active_device() -> Option<String> {
 
 fn transport_state(d: &Device) -> Option<String> {
     soap(&d.av_control, AVT, "GetTransportInfo", &[("InstanceID", "0".into())]).ok().and_then(|x| tag(&x, "CurrentTransportState"))
+}
+
+/// Warten, bis die Abspielposition eine Stelle erreicht hat (Puffer gefüllt, läuft sauber)
+fn wait_position(d: &Device, at: f64, max: Duration) -> bool {
+    let end = Instant::now() + max;
+    while Instant::now() < end {
+        let pos = soap(&d.av_control, AVT, "GetPositionInfo", &[("InstanceID", "0".into())])
+            .ok()
+            .and_then(|x| tag(&x, "RelTime"))
+            .map(|t| parse_hms(&t))
+            .unwrap_or(0.0);
+        if pos >= at {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    false
 }
 
 fn wait_state(d: &Device, want: &str, max: Duration) -> bool {

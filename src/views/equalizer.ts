@@ -1,6 +1,7 @@
 import { api, type CastSound } from "../api";
 import { BAND_LABELS, PRESETS, eq, type EqSettings } from "../eq";
-import { cachedDevices, discoverIfStale, isFound, isSearching, labelsHidden, localOutputs, selectCast, selectLocal, unlockLabels } from "../outputs";
+import { cachedDevices, discoverIfStale, isFound, isSearching, labelsHidden, localOutputs, unlockLabels } from "../outputs";
+import type { CastDevice } from "../api";
 import { player } from "../player";
 import { store } from "../store";
 import { clear, h, toast } from "../ui";
@@ -9,21 +10,29 @@ import { OS } from "../platform";
 export function equalizerView(): { el: HTMLElement; destroy: () => void } {
   const outBox = h("div", {});
   const eqBox = h("div", {});
+  // Welches Gerät wird eingestellt? (Nur Auswahl zum Einstellen – die Wiedergabe wechselt man unten am Lautstärkeregler)
+  let editing: { cast: CastDevice | null; sink: string } = { cast: player.device, sink: player.localSink };
+  const pick = (e: typeof editing) => {
+    editing = e;
+    renderOutputs();
+    renderEq();
+  };
 
   const renderOutputs = async () => {
     const locals = await localOutputs();
     clear(outBox);
     const item = (label: string, sub: string, on: boolean, click: () => void, dim = false) =>
       h("div", { class: "out-item" + (on ? " on" : "") + (dim ? " dim" : ""), onclick: click }, h("span", {}, label), h("small", {}, sub));
+    const playing = (local: boolean, id: string) => (local ? !player.device && player.localSink === id : player.device?.id === id) ? " · spielt hier" : "";
     outBox.append(
       h("div", { class: "out-group" }, h("h3", {}, "Dieser PC"),
-        ...locals.map((o) => item(o.id === "default" ? "Standard-Ausgabe" : o.label, o.id === "default" ? `wie in ${OS} eingestellt` : "Soundkarte", !player.device && player.localSink === o.id, () => selectLocal(o.id))),
+        ...locals.map((o) => item(o.id === "default" ? "Standard-Ausgabe" : o.label, (o.id === "default" ? `wie in ${OS} eingestellt` : "Soundkarte") + playing(true, o.id), !editing.cast && editing.sink === o.id, () => pick({ cast: null, sink: o.id }))),
         labelsHidden() ? h("div", { class: "note", style: { marginTop: "6px" } }, "Gerätenamen verborgen – ",
           h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); unlockLabels(); } }, "Namen anzeigen"),
           ` (${OS} fragt einmalig nach dem Mikrofon, es wird nichts aufgenommen).`) : "",
       ),
       h("div", { class: "out-group" }, h("h3", {}, "Heimnetz", isSearching() ? h("span", { class: "note" }, "  · sucht …") : ""),
-        ...cachedDevices().map((d) => item(d.name, `${d.kind === "sonos" ? "Sonos" : "DLNA"}${player.device?.id === d.id ? " · streamt" : ""}`, player.device?.id === d.id, () => selectCast(d), !isFound(d.id))),
+        ...cachedDevices().map((d) => item(d.name, `${d.kind === "sonos" ? "Sonos" : "DLNA"}${playing(false, d.id)}`, editing.cast?.id === d.id, () => pick({ cast: d, sink: editing.sink }), !isFound(d.id))),
         cachedDevices().length ? "" : h("div", { class: "note" }, isSearching() ? "Suche Geräte …" : "Keine Geräte gefunden."),
         h("button", { class: "btn", style: { marginTop: "6px" }, onclick: () => discoverIfStale(true) }, "Neu suchen"),
       ),
@@ -33,11 +42,11 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
   let soundTimer = 0;
   const renderEq = async () => {
     clear(eqBox);
-    const dev = player.device;
+    const dev = editing.cast;
     if (dev) {
       eqBox.append(h("h3", {}, `Klang · ${dev.name}`), h("div", { class: "note" }, "Lädt …"));
       const sound: CastSound | null = await api.castSound(dev.id).catch(() => null);
-      if (player.device?.id !== dev.id) return;
+      if (editing.cast?.id !== dev.id) return;
       clear(eqBox);
       eqBox.append(h("h3", {}, `Klang · ${dev.name}`));
       if (!sound || !sound.supported) {
@@ -73,9 +82,10 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
     }
 
     // Lokal: 10-Band-Equalizer
-    const key = "local:" + player.localSink;
+    const sink = editing.sink;
+    const key = "local:" + sink;
     const s: EqSettings = eq.load(key);
-    const label = player.localSink === "default" ? "Standard-Ausgabe" : (await localOutputs()).find((o) => o.id === player.localSink)?.label ?? "Soundkarte";
+    const label = sink === "default" ? "Standard-Ausgabe" : (await localOutputs()).find((o) => o.id === sink)?.label ?? "Soundkarte";
     if (!eq.enabled) {
       const on = h("input", { type: "checkbox", checked: false });
       on.addEventListener("change", () => {
@@ -154,23 +164,23 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
     renderOutputs();
     renderEq();
   };
-  const unsubs = [store.on("outputs", renderOutputs), store.on("player", () => { renderOutputs(); })];
+  // Ausgabe unten gewechselt → das neue Gerät zum Einstellen vorwählen
   let lastDev = player.device?.id ?? "local:" + player.localSink;
-  unsubs.push(store.on("player", () => {
+  const unsubs = [store.on("outputs", renderOutputs), store.on("player", () => {
     const now = player.device?.id ?? "local:" + player.localSink;
     if (now !== lastDev) {
       lastDev = now;
-      renderEq();
-    }
-  }));
+      pick({ cast: player.device, sink: player.localSink });
+    } else renderOutputs();
+  })];
   all();
   discoverIfStale();
 
   const el = h("div", { style: { display: "contents" } },
-    h("div", { class: "head" }, h("h1", {}, "Equalizer"), h("span", { class: "sub" }, "Ausgabegerät wählen und Klang einstellen")),
+    h("div", { class: "head" }, h("h1", {}, "Equalizer"), h("span", { class: "sub" }, "Klang je Ausgabegerät – wo du hörst, wählst du unten am Lautstärkeregler")),
     h("div", { class: "view-scroll" },
       h("div", { class: "eq-layout" },
-        h("div", { class: "card" }, h("h3", {}, "Wo möchtest du hören?"), outBox),
+        h("div", { class: "card" }, h("h3", {}, "Gerät zum Einstellen"), outBox),
         h("div", { class: "card" }, eqBox),
       ),
     ),

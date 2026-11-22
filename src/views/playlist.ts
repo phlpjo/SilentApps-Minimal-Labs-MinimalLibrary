@@ -175,9 +175,8 @@ export function smartEditor(p?: Playlist) {
             const r = collect();
             if (p) await api.playlistUpdate(p.id, name.value.trim() || p.name, r);
             else {
-              const id = await api.playlistCreate(name.value.trim() || "Smarte Playlist", r, null);
-              await store.loadPlaylists();
-              nav("playlist", [id]);
+              await api.playlistCreate(name.value.trim() || "Smarte Playlist", r, null);
+              toast(`Smarte Playlist „${name.value.trim() || "Smarte Playlist"}“ angelegt`);
             }
             await store.loadPlaylists();
             s.close();

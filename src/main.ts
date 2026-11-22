@@ -73,18 +73,42 @@ app.append(titlebar, side, main, insp, playerBar);
 new Inspector(insp);
 
 let current: { name: ViewName; arg?: number[]; path?: string; destroy: () => void } | null = null;
-const backStack: { name: ViewName; arg?: number[] }[] = [];
+const backStack: { name: ViewName; arg?: number[]; scroll: number[] }[] = [];
+
+/** Scrollpositionen der Ansicht merken (Liste, Baum, Inhalt) */
+function captureScroll(): number[] {
+  return [...main.querySelectorAll<HTMLElement>(".list-body, .view-scroll, .tree, .tiles")].map((e) => e.scrollTop);
+}
+
+/** … und nach dem Neuaufbau wiederherstellen (mehrfach, weil Inhalte teils nachladen) */
+function restoreScroll(pos: number[]) {
+  if (!pos.some((p) => p > 0)) return;
+  const apply = () => {
+    const els = [...main.querySelectorAll<HTMLElement>(".list-body, .view-scroll, .tree, .tiles")];
+    pos.forEach((p, i) => {
+      const el = els[i];
+      if (el && el.scrollTop !== p) {
+        el.scrollTop = p;
+        el.dispatchEvent(new Event("scroll"));
+      }
+    });
+  };
+  [0, 60, 200, 450, 900].forEach((ms) => setTimeout(apply, ms));
+}
 
 /** Zurück zur vorherigen Ansicht (Zurück-Taste der Maus, Alt+←, ‹ oben links) */
 export function goBack() {
   const prev = backStack.pop();
-  if (prev) nav(prev.name, prev.arg, undefined, true);
+  if (prev) {
+    nav(prev.name, prev.arg, undefined, true);
+    restoreScroll(prev.scroll);
+  }
   updateBack();
 }
 
 export function nav(name: ViewName, arg?: number[], path?: string, fromBack = false) {
   if (current && !fromBack && !(current.name === name && JSON.stringify(current.arg ?? null) === JSON.stringify(arg ?? null) && !path)) {
-    backStack.push({ name: current.name, arg: current.arg });
+    backStack.push({ name: current.name, arg: current.arg, scroll: captureScroll() });
     if (backStack.length > 50) backStack.shift();
   }
   current?.destroy();
@@ -123,6 +147,15 @@ const status = h("div", { class: "status" });
 
 /** Beim Ziehen kurz über dem Menüpunkt halten → Ansicht wechselt, Ziehen geht weiter */
 let springTimer = 0;
+/** Titel auf „+ Neu“ ziehen → neue Playlist anlegen, Titel kommen direkt hinein */
+function newDrop(el: HTMLElement) {
+  dropTarget(el, {
+    accepts: (p) => p.kind === "ids",
+    drop: (p) => p.kind === "ids" && newPlaylistFromIds(p.ids),
+  });
+  return el;
+}
+
 function springLoaded(el: HTMLElement, view: ViewName) {
   dropTarget(el, {
     accepts: (p) => p.kind === "ids" || p.kind === "dir",
@@ -153,11 +186,12 @@ function renderSide() {
       h("div", { class: "nav", id: "mainnav" }),
       h("div", { class: "section" }, "Playlisten"),
       h("div", { class: "section", style: { padding: "0 20px 8px", justifyContent: "flex-start", gap: "14px" } },
-        h("span", { class: "act", title: "Neue Playlist", onclick: () => newPlaylistFromIds([]) }, "+ Neu"),
+        newDrop(h("span", { class: "act", title: "Neue Playlist (Titel hierher ziehen = direkt hinein)", onclick: () => newPlaylistFromIds([]) }, "+ Neu")),
         h("span", { class: "act", title: "Smarte Playlist aus Regeln", onclick: () => smartEditor() }, "+ Smart"),
         h("span", { class: "act", title: "M3U/M3U8 importieren", onclick: importPlaylist }, "Import …"),
       ),
       plList,
+      newDrop(h("div", { class: "pl-new-drop" }, "+ Neue Playlist mit diesen Titeln")),
       status,
     );
   }
@@ -224,8 +258,8 @@ export function newPlaylistFromIds(ids: number[]) {
     const id = await api.playlistCreate(name.value.trim() || "Neue Playlist", null, ids.length ? ids : null);
     await store.loadPlaylists();
     s.close();
-    if (ids.length) toast(`${ids.length} Titel → ${name.value}`);
-    else nav("playlist", [id]);
+    void id;
+    toast(ids.length ? `${ids.length} Titel → ${name.value}` : `Playlist „${name.value}“ angelegt`);
   };
   name.addEventListener("keydown", (e) => e.key === "Enter" && go());
   const s = sheet(ids.length ? `Neue Playlist mit ${ids.length} Titel${ids.length === 1 ? "" : "n"}` : "Neue Playlist",

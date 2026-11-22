@@ -313,3 +313,16 @@ textarea:focus { border-color: var(--line); }
 /* Klickbare Interpreten */
 .artist-link { cursor: pointer; border-radius: 3px; }
 .artist-link:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+
+/* Ablagefeld „Neue Playlist“ – nur beim Ziehen sichtbar */
+.pl-new-drop { display: none; margin: 6px 8px 10px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; color: var(--weak); font-size: 12px; text-align: center; }
+body.is-dragging .pl-new-drop { display: block; }
+.pl-new-drop.drop, .section .act.drop { color: var(--ink); border-color: var(--ink); background: var(--sel); outline: none; }
+.section .act.drop { border-radius: 6px; padding: 2px 4px; }
+
+/* Laufender Titel in der Liste: eigene Markierung (Balken links + Tönung) */
+.row.playing { background: var(--playing); box-shadow: inset 3px 0 0 var(--ink); }
+.row.playing.sel { background: var(--sel); }
+.row.playing .t1 { color: var(--ink); font-weight: 500; }
+:root { --playing: rgba(255, 255, 255, 0.07); }
+:root[data-theme="light"], :root.light { --playing: rgba(0, 0, 0, 0.055); }

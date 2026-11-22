@@ -437,13 +437,45 @@ async fn find_duplicates(app: AppHandle, state: State<'_, AppState>, modes: dupl
     let db = state.db.clone();
     let prog = emitter(&app, "duplicates");
     blocking(move || {
-        let (tracks, fps) = {
+        let (tracks, fps, ignored) = {
             let c = db.lock().unwrap();
-            (db::all_tracks(&c)?, if modes.audio { db::fingerprints(&c)? } else { HashMap::new() })
+            let mut st = c.prepare("SELECT a, b FROM dup_ignore")?;
+            let ignored: duplicates::Ignored = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+            (db::all_tracks(&c)?, if modes.audio { db::fingerprints(&c)? } else { HashMap::new() }, ignored)
         };
-        Ok(duplicates::find(&tracks, &fps, modes, &prog))
+        Ok(duplicates::find(&tracks, &fps, modes, &ignored, &prog))
     })
     .await
+}
+
+/// „Kein Duplikat“: diese Titel nie wieder gegeneinander melden (jedes Paar der Liste)
+#[tauri::command]
+fn dup_ignore(state: State<AppState>, ids: Vec<i64>, against: Option<Vec<i64>>) -> R<usize> {
+    let c = state.db.lock().unwrap();
+    let mut n = 0;
+    let mut add = |a: i64, b: i64| {
+        if a != b {
+            let (x, y) = duplicates::pair(a, b);
+            n += c.execute("INSERT OR IGNORE INTO dup_ignore(a, b) VALUES(?1, ?2)", rusqlite::params![x, y]).unwrap_or(0);
+        }
+    };
+    match against {
+        // ein Titel gehört nicht zu den anderen der Gruppe
+        Some(others) => ids.iter().for_each(|&a| others.iter().for_each(|&b| add(a, b))),
+        // ganze Gruppe: alle Paare
+        None => ids.iter().enumerate().for_each(|(i, &a)| ids[i + 1..].iter().for_each(|&b| add(a, b))),
+    }
+    Ok(n)
+}
+
+#[tauri::command]
+fn dup_ignore_count(state: State<AppState>) -> R<usize> {
+    state.db.lock().unwrap().query_row("SELECT COUNT(*) FROM dup_ignore", [], |r| r.get::<_, i64>(0)).map(|n| n as usize).map_err(err)
+}
+
+#[tauri::command]
+fn dup_ignore_clear(state: State<AppState>) -> R<()> {
+    state.db.lock().unwrap().execute("DELETE FROM dup_ignore", []).map(|_| ()).map_err(err)
 }
 
 // ---------- Sortieren ----------
@@ -1038,6 +1070,9 @@ pub fn run() {
             acoustid_lookup,
             mb_cover,
             find_duplicates,
+            dup_ignore,
+            dup_ignore_count,
+            dup_ignore_clear,
             organize_preview,
             organize_apply,
             move_batches,

@@ -63,3 +63,31 @@ Voraussetzungen: Rust (stable), Node 22, WebView2 (bei Windows 10/11 vorhanden).
 - Wiedergabe läuft über die WebView (Chromium): MP3, FLAC, AAC/M4A, OGG, Opus, WAV. AIFF und ALAC werden analysiert und getaggt, aber nicht abgespielt.
 - Opus-Dateien bekommen keine Wellenform (kein Opus-Dekoder im Rust-Kern) – Abspielen und Taggen funktioniert.
 - Online-Funktionen nur auf ausdrücklichen Klick, sonst arbeitet die App komplett offline.
+
+## Pioneer-Export
+
+Optional: **Einstellungen → Export für Pioneer DJ / AlphaTheta-Player (OneLibrary) → Einschalten.**
+Erst danach gibt es die zusätzliche Analyse und den Export; alle anderen Funktionen bleiben unverändert.
+
+**Funktionen**
+- Analyse: konstantes Beatgrid (Tempo auf 0,01 BPM, erster Downbeat), Wellenform im Raster der Player (150 Werte/s, Bass/Mitten/Höhen); läuft im normalen Hintergrund-Analysevorgang, bereits analysierte Titel werden nicht neu berechnet.
+- Inspektor: Detail-Wellenform mit Beatgrid-Linien, Grid korrigieren (Downbeat setzen, ½/×2 Tempo, ±10 ms verschieben, Tempo eintippen), Hot Cues A–H mit Farbe und Kommentar, Memory Cues; alles mit Strg+Z rückgängig.
+- Export (Rechtsklick auf Playlist → „Für Pioneer-Player exportieren …“): Vorschau (Titel, Größe, fehlende Analysen, nicht abspielbare Formate), Audio nach `/Contents`, Analysedateien `ANLZ0000.DAT/.EXT`, verschlüsselte OneLibrary-Datenbank `PIONEER/rekordbox/exportLibrary.db`, Playlisten in Reihenfolge, Cues, Cover. Erneuter Export kopiert nur Fehlendes; Einträge von rekordbox oder anderen Programmen bleiben unangetastet.
+- Nicht abspielbare Formate (z. B. OGG, OPUS): überspringen oder mit ffmpeg (aus dem Ripper) nach MP3 320 kbit/s umwandeln.
+- rekordbox-XML als Rückfallebene (In rekordbox unter Einstellungen → Erweitert → rekordbox xml einbinden).
+
+**Geräte**: OneLibrary-fähige Player, z. B. CDJ-3000, CDJ-3000X, XDJ-AZ, OPUS-QUAD, OMNIS-DUO.
+
+**Einschränkungen**
+- Nicht an echter Hardware getestet – Checkliste: `docs/pioneer-hardwaretest.md`.
+- Kein klassisches Geräteformat (`export.pdb`) für ältere Player.
+- Nur konstantes Beatgrid; Tempowechsel innerhalb eines Titels werden nicht erkannt.
+- Keine 3-Band-Wellenform (`.2EX`), keine Songstruktur/Phrasen (PSSI), keine erweiterte Beatgrid-Tabelle (PQT2) – Format nicht ausreichend dokumentiert.
+- Cover nur aus JPEG-Bildern im Titel.
+
+**Prüfung**: Die CI baut einen Test-Export (`core/examples/pioneer_selftest.rs`) und liest ihn mit pyrekordbox (MIT, nur Testwerkzeug) zurück: `scripts/verify_pioneer.py`.
+
+**Lizenzen**: `cargo deny check licenses` und ein npm-Lizenzcheck laufen in jedem Build; GPL, LGPL und AGPL sind ausgeschlossen (`deny.toml`). Hinweise zu Drittbestandteilen: `THIRD_PARTY_NOTICES.md`.
+
+Pioneer DJ, rekordbox und OneLibrary sind Marken der AlphaTheta Corporation. Minimal Library steht in keiner Verbindung zu AlphaTheta.
+

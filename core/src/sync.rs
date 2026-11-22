@@ -42,6 +42,16 @@ pub struct Target {
     /// `path` ist dann der Ordner auf dem Gerät, z. B. „Interner gemeinsamer Speicher/Music“.
     pub device: String,
     pub device_name: String,
+    /// Handy im WLAN (`device` = "wlan:<Kennung>"): Schlüssel aus der Kopplung
+    pub token: String,
+}
+
+const WLAN: &str = "wlan:";
+
+impl Target {
+    fn wlan_id(&self) -> Option<&str> {
+        self.device.strip_prefix(WLAN)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -172,6 +182,8 @@ struct Plan {
     files: Vec<(PathBuf, String, u64)>,
     /// (relativer Pfad der .m3u8, Inhalt)
     playlists: Vec<(String, String)>,
+    /// (Playlist-ID, Name, Dateien in Reihenfolge) – fürs Handy im WLAN (legt echte Playlisten an)
+    lists: Vec<(i64, String, Vec<String>)>,
 }
 
 fn plan(c: &Connection, t: &Target) -> Result<Plan> {
@@ -185,6 +197,7 @@ fn plan(c: &Connection, t: &Target) -> Result<Plan> {
     let mut by_key: HashMap<(i64, i64), String> = HashMap::new();
     let mut used: HashMap<String, usize> = HashMap::new();
     let mut pls = Vec::new();
+    let mut lists = Vec::new();
     let root = Path::new(&t.path);
     for &pid in &t.playlists {
         let Ok(name) = playlists::name(c, pid) else {
@@ -193,6 +206,7 @@ fn plan(c: &Connection, t: &Target) -> Result<Plan> {
         let tracks = db::tracks_by_ids(c, &playlists::track_ids(c, pid)?)?;
         let digits = tracks.len().to_string().len().max(2);
         let mut on_device: Vec<Track> = Vec::new();
+        let mut rels: Vec<String> = Vec::new();
         for (i, tr) in tracks.into_iter().enumerate() {
             let key = (if per_playlist(layout) { pid } else { 0 }, tr.id);
             let rel = by_key.entry(key).or_insert_with(|| {
@@ -211,10 +225,12 @@ fn plan(c: &Connection, t: &Target) -> Result<Plan> {
                 files.push((PathBuf::from(&tr.path), r.clone(), tr.size.max(0) as u64));
                 r
             });
+            rels.push(rel.clone());
             let mut copy = tr.clone();
             copy.path = root.join(&*rel).to_string_lossy().to_string();
             on_device.push(copy);
         }
+        lists.push((pid, name.clone(), rels));
         if t.no_playlist_files {
             continue;
         }
@@ -264,6 +280,7 @@ fn plan(c: &Connection, t: &Target) -> Result<Plan> {
     Ok(Plan {
         files,
         playlists: pls,
+        lists,
     })
 }
 
@@ -319,6 +336,71 @@ trait Dest {
     fn remove(&mut self, rel: &str) -> bool;
     /// leere Ordner oberhalb von `rel` entfernen (nie das Ziel selbst)
     fn tidy(&mut self, rel: &str);
+    /// Handy im WLAN: Anzahl für die Fortschrittsanzeige auf dem Handy
+    fn begin(&mut self, _copies: usize) {}
+    /// Handy im WLAN: Playlisten übergeben, Bibliothek auf dem Handy neu einlesen
+    fn finish(&mut self, _lists: &[(i64, String, Vec<String>)]) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Handy im WLAN (Minimal Player Connected, auf Windows und Mac)
+struct WlanDest {
+    c: crate::wlan::Client,
+    files: HashMap<String, u64>,
+    free: Option<u64>,
+    prefix: String,
+}
+
+impl Dest for WlanDest {
+    fn has(&mut self, rel: &str, size: u64) -> bool {
+        self.files.get(&rel.to_lowercase()) == Some(&size)
+    }
+    fn exists(&mut self, rel: &str) -> bool {
+        self.files.contains_key(&rel.to_lowercase())
+    }
+    fn free(&mut self) -> Option<u64> {
+        self.free
+    }
+    fn put(&mut self, src: &Path, rel: &str, size: u64, cancel: &AtomicBool) -> Result<()> {
+        let mut f = std::io::BufReader::with_capacity(1 << 20, std::fs::File::open(src)?);
+        self.c.put(rel, &mut f, cancel)?;
+        self.files.insert(
+            rel.to_lowercase(),
+            std::fs::metadata(src).map(|m| m.len()).unwrap_or(size),
+        );
+        Ok(())
+    }
+    fn write(&mut self, rel: &str, data: &[u8]) -> Result<()> {
+        self.c.put(
+            rel,
+            &mut std::io::Cursor::new(data),
+            &AtomicBool::new(false),
+        )?;
+        self.files.insert(rel.to_lowercase(), data.len() as u64);
+        Ok(())
+    }
+    fn remove(&mut self, rel: &str) -> bool {
+        let ok = self.c.delete(rel).unwrap_or(false);
+        if ok {
+            self.files.remove(&rel.to_lowercase());
+        }
+        ok
+    }
+    fn tidy(&mut self, _rel: &str) {} // räumt das Handy selbst auf
+    fn begin(&mut self, copies: usize) {
+        let _ = self.c.begin(copies);
+    }
+    fn finish(&mut self, lists: &[(i64, String, Vec<String>)]) -> Result<()> {
+        let pl: Vec<serde_json::Value> = lists
+            .iter()
+            .map(|(pid, name, files)| serde_json::json!({ "uid": format!("{}-{pid}", self.prefix), "name": name, "files": files }))
+            .collect();
+        self.c.done(
+            &serde_json::json!({ "prefix": format!("{}-", self.prefix), "playlists": pl })
+                .to_string(),
+        )
+    }
 }
 
 struct FsDest {
@@ -618,6 +700,12 @@ pub fn device_folders(device: &str, path: &str) -> Result<Vec<String>> {
 }
 
 fn device_status(t: &Target) -> (bool, Option<u64>) {
+    if let Some(id) = t.wlan_id() {
+        return match crate::wlan::seen(id) {
+            Some(p) => (true, p.free),
+            None => (false, None),
+        };
+    }
     #[cfg(windows)]
     {
         mtp::status(&t.device, &t.device_name, &t.path)
@@ -636,6 +724,26 @@ fn open_dest(t: &Target) -> Result<Box<dyn Dest>> {
             return Err(anyhow!("„{}“ ist nicht verbunden", t.name));
         }
         return Ok(Box::new(FsDest { root }));
+    }
+    if let Some(id) = t.wlan_id() {
+        if t.token.is_empty() {
+            return Err(anyhow!(
+                "„{}“ ist noch nicht gekoppelt – Ziel bearbeiten und den Code vom Handy eingeben",
+                t.name
+            ));
+        }
+        let phone = crate::wlan::seen(id)
+            .or_else(|| crate::wlan::phones().into_iter().find(|p| p.id == id))
+            .ok_or_else(|| anyhow!("„{}“ nicht gefunden – in Minimal Player Connected „Von Minimal Library empfangen“ öffnen (gleiches WLAN)", t.name))?;
+        let c = crate::wlan::Client::new(&phone.addr, &t.token);
+        let files = c.list()?;
+        let prefix = format!("ml{}", t.token.chars().take(8).collect::<String>());
+        return Ok(Box::new(WlanDest {
+            c,
+            files,
+            free: phone.free,
+            prefix,
+        }));
     }
     #[cfg(windows)]
     {
@@ -731,8 +839,10 @@ pub fn run_with(
     if device {
         progress(0, p.files.len().max(1), "Handy wird gelesen …");
     }
+    let device_is_wlan = t.wlan_id().is_some();
     #[cfg(windows)]
-    let _busy = device.then(|| Busy::new(&t.device));
+    let _busy = (device && !device_is_wlan).then(|| Busy::new(&t.device));
+    let _ = device_is_wlan;
     let mut dest = open_dest(&t)?;
     let needed: u64 = p
         .files
@@ -764,6 +874,8 @@ pub fn run_with(
     };
     let mut man = Manifest::default();
     let total = p.files.len();
+    let copies = p.files.iter().filter(|(_, r, z)| !dest.has(r, *z)).count();
+    dest.begin(copies);
     for (i, (src, rel, size)) in p.files.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             rep.errors.push("Abgebrochen".into());
@@ -824,6 +936,9 @@ pub fn run_with(
             .cloned()
             .collect();
         man.files.extend(keep);
+    }
+    if let Err(e) = dest.finish(&p.lists) {
+        rep.errors.push(format!("Playlisten aufs Handy: {e}"));
     }
     if device {
         save_db_manifest(&conn.lock().unwrap(), id, &man)?;

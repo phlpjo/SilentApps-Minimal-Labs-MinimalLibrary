@@ -20,6 +20,7 @@ pub mod sync;
 pub mod tags;
 pub mod watch;
 pub mod webcache;
+pub mod wlan;
 
 /// Fortschritt: (erledigt, gesamt, Text)
 pub type Progress<'a> = &'a (dyn Fn(usize, usize, &str) + Sync);

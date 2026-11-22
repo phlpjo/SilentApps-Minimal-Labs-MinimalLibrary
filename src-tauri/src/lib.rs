@@ -1664,6 +1664,18 @@ async fn sync_devices() -> R<Vec<PhoneDevice>> {
     .await
 }
 
+/// Handys im WLAN mit Minimal Player Connected („Von Minimal Library empfangen“ offen)
+#[tauri::command]
+async fn sync_phones() -> R<Vec<musiccore::wlan::Phone>> {
+    blocking(|| Ok(musiccore::wlan::phones())).await
+}
+
+/// Mit dem Code vom Handy koppeln → Schlüssel fürs Sync-Ziel
+#[tauri::command]
+async fn sync_pair(addr: String, code: String) -> R<String> {
+    blocking(move || musiccore::wlan::pair(&addr, &code, &musiccore::wlan::computer_name())).await
+}
+
 #[tauri::command]
 async fn sync_device_folders(device: String, path: String) -> R<Vec<String>> {
     blocking(move || sync::device_folders(&device, &path)).await
@@ -2205,6 +2217,8 @@ pub fn run() {
             sync_eject,
             sync_devices,
             sync_device_folders,
+            sync_phones,
+            sync_pair,
             rip_tools,
             rip_install,
             rip_update,

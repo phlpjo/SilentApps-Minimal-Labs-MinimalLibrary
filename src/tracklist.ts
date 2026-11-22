@@ -396,7 +396,7 @@ export class TrackList {
     const id = this.view[i];
     let reduceOnClick = false;
     if (e.shiftKey && this.anchor >= 0) {
-      if (!e.ctrlKey) store.selection.clear();
+      if (!e.ctrlKey && !e.metaKey) store.selection.clear();
       const [a, b] = [Math.min(this.anchor, i), Math.max(this.anchor, i)];
       for (let k = a; k <= b; k++) store.selection.add(this.view[k]);
     } else if (e.ctrlKey || e.metaKey) {

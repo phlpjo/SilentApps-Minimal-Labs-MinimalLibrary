@@ -48,8 +48,20 @@ class Player {
       store.emit("player");
     });
     a.addEventListener("pause", () => a === this.audio && store.emit("player"));
+    a.addEventListener("loadedmetadata", () => a.crossOrigin && (corsOk = true));
     a.addEventListener("error", () => {
       if (a !== this.audio || !this.current || !a.getAttribute("src")) return;
+      // WebView lässt Web Audio (crossOrigin) nicht zu → ohne Equalizer weiter abspielen
+      if (a.crossOrigin && !corsOk && eq.enabled) {
+        eq.enabled = false;
+        try { localStorage.setItem("ml.audioGraph", "0"); } catch {}
+        const src = a.getAttribute("src")!;
+        a.removeAttribute("crossorigin");
+        a.src = src;
+        a.play().catch(() => {});
+        toast("Equalizer ist auf diesem System nicht verfügbar – Wiedergabe läuft ohne.");
+        return;
+      }
       const ext = this.current.path.split(".").pop()?.toUpperCase();
       toast(`${ext}-Datei kann nicht abgespielt werden${ext === "AIFF" || ext === "AIF" ? " (AIFF unterstützt die Windows-WebView nicht)" : ""}.`);
       store.emit("player");
@@ -374,5 +386,8 @@ class Player {
     }
   }
 }
+
+/** Hat schon eine Datei mit crossOrigin geladen? (dann ist ein Fehler ein echter Dateifehler) */
+let corsOk = false;
 
 export const player = new Player();

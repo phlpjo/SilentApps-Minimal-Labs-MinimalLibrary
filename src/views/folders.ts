@@ -8,6 +8,7 @@ import { moveTracksTo } from "../fileops";
 import { beginDrag, dragging, dropTarget } from "../dnd";
 import { analyzeIds } from "../main";
 import { textMatches, trackMenu } from "./library";
+import { SHOW_IN, TRASH, FILE_MANAGER } from "../platform";
 
 const norm = (p: string) => p.replace(/[\\/]+$/, "").replace(/\//g, "\\").toLowerCase();
 
@@ -259,7 +260,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     { label: "Öffnen", action: () => openFolder(path) },
     { label: "Neuer Unterordner …", action: () => newFolder(path) },
     ...(isRoot ? [] : [{ label: "Umbenennen …", hint: "F2", action: () => renameFolder(path) }]),
-    { label: "Im Explorer zeigen", action: () => revealItemInDir(path) },
+    { label: SHOW_IN, action: () => revealItemInDir(path) },
     { label: "Alle Titel darin abspielen", action: () => {
       const ids = [...store.tracks.values()].filter((t) => norm(t.path).startsWith(norm(path) + "\\")).map((t) => t.id);
       if (ids.length) player.play(ids[0], 0, ids);
@@ -323,7 +324,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
   const trashFolder = (path: string) => {
     const n = [...store.tracks.values()].filter((t) => norm(t.path).startsWith(norm(path) + "\\")).length;
     const s = sheet(`„${basename(path)}“ in den Papierkorb`, h("div", {},
-      h("div", { class: "note" }, `Der Ordner mit allem Inhalt${n ? ` (${n} Titel)` : ""} landet im Windows-Papierkorb.`),
+      h("div", { class: "note" }, `Der Ordner mit allem Inhalt${n ? ` (${n} Titel)` : ""} landet im ${TRASH}.`),
       h("div", { class: "foot" }, h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"),
         holdButton("In den Papierkorb", async () => {
           s.close();
@@ -363,7 +364,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     h("div", { class: "head nowrap" }, h("h1", {}, "Ordner"), crumbs, info,
       search,
       h("label", { class: "check", title: "Titel aus allen Unterordnern mit anzeigen und durchsuchen" }, recBox, "Unterordner"),
-      h("button", { class: "btn", onclick: () => current && revealItemInDir(current) }, "Explorer"),
+      h("button", { class: "btn", onclick: () => current && revealItemInDir(current) }, FILE_MANAGER),
     ),
     h("div", { class: "folders" },
       tree,

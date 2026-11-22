@@ -41,8 +41,12 @@ fn find(tools: &Path, name: &str) -> Option<PathBuf> {
     if local.exists() {
         return Some(local);
     }
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).map(|d| d.join(name)).find(|p| p.exists())
+    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    // Mac-Apps aus dem Finder bekommen keinen Homebrew-Pfad mit
+    if cfg!(target_os = "macos") {
+        dirs.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
+    }
+    dirs.into_iter().map(|d| d.join(name)).find(|p| p.exists())
 }
 
 #[derive(Debug, Serialize)]
@@ -79,9 +83,57 @@ fn download(url: &str, progress: Progress, label: &str) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// yt-dlp und ffmpeg herunterladen (nur Windows; unter Linux/macOS aus dem System)
+#[cfg(unix)]
+#[allow(dead_code)]
+fn make_executable(p: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755))?;
+    Ok(())
+}
+
+/// Erste Datei mit diesem Namen aus einem ZIP holen
+#[allow(dead_code)]
+fn unzip_one(data: Vec<u8>, want: &str, dest: &Path) -> Result<()> {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data)).context("Archiv defekt")?;
+    for i in 0..zip.len() {
+        let mut f = zip.by_index(i)?;
+        let name = f.name()?.replace('\\', "/");
+        if name.rsplit('/').next() == Some(want) {
+            let mut out = Vec::new();
+            f.read_to_end(&mut out)?;
+            std::fs::write(dest, out)?;
+            return Ok(());
+        }
+    }
+    bail!("{want} nicht im Archiv gefunden")
+}
+
+/// yt-dlp und ffmpeg herunterladen (Windows und macOS; unter Linux aus dem System)
 pub fn install(tools: &Path, progress: Progress) -> Result<ToolStatus> {
     std::fs::create_dir_all(tools)?;
+    #[cfg(target_os = "macos")]
+    {
+        if find(tools, YTDLP).is_none() {
+            let data = download("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos", progress, "yt-dlp")?;
+            let p = tools.join(YTDLP);
+            std::fs::write(&p, data)?;
+            make_executable(&p)?;
+        }
+        if find(tools, FFMPEG).is_none() {
+            let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "amd64" };
+            let data = download(&format!("https://ffmpeg.martin-riedl.de/redirect/latest/macos/{arch}/release/ffmpeg.zip"), progress, "ffmpeg")?;
+            let p = tools.join(FFMPEG);
+            unzip_one(data, "ffmpeg", &p)?;
+            make_executable(&p)?;
+            if let Ok(data) = download(&format!("https://ffmpeg.martin-riedl.de/redirect/latest/macos/{arch}/release/ffprobe.zip"), progress, "ffprobe") {
+                let p = tools.join("ffprobe");
+                if unzip_one(data, "ffprobe", &p).is_ok() {
+                    make_executable(&p)?;
+                }
+            }
+        }
+        return Ok(status(tools));
+    }
     if !cfg!(windows) {
         let st = status(tools);
         if st.ytdlp.is_none() || !st.ffmpeg {

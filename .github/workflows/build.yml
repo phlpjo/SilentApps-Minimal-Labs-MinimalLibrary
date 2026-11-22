@@ -1,4 +1,4 @@
-name: Windows-Build
+name: Build
 
 on:
   push:
@@ -43,4 +43,39 @@ jobs:
             target/release/bundle/nsis/*.exe
             target/release/bundle/msi/*.msi
             target/release/minimal-library.exe
+          retention-days: 30
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Abhängigkeiten
+        run: npm ci
+
+      - name: Version setzen (1.0.<Lauf>)
+        run: sed -i '' 's/"version": "1.0.0"/"version": "1.0.${{ github.run_number }}"/' src-tauri/tauri.conf.json
+
+      - name: Tests (Kern)
+        run: cargo test -p musiccore --release
+
+      - name: Bauen (Universal: Apple Silicon + Intel)
+        run: npx tauri build --target universal-apple-darwin
+
+      - name: Artefakte hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: MinimalLibrary-Mac-${{ github.run_number }}
+          path: target/universal-apple-darwin/release/bundle/dmg/*.dmg
           retention-days: 30

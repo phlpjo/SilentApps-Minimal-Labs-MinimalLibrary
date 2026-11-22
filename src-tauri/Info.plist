@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Minimal Library sucht Sonos- und DLNA-Lautsprecher im Heimnetz, um Musik dorthin abzuspielen.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_sonos._tcp</string>
+  </array>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Minimal Library nutzt den Finder, um gelöschte Dateien aus dem Papierkorb zurückzulegen.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Nur um die Namen der Audio-Ausgabegeräte anzuzeigen. Es wird nichts aufgenommen.</string>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>de</string>
+</dict>
+</plist>

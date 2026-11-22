@@ -82,7 +82,7 @@ export function waveElement(opts: {
     tip.textContent = fmtTime((x / r.width) * opts.duration());
   });
   canvas.addEventListener("mouseleave", () => (line.style.display = tip.style.display = "none"));
-  canvas.addEventListener("mousedown", (e) => {
+  canvas.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     e.stopPropagation();
     const r = canvas.getBoundingClientRect();

@@ -1,14 +1,12 @@
 // Datei-Operationen, die aus mehreren Ansichten genutzt werden
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
-import { player } from "./player";
 import { store } from "./store";
 import { basename, h, reportErrors, sheet } from "./ui";
 
 /** Titel in einen Ordner verschieben (oder kopieren) – mit Verlauf und Rückgängig unter „Sortieren“. */
 export async function moveTracksTo(ids: number[], dir: string, copy = false) {
   if (!ids.length) return;
-  if (!copy) player.release(ids);
   const r = await api.moveTracksTo(ids, dir, copy).catch((e) => ({ moved: 0, errors: [String(e)], batchId: 0 }));
   reportErrors(r.errors, `${r.moved} Datei${r.moved === 1 ? "" : "en"} ${copy ? "kopiert" : "verschoben"} → ${basename(dir)}`);
   // Ziel außerhalb der Musikordner → als Musikordner aufnehmen
@@ -41,7 +39,6 @@ export function renameFileDialog(id: number) {
     const name = inp.value.trim();
     s.close();
     if (!name || name === stem) return;
-    player.release([id]);
     const r = await api.renameTrack(id, name).catch((e) => ({ moved: 0, errors: [String(e)], batchId: 0 }));
     reportErrors(r.errors, "Umbenannt");
     await store.refreshTracks([id]);

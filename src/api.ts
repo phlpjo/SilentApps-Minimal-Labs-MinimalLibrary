@@ -34,6 +34,8 @@ export interface Settings {
   threads: number;
   autoAnalyze: boolean;
   acoustidKey: string;
+  ripDir: string | null;
+  ripFormat: "mp3" | "original";
 }
 
 export interface ScanReport { found: number; added: number; updated: number; removed: number; errors: string[] }
@@ -61,6 +63,13 @@ export interface Candidate {
 }
 
 export interface DirEntry { name: string; path: string; hasChildren: boolean; tracks: number }
+
+export interface CastDevice { id: string; name: string; kind: "sonos" | "dlna"; model: string }
+export interface CastStatus { state: string; position: number; duration: number; volume: number }
+
+export interface ToolStatus { ytdlp: string | null; ffmpeg: boolean; dir: string }
+export interface RipEntry { index: number; artist: string; title: string; album: string | null; duration: number | null; source: string; site: string; inLibrary: [number, string] | null }
+export interface RipEvent { index: number; stage: "download" | "convert" | "done" | "error"; percent: number; message: string; trackId: number | null }
 
 export type Layout = "numbered" | "flat" | "structured";
 export interface ExportReport { copied: number; skipped: number; bytes: number; playlists: string[]; errors: string[] }
@@ -114,5 +123,18 @@ export const api = {
   renameTrack: (id: number, name: string) => invoke<ApplyReport>("rename_track", { id, name }),
   renamePreview: (ids: number[], pattern: string) => invoke<[number, string][]>("rename_preview", { ids, pattern }),
   renameByPattern: (ids: number[], pattern: string) => invoke<ApplyReport>("rename_by_pattern", { ids, pattern }),
+  ripTools: () => invoke<ToolStatus>("rip_tools"),
+  ripInstall: () => invoke<ToolStatus>("rip_install"),
+  ripUpdate: () => invoke<string>("rip_update"),
+  ripResolve: (url: string) => invoke<{ name: string; entries: RipEntry[] }>("rip_resolve", { url }),
+  ripDownload: (entries: RipEntry[], dir: string, format: "mp3" | "original") => invoke<{ ids: number[]; errors: string[] }>("rip_download", { entries, dir, format }),
+  castDevices: () => invoke<CastDevice[]>("cast_devices"),
+  castPlay: (device: string, id: number, start: number) => invoke<void>("cast_play", { device, id, start }),
+  castPause: (device: string) => invoke<void>("cast_pause", { device }),
+  castResume: (device: string) => invoke<void>("cast_resume", { device }),
+  castStop: (device: string) => invoke<void>("cast_stop", { device }),
+  castSeek: (device: string, sec: number) => invoke<void>("cast_seek", { device, sec }),
+  castVolume: (device: string, volume: number) => invoke<void>("cast_volume", { device, volume }),
+  castStatus: (device: string) => invoke<CastStatus>("cast_status", { device }),
   version: () => invoke<string>("app_version"),
 };

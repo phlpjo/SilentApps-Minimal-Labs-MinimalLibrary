@@ -117,8 +117,9 @@ export interface MenuItem { label: string; hint?: string; action?: () => void; s
 
 export function contextMenu(x: number, y: number, items: MenuItem[]) {
   document.querySelectorAll(".menu").forEach((m) => m.remove());
-  const build = (list: MenuItem[], px: number, py: number) => {
-    const m = h("div", { class: "menu" });
+  /** level 0 = Hauptmenü, 1 = Untermenü. altX = Position links vom Elternmenü, falls rechts kein Platz */
+  const build = (list: MenuItem[], px: number, py: number, level: number, altX?: number) => {
+    const m = h("div", { class: "menu" + (level ? " sub" : "") });
     for (const it of list) {
       if (it.sep) {
         m.appendChild(h("hr"));
@@ -129,11 +130,11 @@ export function contextMenu(x: number, y: number, items: MenuItem[]) {
         o.addEventListener("mouseenter", () => {
           document.querySelectorAll(".menu.sub").forEach((s) => s.remove());
           const r = o.getBoundingClientRect();
-          const s = build(it.sub!, r.right + 4, r.top - 6);
-          s.classList.add("sub");
+          build(it.sub!, r.right + 2, r.top - 6, level + 1, r.left - 2);
         });
       } else {
-        o.addEventListener("mouseenter", () => document.querySelectorAll(".menu.sub").forEach((s) => s.remove()));
+        // Nur im Hauptmenü schließt das Überfahren anderer Einträge das Untermenü
+        if (level === 0) o.addEventListener("mouseenter", () => document.querySelectorAll(".menu.sub").forEach((s) => s.remove()));
         o.addEventListener("click", () => {
           document.querySelectorAll(".menu").forEach((mm) => mm.remove());
           it.action?.();
@@ -141,13 +142,16 @@ export function contextMenu(x: number, y: number, items: MenuItem[]) {
       }
       m.appendChild(o);
     }
+    if (level && !list.length) m.appendChild(h("div", { class: "option", style: { opacity: "0.6" } }, "– keine –"));
     document.body.appendChild(m);
     const r = m.getBoundingClientRect();
-    m.style.left = Math.min(px, window.innerWidth - r.width - 8) + "px";
-    m.style.top = Math.min(py, window.innerHeight - r.height - 8) + "px";
+    let left = px;
+    if (left + r.width > window.innerWidth - 8) left = altX !== undefined ? altX - r.width : window.innerWidth - r.width - 8;
+    m.style.left = Math.max(8, left) + "px";
+    m.style.top = Math.max(8, Math.min(py, window.innerHeight - r.height - 8)) + "px";
     return m;
   };
-  build(items, x, y);
+  build(items, x, y, 0);
   const off = (e: Event) => {
     if (!(e.target as HTMLElement).closest(".menu")) {
       document.querySelectorAll(".menu").forEach((m) => m.remove());

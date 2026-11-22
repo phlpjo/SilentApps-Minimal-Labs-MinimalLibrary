@@ -1,5 +1,4 @@
 import { api, type Batch } from "../api";
-import { player } from "../player";
 import { store } from "../store";
 import { clear, h, holdButton, reportErrors, toast } from "../ui";
 import { analyzeIds } from "../main";
@@ -8,7 +7,6 @@ const KIND: Record<Batch["kind"], string> = { move: "Dateien", tags: "Tags", tra
 
 /** Einen Eintrag rückgängig machen (oder den letzten, wenn id = null). */
 export async function undo(id: number | null) {
-  player.release(player.current ? [player.current.id] : []);
   try {
     const r = await api.undoBatch(id);
     reportErrors(r.errors, `Rückgängig gemacht (${r.restored})`);

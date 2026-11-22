@@ -7,31 +7,86 @@ import { api, type LibraryChange } from "./api";
 import { Inspector } from "./inspector";
 import { player } from "./player";
 import { store } from "./store";
-import { clear, contextMenu, fmtTime, h, sheet, toast } from "./ui";
+import { clear, contextMenu, fmtTime, h, sheet, toast, type MenuItem } from "./ui";
 import { drawWave, waveElement } from "./waveform";
 import { dropTarget } from "./dnd";
 import { duplicatesView } from "./views/duplicates";
 import { libraryView } from "./views/library";
 import { foldersView } from "./views/folders";
 import { historyView, undo } from "./views/history";
+import { ripperView } from "./views/ripper";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { organizeView } from "./views/organize";
 import { exportDialog, playlistView, smartEditor } from "./views/playlist";
 import { settingsView } from "./views/settings";
 import logo from "./logo.svg";
 
-type ViewName = "library" | "folders" | "history" | "playlist" | "duplicates" | "organize" | "settings";
+type ViewName = "library" | "folders" | "history" | "ripper" | "playlist" | "duplicates" | "organize" | "settings";
 
 const app = document.getElementById("app")!;
+const win = getCurrentWindow();
+const backBtn = h("button", { class: "tb-btn back", title: "Zurück (Alt+←)", onclick: () => goBack() }, "‹");
+function updateBack() {
+  backBtn.disabled = backStack.length === 0;
+}
+const maxBtn = h("button", { class: "tb-btn", title: "Maximieren", onclick: () => win.toggleMaximize() }, "▢");
+const titlebar = h("header", { id: "titlebar", "data-tauri-drag-region": "" },
+  backBtn,
+  h("div", { class: "tb-title", "data-tauri-drag-region": "" }),
+  h("div", { class: "tb-ctrls" },
+    h("button", { class: "tb-btn", title: "Minimieren", onclick: () => win.minimize() }, "—"),
+    maxBtn,
+    h("button", { class: "tb-btn close", title: "Schließen", onclick: () => win.close() }, "✕"),
+  ),
+);
+titlebar.addEventListener("dblclick", (e) => {
+  if ((e.target as HTMLElement).hasAttribute("data-tauri-drag-region")) win.toggleMaximize();
+});
+win.onResized(async () => {
+  const m = await win.isMaximized();
+  maxBtn.textContent = m ? "❐" : "▢";
+  maxBtn.title = m ? "Wiederherstellen" : "Maximieren";
+  document.body.classList.toggle("maximized", m);
+});
+// Fensterrahmen-Farbe an Hell/Dunkel anpassen
+const syncFrame = () => win.setTheme(isLight() ? "light" : "dark").catch(() => {});
+document.addEventListener("themechange", syncFrame);
+syncFrame();
+// Maus-Zurück-Taste und Alt+←
+window.addEventListener("mouseup", (e) => {
+  if (e.button === 3) {
+    e.preventDefault();
+    goBack();
+  }
+});
+window.addEventListener("keydown", (e) => {
+  if (e.altKey && e.key === "ArrowLeft") {
+    e.preventDefault();
+    goBack();
+  }
+});
 const side = h("nav", { id: "side" });
 const main = h("main", { id: "main" });
 const insp = h("aside", { id: "inspector" });
 const playerBar = h("footer", { id: "player" });
-app.append(side, main, insp, playerBar);
+app.append(titlebar, side, main, insp, playerBar);
 new Inspector(insp);
 
-let current: { name: ViewName; arg?: number[]; destroy: () => void } | null = null;
+let current: { name: ViewName; arg?: number[]; path?: string; destroy: () => void } | null = null;
+const backStack: { name: ViewName; arg?: number[] }[] = [];
 
-export function nav(name: ViewName, arg?: number[], path?: string) {
+/** Zurück zur vorherigen Ansicht (Zurück-Taste der Maus, Alt+←, ‹ oben links) */
+export function goBack() {
+  const prev = backStack.pop();
+  if (prev) nav(prev.name, prev.arg, undefined, true);
+  updateBack();
+}
+
+export function nav(name: ViewName, arg?: number[], path?: string, fromBack = false) {
+  if (current && !fromBack && !(current.name === name && JSON.stringify(current.arg ?? null) === JSON.stringify(arg ?? null) && !path)) {
+    backStack.push({ name: current.name, arg: current.arg });
+    if (backStack.length > 50) backStack.shift();
+  }
   current?.destroy();
   clear(main);
   let v: { el: HTMLElement; destroy: () => void };
@@ -40,13 +95,15 @@ export function nav(name: ViewName, arg?: number[], path?: string) {
     case "library": v = libraryView(); break;
     case "folders": v = foldersView(path); break;
     case "history": v = historyView(); break;
+    case "ripper": v = ripperView(); break;
     case "playlist": v = playlistView(arg![0]); break;
     case "duplicates": v = duplicatesView(); break;
     case "organize": v = organizeView(arg); break;
     case "settings": v = settingsView(); break;
   }
   main.appendChild(v.el);
-  current = { name, arg, destroy: v.destroy };
+  current = { name, arg, path, destroy: v.destroy };
+  updateBack();
   app.classList.toggle("no-insp", !(name === "library" || name === "playlist" || name === "folders"));
   store.emit("selection");
   renderSide();
@@ -82,6 +139,7 @@ function renderSide() {
     navItem("Ordner", n === "folders", () => nav("folders")),
     navItem("Duplikate", n === "duplicates", () => nav("duplicates")),
     navItem("Verlauf", n === "history", () => nav("history")),
+    navItem("Ripper", n === "ripper", () => nav("ripper")),
     navItem("Sortieren", n === "organize", () => nav("organize", n === "library" ? [...store.selection] : undefined)),
     navItem("Einstellungen", n === "settings", () => nav("settings")),
   );
@@ -148,13 +206,13 @@ export function newPlaylistFromIds(ids: number[]) {
 }
 
 // ---------- Hintergrund-Aufgaben + Fortschritt ----------
-const TASKS: Record<string, string> = { scan: "Scannen", analyze: "Analysieren", duplicates: "Duplikate", organize: "Sortieren", export: "Exportieren" };
+const TASKS: Record<string, string> = { rip: "Ripper", tools: "Werkzeuge laden", scan: "Scannen", analyze: "Analysieren", duplicates: "Duplikate", organize: "Sortieren", export: "Exportieren" };
 let busy = 0;
 let hideTimer = 0;
 function setStatus(task: string, done: number, total: number, msg: string) {
   clearTimeout(hideTimer);
   const pct = total ? Math.round((done / total) * 100) : 0;
-  const cancellable = task === "analyze" || task === "export";
+  const cancellable = task === "analyze" || task === "export" || task === "rip";
   status.replaceChildren(
     h("div", { class: "srow" }, h("span", {}, `${TASKS[task] ?? task}${total ? ` ${done.toLocaleString("de")} / ${total.toLocaleString("de")}` : ""}`),
       cancellable && done < total ? h("span", { class: "act", style: { cursor: "pointer" }, onclick: () => api.cancel() }, "Abbrechen") : null),
@@ -242,18 +300,41 @@ function buildPlayer() {
   canvas.style.width = "100%";
   const tCur = h("span", {}, "0:00");
   const tDur = h("span", {}, "0:00");
-  const vol = h("input", { type: "range", min: "0", max: "1", step: "0.01", value: String(player.audio.volume) });
+  const vol = h("input", { type: "range", min: "0", max: "1", step: "0.01", value: String(player.volumeLevel) });
   vol.addEventListener("input", () => player.setVolume(Number(vol.value)));
+  const shuffleBtn = h("button", { class: "btn", title: "Zufallswiedergabe", onclick: () => player.setShuffle(!player.shuffle) }, "Zufall");
+  const devBtn = h("button", { class: "btn dev", title: "Ausgabegerät: dieser PC oder Lautsprecher im Heimnetz" }, "Dieser PC");
+  devBtn.addEventListener("click", async () => {
+    const r = devBtn.getBoundingClientRect();
+    contextMenu(r.left, r.top - 60, [{ label: "Suche Geräte im Heimnetz …", disabled: true }]);
+    const list = await api.castDevices().catch((e) => {
+      toast(String(e));
+      return [];
+    });
+    const items: MenuItem[] = [
+      { label: (player.device ? "\u2003\u2002" : "✓\u2002") + "Dieser PC", action: () => player.setDevice(null) },
+      { label: "", sep: true },
+      ...list.map((d) => ({
+        label: (player.device?.id === d.id ? "✓\u2002" : "\u2003\u2002") + d.name,
+        hint: d.kind === "sonos" ? "Sonos" : "DLNA",
+        action: () => player.setDevice(d),
+      })),
+    ];
+    if (!list.length) items.push({ label: "Keine Geräte gefunden", disabled: true });
+    const h2 = items.length * 36 + 20;
+    contextMenu(r.left, r.top - h2, items);
+  });
   playerBar.append(
     cover,
     h("div", { style: { minWidth: "0" } }, t1, t2),
     h("div", { class: "ctrls" },
+      shuffleBtn,
       h("button", { class: "btn", onclick: () => player.prev() }, "Zurück"),
       playBtn,
       h("button", { class: "btn", onclick: () => player.next() }, "Weiter"),
     ),
     h("div", { class: "bigwave" }, wrap, h("div", { class: "time" }, tCur, tDur)),
-    h("div", { class: "vol" }, "Lautst.", vol),
+    h("div", { class: "vol" }, devBtn, vol),
   );
   let coverFor = -1;
   const update = () => {
@@ -268,7 +349,11 @@ function buildPlayer() {
       if (t.hasCover) api.getCover(t.id).then((u) => u && coverFor === t.id && cover.replaceChildren(h("img", { src: u })));
     }
     drawWave(canvas, t ? store.peaksFor(t.id) : undefined, t ? player.frac() : -1);
-    tCur.textContent = fmtTime(player.audio.currentTime);
+    tCur.textContent = fmtTime(player.currentTime);
+    shuffleBtn.classList.toggle("on", player.shuffle);
+    devBtn.textContent = player.device ? "▸ " + player.device.name : "Dieser PC";
+    devBtn.classList.toggle("on", !!player.device);
+    if (document.activeElement !== vol) vol.value = String(player.volumeLevel);
   };
   store.on("player", update);
   store.on("peaks", update);
@@ -276,7 +361,7 @@ function buildPlayer() {
   new ResizeObserver(update).observe(canvas);
   player.onPos((id, f) => {
     drawWave(canvas, store.peaksFor(id), f);
-    tCur.textContent = fmtTime(player.audio.currentTime);
+    tCur.textContent = fmtTime(player.currentTime);
     tDur.textContent = fmtTime(player.duration);
   });
   update();

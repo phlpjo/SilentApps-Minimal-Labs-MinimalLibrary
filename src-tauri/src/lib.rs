@@ -1,5 +1,5 @@
 use base64::Engine;
-use musiccore::{acoustid, analysis, db, dirs, duplicates, history, watch, export, musicbrainz, organize, playlists, scanner, tags};
+use musiccore::{acoustid, analysis, cast, ripper, db, dirs, duplicates, history, watch, export, musicbrainz, organize, playlists, scanner, tags};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -70,6 +70,8 @@ struct Settings {
     threads: usize,
     auto_analyze: bool,
     acoustid_key: String,
+    rip_dir: Option<String>,
+    rip_format: String,
 }
 
 impl Default for Settings {
@@ -83,6 +85,8 @@ impl Default for Settings {
             threads: (threads.saturating_sub(1)).clamp(1, 8),
             auto_analyze: true,
             acoustid_key: String::new(),
+            rip_dir: None,
+            rip_format: "mp3".into(),
         }
     }
 }
@@ -768,6 +772,144 @@ async fn rename_by_pattern(state: State<'_, AppState>, ids: Vec<i64>, pattern: S
     .await
 }
 
+// ---------- Link-Ripper ----------
+
+fn tools_dir(app: &AppHandle) -> PathBuf {
+    app.path().app_data_dir().unwrap_or_default().join("tools")
+}
+
+#[tauri::command]
+async fn rip_tools(app: AppHandle) -> R<ripper::ToolStatus> {
+    let dir = tools_dir(&app);
+    blocking(move || Ok(ripper::status(&dir))).await
+}
+
+#[tauri::command]
+async fn rip_install(app: AppHandle) -> R<ripper::ToolStatus> {
+    let dir = tools_dir(&app);
+    let prog = emitter(&app, "tools");
+    blocking(move || ripper::install(&dir, &prog)).await
+}
+
+#[tauri::command]
+async fn rip_update(app: AppHandle) -> R<String> {
+    let dir = tools_dir(&app);
+    blocking(move || ripper::update(&dir)).await
+}
+
+#[tauri::command]
+async fn rip_resolve(app: AppHandle, state: State<'_, AppState>, url: String) -> R<ripper::Resolved> {
+    let dir = tools_dir(&app);
+    let db = state.db.clone();
+    blocking(move || {
+        let mut r = ripper::resolve(&dir, &url)?;
+        let lib = db::all_tracks(&db.lock().unwrap())?;
+        ripper::mark_known(&mut r.entries, &lib);
+        Ok(r)
+    })
+    .await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RipReport {
+    ids: Vec<i64>,
+    errors: Vec<String>,
+}
+
+#[tauri::command]
+async fn rip_download(app: AppHandle, state: State<'_, AppState>, entries: Vec<ripper::Entry>, dir: String, format: ripper::Format) -> R<RipReport> {
+    let tools = tools_dir(&app);
+    let db = state.db.clone();
+    let cancel = state.cancel.clone();
+    cancel.store(false, Ordering::Relaxed);
+    let _ = app.asset_protocol_scope().allow_directory(&dir, true);
+    blocking(move || {
+        let mut rep = RipReport { ids: vec![], errors: vec![] };
+        let total = entries.len();
+        let on = |ev: ripper::RipEvent| {
+            let _ = app.emit("rip", ev);
+        };
+        for (n, e) in entries.iter().enumerate() {
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            let _ = app.emit("progress", ProgressEvent { task: "rip".into(), done: n, total, message: format!("{} – {}", e.artist, e.title) });
+            match ripper::rip_one(&tools, &db, e, Path::new(&dir), format, &cancel, &on) {
+                Ok(id) => {
+                    rep.ids.push(id);
+                    on(ripper::RipEvent { index: e.index, stage: "done".into(), percent: 100.0, message: "fertig".into(), track_id: Some(id) });
+                }
+                Err(err) => {
+                    rep.errors.push(format!("{} – {}: {err}", e.artist, e.title));
+                    on(ripper::RipEvent { index: e.index, stage: "error".into(), percent: 0.0, message: err.to_string(), track_id: None });
+                }
+            }
+        }
+        let _ = app.emit("progress", ProgressEvent { task: "rip".into(), done: total, total, message: "Fertig".into() });
+        sync_playlists(&db.lock().unwrap());
+        Ok(rep)
+    })
+    .await
+}
+
+// ---------- Heimnetz (Sonos/DLNA) ----------
+
+#[tauri::command]
+async fn cast_devices() -> R<Vec<cast::Device>> {
+    blocking(cast::discover).await
+}
+
+#[tauri::command]
+async fn cast_play(state: State<'_, AppState>, device: String, id: i64, start: f64) -> R<()> {
+    let db = state.db.clone();
+    blocking(move || {
+        let t = db::track(&db.lock().unwrap(), id)?.ok_or_else(|| anyhow::anyhow!("Titel nicht gefunden"))?;
+        let p = PathBuf::from(&t.path);
+        let cover = tags::cover(&p).ok().flatten().map(|(_, b)| b);
+        let title = t.title.clone().unwrap_or_else(|| p.file_stem().unwrap_or_default().to_string_lossy().to_string());
+        let meta = cast::Meta {
+            title: &title,
+            artist: t.artist.as_deref().unwrap_or(""),
+            album: t.album.as_deref().unwrap_or(""),
+            duration: t.duration,
+            cover,
+        };
+        cast::play(&device, &p, meta, start)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn cast_pause(device: String) -> R<()> {
+    blocking(move || cast::pause(&device)).await
+}
+
+#[tauri::command]
+async fn cast_resume(device: String) -> R<()> {
+    blocking(move || cast::resume(&device)).await
+}
+
+#[tauri::command]
+async fn cast_stop(device: String) -> R<()> {
+    blocking(move || cast::stop(&device)).await
+}
+
+#[tauri::command]
+async fn cast_seek(device: String, sec: f64) -> R<()> {
+    blocking(move || cast::seek(&device, sec)).await
+}
+
+#[tauri::command]
+async fn cast_volume(device: String, volume: u8) -> R<()> {
+    blocking(move || cast::set_volume(&device, volume)).await
+}
+
+#[tauri::command]
+async fn cast_status(device: String) -> R<cast::Status> {
+    blocking(move || cast::status(&device)).await
+}
+
 #[tauri::command]
 fn app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
@@ -837,6 +979,19 @@ pub fn run() {
             rename_track,
             rename_preview,
             rename_by_pattern,
+            rip_tools,
+            rip_install,
+            rip_update,
+            rip_resolve,
+            rip_download,
+            cast_devices,
+            cast_play,
+            cast_pause,
+            cast_resume,
+            cast_stop,
+            cast_seek,
+            cast_volume,
+            cast_status,
             app_version,
         ])
         .run(tauri::generate_context!())

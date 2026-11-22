@@ -294,7 +294,6 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     const go = async () => {
       s.close();
       if (!inp.value.trim() || inp.value.trim() === basename(path)) return;
-      player.release([...store.tracks.values()].filter((t) => norm(t.path).startsWith(norm(path) + "\\")).map((t) => t.id));
       try {
         const np = await api.dirRename(path, inp.value.trim());
         if (norm(current).startsWith(norm(path))) current = np + current.slice(path.length);

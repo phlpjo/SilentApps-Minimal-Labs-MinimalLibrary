@@ -2,7 +2,6 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, type Candidate, type TagUpdate, type Track } from "./api";
 import { store } from "./store";
-import { player } from "./player";
 import { basename, clear, ext, fmtSize, fmtTime, h, holdButton, keyLabel, reportErrors, sheet, toast } from "./ui";
 
 type FieldKey = keyof TagUpdate;
@@ -224,7 +223,6 @@ export class Inspector {
       reportErrors(errs, "Cover übernommen");
     }
     if (rename) {
-      player.release(ids);
       const r = await api.renameByPattern(ids, this.namePattern).catch((e) => ({ moved: 0, errors: [String(e)], batchId: 0 }));
       reportErrors(r.errors, r.moved ? `${r.moved} Datei${r.moved === 1 ? "" : "en"} umbenannt` : undefined);
       store.emit("dirs");

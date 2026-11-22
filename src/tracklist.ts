@@ -389,6 +389,7 @@ export class TrackList {
   }
 
   private onRowDown(e: PointerEvent, i: number) {
+    if ((e.target as HTMLElement).closest(".wave-wrap")) return; // Klick in die Wellenform = Abspielen
     if (e.button === 2 && store.selection.has(this.view[i])) return;
     if (e.button === 0) e.preventDefault(); // keine Textauswahl beim Ziehen
     this.body.focus({ preventScroll: true });

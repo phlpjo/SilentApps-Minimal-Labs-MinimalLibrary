@@ -288,3 +288,24 @@ body.is-dragging, body.is-dragging * { cursor: grabbing !important; }
 .list-head .rz:hover::after { background: var(--ink); }
 body.is-resizing, body.is-resizing * { cursor: col-resize !important; user-select: none; }
 .setting.undone .t1 { color: var(--weak); }
+
+/* ---------- Eigene Titelleiste ---------- */
+#app { grid-template-rows: 34px 1fr 96px; grid-template-areas: "title title title" "side main insp" "player player player"; }
+#titlebar { grid-area: title; display: flex; align-items: center; background: var(--bg); border-bottom: 1px solid var(--line-soft); user-select: none; }
+#titlebar .tb-title { flex: 1; height: 100%; display: flex; align-items: center; padding-left: 8px; font-size: 12px; color: var(--weak); letter-spacing: 0.5px; }
+#titlebar .tb-ctrls { display: flex; height: 100%; }
+.tb-btn { background: none; border: none; color: var(--dim); width: 46px; height: 100%; cursor: default; font-size: 13px; }
+.tb-btn:hover { background: var(--hover); color: var(--ink); }
+.tb-btn.close:hover { background: #c42b1c; color: #fff; }
+.tb-btn.back { width: 40px; font-size: 20px; line-height: 1; }
+.tb-btn:disabled { opacity: 0.3; background: none; }
+#player .ctrls .btn.on, #player .vol .btn.on { color: var(--ink); text-shadow: var(--glow); }
+#player .ctrls .btn.on::after { content: " ●"; font-size: 8px; vertical-align: 2px; }
+#player { grid-template-columns: 64px 220px auto 1fr 250px; }
+#player .vol .btn.dev { max-width: 120px; overflow: hidden; text-overflow: ellipsis; flex: none; padding: 6px 6px; }
+/* Ripper */
+table.rip tr.is-known td { color: var(--weak); }
+table.rip .known { cursor: pointer; text-decoration: underline dotted; color: var(--dim); }
+table.rip .known:hover { color: var(--ink); }
+textarea { background: var(--panel2); border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; outline: none; font: inherit; color: inherit; }
+textarea:focus { border-color: var(--line); }

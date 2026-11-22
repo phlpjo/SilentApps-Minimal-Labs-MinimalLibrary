@@ -3,6 +3,7 @@
 
 pub mod acoustid;
 pub mod analysis;
+pub mod cast;
 pub mod db;
 pub mod dirs;
 pub mod duplicates;
@@ -12,6 +13,7 @@ pub mod musicbrainz;
 pub mod organize;
 pub mod paths;
 pub mod playlists;
+pub mod ripper;
 pub mod scanner;
 pub mod tags;
 pub mod watch;

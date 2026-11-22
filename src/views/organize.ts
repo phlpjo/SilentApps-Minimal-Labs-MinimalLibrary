@@ -1,6 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, type PlannedMove } from "../api";
-import { player } from "../player";
 import { store } from "../store";
 import { h, holdButton, reportErrors, toast } from "../ui";
 import { historyList } from "./history";
@@ -65,7 +64,6 @@ export function organizeView(preIds?: number[]): { el: HTMLElement; destroy: () 
 
   const apply = async () => {
     const changes = plan.filter((m) => !m.unchanged);
-    if (modeSel.value === "move") player.release(changes.map((m) => m.trackId));
     const r = await api.organizeApply(plan, modeSel.value === "copy", `${modeSel.value === "copy" ? "Kopiert" : "Verschoben"}: ${changes.length} Dateien nach ${pattern.value}`);
     reportErrors(r.errors, `${r.moved} Dateien ${modeSel.value === "copy" ? "kopiert" : "verschoben"}`);
     // Zielordner als Musikordner aufnehmen, damit spätere Scans die Dateien finden

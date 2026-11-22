@@ -139,6 +139,12 @@ function phoneCard() {
       ...i.paired.map((n) => h("div", { class: "setting" }, h("span", {}, "📱 " + n),
         h("button", { class: "btn", onclick: async () => { await api.remoteUnpair(n); fill(); } }, "Entkoppeln"))),
       i.port ? "" : h("div", { class: "err" }, "Freigabe konnte nicht starten (Netzwerk blockiert?)."),
+      h("div", { class: "setting" },
+        h("span", {}, "Ablage für Musik vom Handy", h("div", { class: "note" }, (store.settings.phoneDir || "Musik › Minimal Library") + " › <Gerätename> – wird als eigene Musikquelle angelegt")),
+        h("button", { class: "btn", onclick: async () => {
+          const d = await open({ directory: true });
+          if (d) { await store.saveSettings({ phoneDir: d as string }); fill(); }
+        } }, "Ändern …")),
     );
   };
   box.addEventListener("change", async () => { await store.saveSettings({ remoteOff: !box.checked }); fill(); });
@@ -148,7 +154,7 @@ function phoneCard() {
   return h("div", { class: "card" }, h("h3", {}, "Minimal Player Connected (Handy im WLAN)"),
     h("div", { class: "setting" }, h("label", { class: "check" }, box, "Bibliothek fürs Handy freigeben, solange Minimal Library läuft"), h("span", {})),
     body,
-    h("div", { class: "note" }, "In Minimal Player Connected unter „Bibliothek“ diesen Computer wählen und einmal den Code eingeben. Danach siehst du am Handy alle Ordner und Playlisten, spielst direkt ab, bearbeitest Playlisten und machst Ordner oder Playlisten offline verfügbar. Musik aus den Handy-Ordnern, die hier noch fehlt, kommt automatisch in den ersten Musikordner unter „Vom Handy“; die Playlisten vom Handy erscheinen hier ebenfalls. Nur im eigenen WLAN; Windows fragt beim ersten Mal evtl. nach der Firewall-Freigabe – bitte „Private Netzwerke“ erlauben."),
+    h("div", { class: "note" }, "In Minimal Player Connected unter „Bibliothek“ diesen Computer wählen und einmal den Code eingeben. Danach siehst du am Handy alle Ordner und Playlisten, spielst direkt ab, bearbeitest Playlisten und machst Ordner oder Playlisten offline verfügbar. Neue Musik aus dem Hauptordner am Handy kommt automatisch hierher (je Handy eine eigene Musikquelle); sortierst du sie hier, zieht sie am Handy mit. Playlisten und Stern werden in beide Richtungen zusammengeführt. Nur im eigenen WLAN; Windows fragt beim ersten Mal evtl. nach der Firewall-Freigabe – bitte „Private Netzwerke“ erlauben."),
   );
 }
 

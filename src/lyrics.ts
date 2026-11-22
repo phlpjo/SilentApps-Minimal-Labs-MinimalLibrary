@@ -2,7 +2,7 @@
 import { api } from "./api";
 import { player } from "./player";
 import { store } from "./store";
-import { h, holdButton, sheet, toast } from "./ui";
+import { fmtTime, h, holdButton, sheet, toast } from "./ui";
 
 export interface Line { t: number | null; text: string }
 
@@ -53,152 +53,345 @@ export function currentLine(lines: Line[], t: number): number {
 
 // ---------- Bearbeiten ----------
 
-/** Zeitmarke am Anfang einer Zeile ersetzen/setzen */
-function setStamp(line: string, t: number): string {
-  return stamp(t) + line.replace(/^(\s*\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\])+/, "");
+interface Row { t: number | null; text: string }
+
+/** Editor-Zeilen: Reihenfolge wie in der Datei, Kopfzeilen ([ar:] …) bleiben erhalten */
+function toRows(text: string): { head: string[]; rows: Row[] } {
+  const head: string[] = [];
+  const rows: Row[] = [];
+  let offset = 0;
+  for (const raw of text.split(/\r?\n/)) {
+    const off = raw.match(/^\s*\[offset:\s*([+-]?\d+)\]/i);
+    if (off) { offset = Number(off[1]) / 1000; continue; }
+    if (/^\s*\[[a-z]+:.*\]\s*$/i.test(raw)) { head.push(raw.trim()); continue; }
+    const times: number[] = [];
+    let m: RegExpExecArray | null;
+    TS.lastIndex = 0;
+    let rest = raw;
+    while ((m = TS.exec(raw))) {
+      const frac = m[3] ? Number(m[3]) / Math.pow(10, m[3].length) : 0;
+      times.push(Math.max(0, Number(m[1]) * 60 + Number(m[2]) + frac - offset));
+      rest = raw.slice(TS.lastIndex);
+    }
+    const txt = rest.trim();
+    if (times.length) for (const t of times) rows.push({ t, text: txt });
+    else rows.push({ t: null, text: txt });
+  }
+  while (rows.length && !rows[rows.length - 1].text && rows[rows.length - 1].t == null) rows.pop();
+  return { head, rows: rows.length ? rows : [{ t: null, text: "" }] };
 }
 
-function shiftLine(line: string, d: number): string {
-  return line.replace(/\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g, (_x, a, b, c) => {
-    const frac = c ? Number(c) / Math.pow(10, c.length) : 0;
-    return stamp(Math.max(0, Number(a) * 60 + Number(b) + frac + d));
-  });
+function fromRows(head: string[], rows: Row[]): string {
+  return [...head, ...rows.map((r) => (r.t != null ? stamp(r.t) : "") + r.text)].join("\n");
+}
+
+function parseTime(s: string): number | null {
+  const m = s.trim().replace(/^\[|\]$/g, "").match(/^(\d{1,3}):(\d{1,2})(?:[.,:](\d{1,3}))?$/);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]) + (m[3] ? Number(m[3]) / Math.pow(10, m[3].length) : 0);
 }
 
 export async function editLyrics(id: number) {
   const t = store.tracks.get(id);
   if (!t) return;
   const cur = await api.lyricsGet(id).catch(() => null);
-  const ta = h("textarea", { spellcheck: false, rows: 18, style: { width: "100%", fontFamily: "var(--mono)", fontSize: "13px", lineHeight: "1.55", resize: "vertical" } }) as HTMLTextAreaElement;
-  ta.value = cur?.text ?? "";
-  const live = h("div", { class: "lyr-live" }, "");
-  const info = h("div", { class: "note" });
-
-  const lines = () => ta.value.split("\n");
-  const caretLine = () => ta.value.slice(0, ta.selectionStart).split("\n").length - 1;
-  const selectLine = (i: number) => {
-    const ls = lines();
-    i = Math.max(0, Math.min(ls.length - 1, i));
-    const start = ls.slice(0, i).reduce((s, l) => s + l.length + 1, 0);
-    ta.focus();
-    ta.setSelectionRange(start, start + ls[i].length);
-    // ungefähr mitscrollen
-    const lh = parseFloat(getComputedStyle(ta).lineHeight) || 20;
-    ta.scrollTop = Math.max(0, i * lh - ta.clientHeight / 2);
-  };
-  const editLine = (i: number, f: (l: string) => string) => {
-    const ls = lines();
-    if (i < 0 || i >= ls.length) return;
-    ls[i] = f(ls[i]);
-    ta.value = ls.join("\n");
-    selectLine(i);
-  };
+  let { head, rows } = toRows(cur?.text ?? "");
+  let sel = 0;
+  let nowIdx = -1;
   const playing = () => player.current?.id === id;
+  const dur = () => (playing() && player.duration) || t.duration || 1;
 
-  // Tap-Sync: Zeit des Players in die aktuelle Zeile, dann zur nächsten Textzeile
-  const tap = () => {
-    if (!playing()) return toast("Erst den Titel hier abspielen (▶ Ab Anfang)");
-    let i = caretLine();
-    const ls = lines();
-    while (i < ls.length && !ls[i].replace(/^(\s*\[[^\]]*\])+/, "").trim() && /^\s*\[[a-z]+:/i.test(ls[i])) i++;
-    editLine(i, (l) => setStamp(l, player.currentTime));
-    // nächste nicht-leere Zeile wählen
-    let j = i + 1;
-    while (j < lines().length && !lines()[j].trim()) j++;
-    selectLine(j);
+  // ---- Zeilen ----
+  const list = h("div", { class: "lyr-rows" });
+  const rowEls: HTMLElement[] = [];
+  const fmtT = (x: number | null) => (x == null ? "" : stamp(x).slice(1, -1));
+  const renderRows = (focus?: number) => {
+    rowEls.length = 0;
+    list.replaceChildren(...rows.map((r, i) => {
+      const time = h("input", { type: "text", class: "lyr-time", value: fmtT(r.t), placeholder: "––:––.––", spellcheck: false }) as HTMLInputElement;
+      const text = h("input", { type: "text", class: "lyr-text", value: r.text, placeholder: "Text", spellcheck: false }) as HTMLInputElement;
+      time.addEventListener("change", () => { rows[i].t = time.value.trim() ? parseTime(time.value) : null; time.value = fmtT(rows[i].t); draw(); });
+      time.addEventListener("focus", () => select(i, false));
+      time.addEventListener("dblclick", () => rows[i].t != null && seekTo(rows[i].t!));
+      text.addEventListener("focus", () => select(i, false));
+      text.addEventListener("input", () => { rows[i].text = text.value; draw(); });
+      text.addEventListener("paste", (e) => {
+        // mehrere Zeilen einfügen → mehrere Zeilen anlegen
+        const s = e.clipboardData?.getData("text") ?? "";
+        if (!s.includes("\n")) return;
+        e.preventDefault();
+        const parsed = toRows(s);
+        head = [...head, ...parsed.head.filter((x) => !head.includes(x))];
+        const before = text.value.slice(0, text.selectionStart ?? 0);
+        const first = parsed.rows[0];
+        rows[i] = { t: rows[i].t ?? first.t, text: before + first.text };
+        rows.splice(i + 1, 0, ...parsed.rows.slice(1));
+        renderRows(i + parsed.rows.length - 1);
+        draw();
+      });
+      text.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); tap(); return; }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const pos = text.selectionStart ?? text.value.length;
+          const rest = text.value.slice(pos);
+          rows[i].text = text.value.slice(0, pos);
+          rows.splice(i + 1, 0, { t: null, text: rest });
+          renderRows(i + 1);
+          return;
+        }
+        if (e.key === "Backspace" && !text.value && rows.length > 1) { e.preventDefault(); rows.splice(i, 1); renderRows(Math.max(0, i - 1)); draw(); return; }
+        if (e.key === "ArrowUp") { e.preventDefault(); focusRow(i - 1); }
+        if (e.key === "ArrowDown") { e.preventDefault(); focusRow(i + 1); }
+      });
+      const del = h("button", { class: "lyr-del", title: "Zeile löschen", onclick: () => { if (rows.length > 1) { rows.splice(i, 1); renderRows(Math.min(i, rows.length - 1)); draw(); } } }, "✕");
+      const el = h("div", { class: "lyr-row" + (i === sel ? " sel" : "") + (i === nowIdx ? " now" : "") }, time, text, del);
+      rowEls.push(el);
+      return el;
+    }));
+    if (focus != null) focusRow(focus);
+  };
+  const focusRow = (i: number) => {
+    if (i < 0 || i >= rows.length) return;
+    select(i, true);
+    const inp = rowEls[i]?.querySelector(".lyr-text") as HTMLInputElement | null;
+    inp?.focus();
+  };
+  const select = (i: number, scroll: boolean) => {
+    sel = Math.max(0, Math.min(rows.length - 1, i));
+    rowEls.forEach((el, k) => el.classList.toggle("sel", k === sel));
+    if (scroll) rowEls[sel]?.scrollIntoView({ block: "nearest" });
+    draw();
+  };
+  const setRowTime = (i: number, v: number | null) => {
+    rows[i].t = v == null ? null : Math.max(0, Math.round(v * 100) / 100);
+    const inp = rowEls[i]?.querySelector(".lyr-time") as HTMLInputElement | null;
+    if (inp) inp.value = fmtT(rows[i].t);
+    draw();
   };
 
-  const fetchBtn = h("button", { class: "btn", onclick: async () => {
+  // ---- Abspielen ----
+  const seekTo = (sec: number) => {
+    const f = Math.max(0, sec) / dur();
+    if (playing()) player.seekFrac(f);
+    else player.play(id, f);
+  };
+  const tap = () => {
+    if (!playing()) return toast("Erst den Titel abspielen (▶)");
+    setRowTime(sel, player.currentTime);
+    let j = sel + 1;
+    while (j < rows.length && !rows[j].text.trim()) j++;
+    focusRow(Math.min(j, rows.length - 1));
+  };
+
+  // ---- Zeitachse (scrollbar, zoombar; Marken ziehen) ----
+  let pps = 60; // Pixel pro Sekunde
+  const canvas = h("canvas", { class: "lyr-canvas" }) as HTMLCanvasElement;
+  const inner = h("div", { class: "lyr-inner" }, canvas);
+  const scroller = h("div", { class: "lyr-scroll" }, inner);
+  let userScrolledAt = 0;
+  const sizeInner = () => { inner.style.width = Math.max(scroller.clientWidth, Math.ceil(dur() * pps)) + "px"; };
+  const timeAtX = (clientX: number) => (scroller.scrollLeft + clientX - scroller.getBoundingClientRect().left) / pps;
+  function draw() {
+    if (!canvas.isConnected) return;
+    sizeInner();
+    const dpr = window.devicePixelRatio || 1;
+    const W = scroller.clientWidth, H = scroller.clientHeight - 2;
+    canvas.style.left = scroller.scrollLeft + "px";
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    if (canvas.width !== W * dpr || canvas.height !== H * dpr) { canvas.width = W * dpr; canvas.height = H * dpr; }
+    const ctx = canvas.getContext("2d")!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    const cs = getComputedStyle(document.documentElement);
+    const ink = cs.getPropertyValue("--ink").trim() || "#fff";
+    const weak = cs.getPropertyValue("--weak").trim() || "#999";
+    const line = cs.getPropertyValue("--line").trim() || "rgba(255,255,255,.3)";
+    const t0 = scroller.scrollLeft / pps;
+    const D = dur();
+    // Wellenform
+    const peaks = store.peaksFor(id);
+    const mid = H / 2 + 8;
+    if (peaks && peaks.length > 4) {
+      const bins = peaks.length / 2;
+      ctx.fillStyle = line;
+      for (let x = 0; x < W; x += 2) {
+        const tt = t0 + x / pps;
+        if (tt > D) break;
+        const b = Math.min(bins - 1, Math.floor((tt / D) * bins));
+        const hm = (peaks[b * 2] / 255) * (H / 2 - 14);
+        ctx.fillRect(x, mid - hm, 1.4, hm * 2 || 1);
+      }
+    }
+    // Sekunden-Raster
+    ctx.fillStyle = weak;
+    ctx.font = "10px system-ui";
+    const step = pps >= 40 ? 1 : pps >= 15 ? 5 : 10;
+    for (let s = Math.ceil(t0 / step) * step; s < t0 + W / pps; s += step) {
+      const x = (s - t0) * pps;
+      ctx.fillRect(x, 0, 1, s % (step * 5) === 0 ? 8 : 4);
+      if (s % (step * 5) === 0) ctx.fillText(fmtTime(s), x + 3, 10);
+    }
+    // Zeilen-Marken
+    rows.forEach((r, i) => {
+      if (r.t == null) return;
+      const x = (r.t - t0) * pps;
+      if (x < -200 || x > W + 4) return;
+      const on = i === nowIdx, s2 = i === sel;
+      ctx.fillStyle = on || s2 ? ink : weak;
+      ctx.fillRect(x, 14, s2 ? 2 : 1, H - 14);
+      ctx.beginPath(); ctx.arc(x, 18, s2 ? 4 : 3, 0, Math.PI * 2); ctx.fill();
+      ctx.font = (on ? "600 " : "") + "11px system-ui";
+      const label = (r.text || "♪").slice(0, 28);
+      ctx.fillText(label, x + 6, 30 + (i % 3) * 13);
+    });
+    // Abspielposition
+    if (playing()) {
+      const x = (player.currentTime - t0) * pps;
+      ctx.fillStyle = ink;
+      ctx.fillRect(x - 1, 0, 2, H);
+    }
+  }
+  let drag: { row: number } | { scrub: true } | null = null;
+  canvas.addEventListener("pointerdown", (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    const tt = timeAtX(e.clientX);
+    // Marke in der Nähe? → ziehen
+    let best = -1, bd = 7;
+    rows.forEach((r, i) => { if (r.t != null) { const d = Math.abs((r.t - tt) * pps); if (d < bd) { bd = d; best = i; } } });
+    if (best >= 0) { drag = { row: best }; select(best, true); }
+    else { drag = { scrub: true }; seekTo(tt); }
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drag) {
+      const tt = timeAtX(e.clientX);
+      const near = rows.some((r) => r.t != null && Math.abs((r.t - tt) * pps) < 7);
+      canvas.style.cursor = near ? "ew-resize" : "pointer";
+      return;
+    }
+    const tt = Math.max(0, Math.min(dur(), timeAtX(e.clientX)));
+    if ("row" in drag) setRowTime(drag.row, tt);
+    else seekTo(tt);
+  });
+  canvas.addEventListener("pointerup", () => { drag = null; });
+  scroller.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    if (e.ctrlKey || e.metaKey) {
+      const tt = timeAtX(e.clientX);
+      const before = e.clientX - scroller.getBoundingClientRect().left;
+      pps = Math.max(8, Math.min(300, pps * (e.deltaY < 0 ? 1.25 : 0.8)));
+      sizeInner();
+      scroller.scrollLeft = tt * pps - before;
+    } else scroller.scrollLeft += (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY);
+    userScrolledAt = performance.now();
+    draw();
+  }, { passive: false });
+  scroller.addEventListener("scroll", () => draw());
+  scroller.addEventListener("pointerdown", () => (userScrolledAt = performance.now()));
+
+  // ---- Live ----
+  const live = h("div", { class: "lyr-live" }, "");
+  const onTick = () => {
+    if (!playing()) { if (nowIdx !== -1) { nowIdx = -1; rowEls.forEach((el) => el.classList.remove("now")); } draw(); return; }
+    const timed = rows.map((r, i) => ({ t: r.t, i })).filter((x) => x.t != null).sort((a, b) => a.t! - b.t!);
+    let idx = -1;
+    for (const x of timed) { if (x.t! <= player.currentTime + 0.05) idx = x.i; else break; }
+    if (idx !== nowIdx) {
+      nowIdx = idx;
+      rowEls.forEach((el, k) => el.classList.toggle("now", k === idx));
+      if (idx >= 0 && document.activeElement?.closest(".lyr-rows") == null) rowEls[idx]?.scrollIntoView({ block: "center", behavior: "smooth" });
+      live.textContent = idx >= 0 ? rows[idx].text || "♪" : "";
+    }
+    // Zeitachse folgt der Abspielposition (außer kurz nach eigenem Scrollen)
+    if (!drag && performance.now() - userScrolledAt > 2500) {
+      const x = player.currentTime * pps - scroller.scrollLeft;
+      if (x < 40 || x > scroller.clientWidth - 60) scroller.scrollLeft = player.currentTime * pps - scroller.clientWidth * 0.3;
+    }
+    draw();
+  };
+  const unsub = player.onPos(onTick);
+  const unsub2 = store.on("player", onTick);
+
+  // ---- Holen ----
+  const fetchBtn = h("button", { class: "btn" }, "Von LRCLIB holen") as HTMLButtonElement;
+  let armed = 0;
+  fetchBtn.addEventListener("click", async () => {
+    const hasText = rows.some((r) => r.text.trim());
+    if (hasText && Date.now() - armed > 4000) {
+      armed = Date.now();
+      return toast("Vorhandenen Text ersetzen? Nochmal klicken.", 4000);
+    }
     fetchBtn.textContent = "suche …";
     try {
       const f = await api.lyricsFetch(id);
       if (!f || (!f.synced && !f.plain)) toast(f?.instrumental ? "LRCLIB: Instrumental – kein Text" : "Bei LRCLIB nichts gefunden", 5000);
       else {
-        if (ta.value.trim() && !confirmReplace()) return;
-        ta.value = f.synced ?? f.plain ?? "";
-        toast(f.synced ? "Mit Zeitmarken gefunden" : "Nur Text gefunden – Zeiten per „Zeit setzen“ ergänzen", 5000);
-        refresh();
+        ({ head, rows } = toRows(f.synced ?? f.plain ?? ""));
+        renderRows(0);
+        draw();
+        toast(f.synced ? "Mit Zeitmarken gefunden" : "Nur Text gefunden – Zeiten mit „Zeit setzen“ ergänzen", 5000);
       }
-    } catch (e) {
-      toast(String(e), 6000);
-    } finally {
-      fetchBtn.textContent = "Von LRCLIB holen";
-    }
-  } }, "Von LRCLIB holen");
-  // Ersetzen bestätigen ohne Rückfrage-Dialog: zweiter Klick innerhalb 4 s
-  let armed = 0;
-  const confirmReplace = () => {
-    if (Date.now() - armed < 4000) return true;
-    armed = Date.now();
-    toast("Vorhandenen Text ersetzen? Nochmal auf „Von LRCLIB holen“ klicken.", 4000);
+    } catch (e) { toast(String(e), 6000); }
     fetchBtn.textContent = "Von LRCLIB holen";
-    return false;
-  };
-
-  const refresh = () => {
-    const parsed = parseLrc(ta.value);
-    const n = parsed.length;
-    const timed = parsed.filter((l) => l.t != null).length;
-    info.textContent = n ? `${n} Zeilen · ${timed ? `${timed} mit Zeit` : "ohne Zeiten"}` : "Leer – Text einfügen oder von LRCLIB holen.";
-  };
-  ta.addEventListener("input", refresh);
-  refresh();
-
-  // Live-Vorschau während der Titel läuft
-  const unsub = player.onPos(() => {
-    if (!playing()) { live.textContent = ""; return; }
-    const ls = parseLrc(ta.value);
-    const i = currentLine(ls, player.currentTime);
-    live.textContent = i >= 0 ? ls[i].text || "♪" : "";
   });
 
-  ta.addEventListener("keydown", (e) => {
-    // Strg/⌘+Enter = Zeit setzen
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); tap(); }
+  // ---- Als Text bearbeiten ----
+  const raw = h("textarea", { spellcheck: false, rows: 14, style: { width: "100%", fontFamily: "var(--mono)", fontSize: "13px", display: "none" } }) as HTMLTextAreaElement;
+  const rawBtn = h("button", { class: "btn" }, "Als Text") as HTMLButtonElement;
+  rawBtn.addEventListener("click", () => {
+    const on = raw.style.display === "none";
+    if (on) { raw.value = fromRows(head, rows); raw.style.display = ""; list.style.display = "none"; rawBtn.textContent = "Als Zeilen"; }
+    else { ({ head, rows } = toRows(raw.value)); raw.style.display = "none"; list.style.display = ""; rawBtn.textContent = "Als Text"; renderRows(); draw(); }
   });
 
   const tool = (label: string, title: string, fn: () => void) => h("button", { class: "btn", title, onclick: fn }, label);
   const s = sheet(`Songtext · ${store.label(t)}`, h("div", {},
     h("div", { class: "line", style: { flexWrap: "wrap", gap: "6px" } },
-      fetchBtn,
-      tool("▶ Ab Anfang", "Titel von vorn abspielen", () => { player.play(id, 0); selectLine(0); }),
+      tool("▶ Ab Anfang", "Titel von vorn abspielen", () => { player.play(id, 0); focusRow(0); }),
       tool("⏯", "Abspielen/Pause", () => (playing() ? player.toggle() : player.play(id, 0))),
       tool("−3 s", "3 Sekunden zurück", () => playing() && player.seekBy(-3)),
-      h("button", { class: "btn primary", title: "Zeit des Players in die markierte Zeile, dann nächste Zeile (Strg+Enter)", onclick: tap }, "Zeit setzen ⏎"),
+      h("button", { class: "btn primary", title: "Zeit des Players in die gewählte Zeile, dann nächste Zeile (Strg+Enter)", onclick: tap }, "Zeit setzen ⏎"),
+      h("span", { class: "spacer" }),
+      tool("−", "Zeitachse verkleinern (Strg+Mausrad)", () => { pps = Math.max(8, pps * 0.8); draw(); }),
+      tool("+", "Zeitachse vergrößern (Strg+Mausrad)", () => { pps = Math.min(300, pps * 1.25); draw(); }),
+      fetchBtn,
+      rawBtn,
     ),
-    h("div", { class: "line", style: { flexWrap: "wrap", gap: "6px" } },
-      h("span", { class: "note" }, "Markierte Zeile:"),
-      tool("−0,1 s", "Zeile früher", () => editLine(caretLine(), (l) => shiftLine(l, -0.1))),
-      tool("+0,1 s", "Zeile später", () => editLine(caretLine(), (l) => shiftLine(l, 0.1))),
-      tool("Hierhin springen", "Player an die Zeit dieser Zeile", () => {
-        const l = parseLrc(lines()[caretLine()] ?? "")[0];
-        if (l?.t != null) { if (!playing()) player.play(id, 0).then(() => setTimeout(() => player.seekFrac(l.t! / (player.duration || 1)), 300)); else player.seekFrac(l.t / (player.duration || 1)); }
-      }),
-      h("span", { class: "note", style: { marginLeft: "10px" } }, "Alle:"),
-      tool("−0,5 s", "Alle Zeiten früher", () => { ta.value = lines().map((l) => shiftLine(l, -0.5)).join("\n"); refresh(); }),
-      tool("+0,5 s", "Alle Zeiten später", () => { ta.value = lines().map((l) => shiftLine(l, 0.5)).join("\n"); refresh(); }),
-      tool("Zeiten entfernen", "Nur den Text behalten", () => { ta.value = lines().map((l) => l.replace(/^(\s*\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\])+\s?/, "")).join("\n"); refresh(); }),
-    ),
-    ta,
+    scroller,
     live,
-    info,
-    h("div", { class: "note" }, "Text einfügen oder holen, dann „▶ Ab Anfang“ und bei jeder Zeile im Takt „Zeit setzen“ (Strg+Enter). Gespeichert wird als .lrc neben der Datei – das lesen Minimal Player, Connected und viele andere Player.",
-      cur?.source === "tag" ? " Der bisherige Text stammt aus dem Tag der Datei; Speichern legt eine .lrc an." : ""),
+    h("div", { class: "line", style: { flexWrap: "wrap", gap: "6px", margin: "6px 0" } },
+      h("span", { class: "note" }, "Gewählte Zeile:"),
+      tool("−0,1 s", "früher", () => rows[sel].t != null && setRowTime(sel, rows[sel].t! - 0.1)),
+      tool("+0,1 s", "später", () => rows[sel].t != null && setRowTime(sel, rows[sel].t! + 0.1)),
+      tool("Abspielen ab hier", "", () => rows[sel].t != null && seekTo(rows[sel].t!)),
+      tool("Zeit löschen", "", () => setRowTime(sel, null)),
+      h("span", { class: "note", style: { marginLeft: "10px" } }, "Alle:"),
+      tool("−0,5 s", "alle früher", () => { rows.forEach((r, i) => r.t != null && setRowTime(i, r.t - 0.5)); }),
+      tool("+0,5 s", "alle später", () => { rows.forEach((r, i) => r.t != null && setRowTime(i, r.t + 0.5)); }),
+      tool("Nach Zeit sortieren", "", () => { rows.sort((a, b) => (a.t ?? 1e9) - (b.t ?? 1e9)); renderRows(); draw(); }),
+    ),
+    list,
+    raw,
+    h("div", { class: "note" }, "Zeitachse: klicken/ziehen = spulen, Marken ziehen = Zeit verschieben, Mausrad = scrollen, Strg+Mausrad = zoomen. Zeilen: Enter = neue Zeile, Strg+Enter = Zeit setzen, Doppelklick auf die Zeit = dorthin springen. Gespeichert wird als .lrc neben der Datei.",
+      cur?.source === "tag" ? " Der bisherige Text stammt aus dem Tag; Speichern legt eine .lrc an." : ""),
     h("div", { class: "foot" },
       cur?.source === "lrc" ? holdButton("Songtext löschen", async () => { await api.lyricsSave(id, ""); s.close(); store.emit("lyrics"); }, "halten") : "",
       h("span", { class: "spacer" }),
       h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"),
       h("button", { class: "btn primary", onclick: async () => {
         try {
-          await api.lyricsSave(id, ta.value);
+          if (raw.style.display !== "none") ({ head, rows } = toRows(raw.value));
+          await api.lyricsSave(id, rows.some((r) => r.text.trim() || r.t != null) ? fromRows(head, rows) : "");
           toast("Songtext gespeichert");
           s.close();
           store.emit("lyrics");
         } catch (e) { toast(String(e)); }
       } }, "Speichern"),
     ),
-  ), { wide: true, onClose: () => unsub() });
-  setTimeout(() => ta.focus(), 50);
+  ), { wide: true, onClose: () => { unsub(); typeof unsub2 === "function" && unsub2(); } });
+  renderRows();
+  requestAnimationFrame(() => { draw(); focusRow(0); });
 }
 
 /** Für mehrere Titel bei LRCLIB holen (vorhandene bleiben) */

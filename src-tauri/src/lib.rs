@@ -236,6 +236,8 @@ struct Settings {
     no_cross_dup: Vec<String>,
     /// Bibliothek NICHT für Minimal Player Connected freigeben (Standard: freigegeben)
     remote_off: bool,
+    /// Ablage für Musik vom Handy (leer = „Musik/Minimal Library“ des Benutzers); je Gerät ein Unterordner
+    phone_dir: Option<String>,
 }
 
 impl Default for Settings {
@@ -257,6 +259,7 @@ impl Default for Settings {
             pioneer: false,
             no_cross_dup: vec![],
             remote_off: false,
+            phone_dir: None,
         }
     }
 }
@@ -442,6 +445,13 @@ fn start_remote(app: &AppHandle, main: &AppState) {
     let db_s = main.db.clone();
     let db_c = main.db.clone();
     let app = app.clone();
+    let default_phone = app
+        .path()
+        .audio_dir()
+        .or_else(|_| app.path().home_dir())
+        .map(|d| d.join("Minimal Library"))
+        .unwrap_or_else(|_| PathBuf::from("Minimal Library"));
+    let app_r = app.clone();
     remote::start(remote::Host {
         db,
         settings: Box::new(move || {
@@ -451,12 +461,41 @@ fn start_remote(app: &AppHandle, main: &AppState) {
                 pattern: s.pattern,
                 organize_target: s.organize_target,
                 enabled: !s.remote_off,
+                phone_dir: s
+                    .phone_dir
+                    .filter(|d| !d.is_empty())
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| default_phone.clone()),
             }
         }),
         changed: Box::new(move |c| match c {
             remote::Changed::Playlists => {
                 sync_playlists(&db_c.lock().unwrap());
                 let _ = app.emit_to("main", "playlists-changed", ());
+            }
+            remote::Changed::Root(dir) => {
+                // Handy-Ordner als Musikquelle aufnehmen (wenn nicht schon in einer enthalten)
+                if let Ok(st) = tab_state(&app_r, "main") {
+                    let added = {
+                        let c = st.db.lock().unwrap();
+                        let mut s = load_settings(&c);
+                        let roots: Vec<PathBuf> = s.roots.iter().map(PathBuf::from).collect();
+                        let probe = dir.join("x").to_string_lossy().to_string();
+                        if dirs::under_any(&probe, &roots) {
+                            false
+                        } else {
+                            s.roots.push(dir.to_string_lossy().to_string());
+                            serde_json::to_string(&s)
+                                .ok()
+                                .map(|j| db::set_setting(&c, "settings", &j))
+                                .is_some()
+                        }
+                    };
+                    if added {
+                        restart_watcher(&app_r, &st);
+                        let _ = app_r.emit_to("main", "settings-changed", ());
+                    }
+                }
             }
             remote::Changed::Added(id) => {
                 let _ = app.emit_to(

@@ -43,6 +43,8 @@ export interface Settings {
   noCrossDup: string[];
   /** Bibliothek nicht für Minimal Player Connected freigeben */
   remoteOff: boolean;
+  /** Ablage für Musik vom Handy (leer = Musik/Minimal Library) */
+  phoneDir: string | null;
 }
 
 export interface DupCheck {

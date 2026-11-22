@@ -414,6 +414,8 @@ let pendingChange: LibraryChange | null = null;
 let changeTimer = 0;
 // Playlisten am Handy geändert (Minimal Player Connected)
 listen("playlists-changed", () => store.loadPlaylists());
+// Neue Musikquelle vom Handy angelegt
+listen("settings-changed", async () => { await store.loadSettings(); store.emit("settings"); });
 
 listen<LibraryChange>("library-changed", (e) => {
   const c = e.payload;

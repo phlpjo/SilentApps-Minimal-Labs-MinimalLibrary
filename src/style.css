@@ -411,3 +411,17 @@ html.mac #titlebar { padding-left: 78px; }
 .lyr-line.on { color: var(--ink); text-shadow: 0 0 18px var(--glow-color, rgba(255,255,255,.35)); }
 .lyr-live { min-height: 26px; margin: 8px 0 2px; font-size: 18px; font-weight: 300; color: var(--ink); }
 .lyr-preview { white-space: pre-wrap; font-size: 12px; color: var(--dim); margin: 4px 0 6px; line-height: 1.5; }
+.lyr-scroll { position: relative; overflow-x: auto; overflow-y: hidden; height: 120px; border: 1px solid var(--line-soft); border-radius: 10px; margin: 8px 0 4px; }
+.lyr-inner { position: relative; height: 100%; }
+.lyr-canvas { position: absolute; top: 0; left: 0; touch-action: none; }
+.lyr-rows { max-height: 38vh; overflow-y: auto; border: 1px solid var(--line-soft); border-radius: 10px; padding: 4px; }
+.lyr-row { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 6px; transition: background .2s; }
+.lyr-row.sel { box-shadow: inset 0 0 0 1px var(--line); }
+.lyr-row.now { background: var(--sel); }
+.lyr-row.now .lyr-text { color: var(--ink); font-weight: 500; }
+.lyr-time { width: 86px; font-family: var(--mono); font-size: 12px; padding: 4px 6px; }
+.lyr-text { flex: 1; min-width: 0; padding: 4px 6px; }
+.lyr-time, .lyr-text { background: transparent; border: 1px solid transparent; color: var(--dim); border-radius: 5px; }
+.lyr-time:focus, .lyr-text:focus { border-color: var(--line); outline: none; color: var(--ink); }
+.lyr-del { background: none; border: 0; color: var(--weak); cursor: pointer; padding: 2px 6px; opacity: 0; }
+.lyr-row:hover .lyr-del { opacity: 1; }

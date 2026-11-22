@@ -33,14 +33,18 @@ pub struct HostSettings {
     pub pattern: String,
     pub organize_target: Option<String>,
     pub enabled: bool,
+    /// Ablage für Musik vom Handy (je Gerät ein Unterordner = eigene Musikquelle)
+    pub phone_dir: PathBuf,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Changed {
     Playlists,
     Files(usize),
     /// Vom Handy hochgeladene Titel (neu in der Bibliothek)
     Added(i64),
+    /// Neuer Ordner für ein Handy → als Musikquelle aufnehmen (falls noch nicht enthalten)
+    Root(PathBuf),
 }
 
 static CODE: Mutex<String> = Mutex::new(String::new());
@@ -473,7 +477,9 @@ fn library(c: &Connection, roots: &[String]) -> Result<String> {
         "version": v["version"],
         "roots": names,
         "tracks": tracks,
-        "playlists": pls
+        "playlists": pls,
+        // Playlist „Stern“ (für den Stern in der App)
+        "star": playlists::star(c, true).ok().flatten()
     })
     .to_string())
 }
@@ -597,10 +603,6 @@ fn receive_upload(
     path: &str,
     req: &mut tiny_http::Request,
 ) -> Result<i64> {
-    let root = s
-        .roots
-        .first()
-        .ok_or_else(|| anyhow!("In Minimal Library ist kein Musikordner eingerichtet"))?;
     let rel: Vec<String> = decode(path.trim_start_matches("/up/"))
         .split('/')
         .map(clean)
@@ -609,14 +611,17 @@ fn receive_upload(
     if rel.is_empty() {
         return Err(anyhow!("Dateiname fehlt"));
     }
-    let mut dest = PathBuf::from(root).join("Vom Handy").join(clean(client));
+    let base = s.phone_dir.join(clean(client));
+    std::fs::create_dir_all(&base)?;
+    (host.changed)(Changed::Root(base.clone()));
+    let mut dest = base;
     for p in &rel {
         dest.push(p);
     }
     if !crate::is_audio(&dest) {
         return Err(anyhow!("Keine Audiodatei"));
     }
-    std::fs::create_dir_all(dest.parent().unwrap_or(Path::new(root)))?;
+    std::fs::create_dir_all(dest.parent().unwrap_or(&s.phone_dir))?;
     let tmp = dest.with_file_name(format!(
         "{}.part",
         dest.file_name()

@@ -5,6 +5,7 @@ import { drawWave, waveElement } from "../waveform";
 import { clear, contextMenu, ext, fmtSize, fmtTime, h, holdButton, reportErrors, toast } from "../ui";
 import { analyzeIds, nav } from "../main";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { SHOW_IN } from "../platform";
 
 const REASON: Record<string, string> = { metadata: "Metadaten", filename: "Dateiname", audio: "Audio" };
 
@@ -127,7 +128,7 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
           canvases.push({ id, c: canvas });
           const tr = h("tr", { class: k.has(id) ? "keep" : "drop" },
             h("td", {}, box),
-            h("td", {}, h("div", { class: "t1" }, `${t.artist ?? "?"} – ${store.label(t)}`), h("div", { class: "path", style: { margin: "3px 0 0" }, title: "Rechtsklick: Im Explorer zeigen" }, t.path)),
+            h("td", {}, h("div", { class: "t1" }, `${t.artist ?? "?"} – ${store.label(t)}`), h("div", { class: "path", style: { margin: "3px 0 0" }, title: `Rechtsklick: ${SHOW_IN}` }, t.path)),
             h("td", {}, `${ext(t.path)}${t.bitrate ? " " + t.bitrate : ""}`),
             h("td", {}, fmtTime(t.duration)),
             h("td", {}, fmtSize(t.size)),
@@ -145,7 +146,7 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
             contextMenu(e.clientX, e.clientY, [
               { label: "Abspielen", action: () => player.play(id, 0, g.trackIds) },
               { label: "Gehört nicht dazu (kein Duplikat)", action: () => notDuplicate(gi, [id], g.trackIds.filter((x) => x !== id)) },
-              { label: "Im Explorer zeigen", action: () => revealItemInDir(t.path) },
+              { label: SHOW_IN, action: () => revealItemInDir(t.path) },
               { label: "Ordner in der Ordneransicht", action: () => nav("folders", undefined, t.path) },
             ]);
           });

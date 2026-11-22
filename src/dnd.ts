@@ -1,5 +1,6 @@
 // Eigenes Drag & Drop über Zeiger-Events.
 // HTML5-Drag&Drop funktioniert in Tauri unter Windows nicht, solange Datei-Drops aus dem Explorer aktiv sind.
+import { copyKey } from "./platform";
 
 export type Payload = { kind: "ids"; ids: number[] } | { kind: "dir"; path: string };
 
@@ -99,7 +100,7 @@ export function beginDrag(down: PointerEvent, onStart: () => Payload | null, onE
       t?.enter?.(active!.payload);
     }
     t?.over?.(active!.payload, e);
-    const copy = e.ctrlKey && active!.payload.kind === "ids";
+    const copy = copyKey(e) && active!.payload.kind === "ids";
     ghost!.textContent = label(active!.payload) + (t ? (copy ? "  · kopieren" : "") : "");
     ghost!.classList.toggle("none", !t);
   };
@@ -108,7 +109,7 @@ export function beginDrag(down: PointerEvent, onStart: () => Payload | null, onE
     if (started && active?.t && active.el) {
       const { payload, t, el } = active;
       el.classList.remove("drop");
-      t.drop(payload, { copy: e.ctrlKey, e });
+      t.drop(payload, { copy: copyKey(e), e });
       t.leave?.();
     }
     cleanup(started);

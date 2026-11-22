@@ -208,7 +208,32 @@ fn restore_from_trash(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     Ok(found)
 }
 
-#[cfg(not(any(windows, all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))))]
+/// macOS: über den Finder zurücklegen (der Papierkorb-Ordner selbst ist geschützt)
+#[cfg(target_os = "macos")]
+fn restore_from_trash(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut found = Vec::new();
+    let mut last_err = String::new();
+    for p in paths {
+        let (Some(parent), Some(name)) = (p.parent(), p.file_name()) else { continue };
+        let script = format!(
+            "tell application \"Finder\"\nset f to (first item of trash whose name is \"{}\")\nmove f to (POSIX file \"{}\" as alias)\nend tell",
+            esc(&name.to_string_lossy()),
+            esc(&parent.to_string_lossy())
+        );
+        match std::process::Command::new("osascript").arg("-e").arg(&script).output() {
+            Ok(o) if o.status.success() => found.push(p.clone()),
+            Ok(o) => last_err = String::from_utf8_lossy(&o.stderr).trim().to_string(),
+            Err(e) => last_err = e.to_string(),
+        }
+    }
+    if found.is_empty() {
+        return Err(anyhow!("Nicht mehr im Papierkorb gefunden {last_err}"));
+    }
+    Ok(found)
+}
+
+#[cfg(not(any(windows, target_os = "macos", all(unix, not(target_os = "ios"), not(target_os = "android")))))]
 fn restore_from_trash(_paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     Err(anyhow!("Wiederherstellen aus dem Papierkorb wird hier nicht unterstützt"))
 }

@@ -1,4 +1,5 @@
 import "./style.css";
+import { IS_MAC } from "./platform";
 import { applyTheme, isLight } from "./theme";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -28,7 +29,7 @@ type ViewName = "library" | "folders" | "history" | "ripper" | "sync" | "equaliz
 
 const app = document.getElementById("app")!;
 const win = getCurrentWindow();
-const backBtn = h("button", { class: "tb-btn back", title: "Zurück (Alt+←)", onclick: () => goBack() }, "‹");
+const backBtn = h("button", { class: "tb-btn back", title: IS_MAC ? "Zurück (⌘[)" : "Zurück (Alt+←)", onclick: () => goBack() }, "‹");
 function updateBack() {
   backBtn.disabled = backStack.length === 0;
 }
@@ -36,7 +37,7 @@ const maxBtn = h("button", { class: "tb-btn", title: "Maximieren", onclick: () =
 const titlebar = h("header", { id: "titlebar", "data-tauri-drag-region": "" },
   backBtn,
   h("div", { class: "tb-title", "data-tauri-drag-region": "" }),
-  h("div", { class: "tb-ctrls" },
+  IS_MAC ? null : h("div", { class: "tb-ctrls" },
     h("button", { class: "tb-btn", title: "Minimieren", onclick: () => win.minimize() }, "—"),
     maxBtn,
     h("button", { class: "tb-btn close", title: "Schließen", onclick: () => win.close() }, "✕"),
@@ -63,7 +64,7 @@ window.addEventListener("mouseup", (e) => {
   }
 });
 window.addEventListener("keydown", (e) => {
-  if (e.altKey && e.key === "ArrowLeft") {
+  if ((!IS_MAC && e.altKey && e.key === "ArrowLeft") || (IS_MAC && e.metaKey && (e.key === "[" || e.key === "ArrowLeft"))) {
     e.preventDefault();
     goBack();
   }

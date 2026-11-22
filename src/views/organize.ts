@@ -82,7 +82,7 @@ export function organizeView(preIds?: number[]): { el: HTMLElement; destroy: () 
   updExample();
 
   const el = h("div", { style: { display: "contents" } },
-    h("div", { class: "head" }, h("h1", {}, "Sortieren"), h("span", { class: "sub" }, "Dateien nach Tags in Windows-Ordner einsortieren")),
+    h("div", { class: "head" }, h("h1", {}, "Sortieren"), h("span", { class: "sub" }, "Dateien nach Tags in Ordner einsortieren")),
     h("div", { class: "view-scroll" },
       h("div", { class: "card" }, h("h3", {}, "Ziel"),
         h("div", { class: "line" }, h("div", { class: "grow" }, target), h("button", { class: "btn", onclick: async () => { const d = await open({ directory: true }); if (d) { target.value = d as string; updExample(); } } }, "Wählen …")),

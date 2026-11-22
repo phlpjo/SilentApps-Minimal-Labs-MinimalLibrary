@@ -2,6 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { api, type SyncPreview, type SyncTarget, type SyncTargetState } from "../api";
 import { store } from "../store";
 import { clear, fmtSize, h, holdButton, reportErrors, sheet, toast } from "../ui";
+import { OS } from "../platform";
 
 // ---------- Überwachung: Ziel angeschlossen? ----------
 
@@ -133,7 +134,7 @@ export function syncView(): { el: HTMLElement; destroy: () => void } {
       h("div", { class: "note", style: { marginTop: "6px", lineHeight: "1.6" } },
         "Auf dem Ziel entstehen ein Ordner „Musik“ (Künstler/Album/Titel) und je Playlist eine .m3u8 – so findet Minimal Player Lieder und Playlisten. Kopiert wird nur, was fehlt. ",
         "„Aufräumen“ löscht ausschließlich Dateien, die die App selbst dorthin kopiert hat. ",
-        "Hinweis: Android-Handys am Kabel erscheinen unter Windows nicht als Laufwerk (MTP) – dafür SD-Karte oder USB-Stick nutzen."),
+        `Hinweis: Android-Handys am Kabel erscheinen unter ${OS} nicht als Laufwerk (MTP) – dafür SD-Karte oder USB-Stick nutzen.`),
     ),
   );
   return { el, destroy: unsub };

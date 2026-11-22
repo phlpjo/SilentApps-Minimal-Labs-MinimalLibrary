@@ -5,6 +5,7 @@ import { store } from "../store";
 import { clear, h, holdButton } from "../ui";
 import { analyzeIds, nav, scanNow } from "../main";
 import { applyTheme, themeMode, type ThemeMode } from "../theme";
+import { IS_MAC, FILE_MANAGER } from "../platform";
 
 export function settingsView(): { el: HTMLElement; destroy: () => void } {
   const body = h("div", { class: "view-scroll" });
@@ -32,7 +33,7 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
 
     const tray = h("input", { type: "checkbox", checked: s.closeToTray !== false });
     tray.addEventListener("change", () => store.saveSettings({ closeToTray: tray.checked }));
-    const theme = h("select", {}, ...([["system", "Wie Windows"], ["dark", "Dunkel"], ["light", "Hell"]] as const).map(([v, l]) => h("option", { value: v, selected: themeMode() === v }, l)));
+    const theme = h("select", {}, ...([["system", IS_MAC ? "Wie macOS" : "Wie Windows"], ["dark", "Dunkel"], ["light", "Hell"]] as const).map(([v, l]) => h("option", { value: v, selected: themeMode() === v }, l)));
     theme.addEventListener("change", () => applyTheme(theme.value as ThemeMode));
     body.append(
       h("div", { class: "card" }, h("h3", {}, "Darstellung"), h("div", { class: "setting" }, h("span", {}, "Farbschema"), theme),
@@ -49,7 +50,7 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
           } }, "Ordner hinzufügen …"),
           h("button", { class: "btn", onclick: () => scanNow() }, "Jetzt scannen"),
         ),
-        h("div", { class: "note" }, "Die Musikordner werden laufend überwacht: Was du im Explorer hinzufügst, verschiebst, umbenennst oder löschst, übernimmt die App sofort – Analyse und Playlisten bleiben beim Verschieben erhalten."),
+        h("div", { class: "note" }, `Die Musikordner werden laufend überwacht: Was du im ${FILE_MANAGER} hinzufügst, verschiebst, umbenennst oder löschst, übernimmt die App sofort – Analyse und Playlisten bleiben beim Verschieben erhalten.`),
       ),
       h("div", { class: "card" }, h("h3", {}, "Minimal Player"),
         h("div", { class: "note" }, "Playlisten samt Musik aufs Handy, den USB-Stick oder die SD-Karte bringst du jetzt über ",

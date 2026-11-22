@@ -6,6 +6,7 @@ import { TrackList } from "../tracklist";
 import { fmtDuration, h, holdButton, reportErrors, sheet, toast, type MenuItem } from "../ui";
 import { analyzeIds, newPlaylistFromIds, nav } from "../main";
 import { moveTracksPick, renameFileDialog } from "../fileops";
+import { SHOW_IN, TRASH } from "../platform";
 
 type Filter = "all" | "unanalyzed" | "notags" | "nocover" | "errors";
 
@@ -39,7 +40,7 @@ export function trackMenu(ids: number[], extra: MenuItem[] = []): MenuItem[] {
     ...(one ? [{ label: "Datei umbenennen …", hint: "F2", action: () => renameFileDialog(one.id) }] : []),
     { label: "Nach Muster sortieren …", action: () => nav("organize", ids) },
     ...(one ? [{ label: "Ordner in der Ordneransicht", action: () => nav("folders", undefined, one.path) }] : []),
-    ...(one ? [{ label: "Im Explorer zeigen", action: () => revealItemInDir(one.path) }] : []),
+    ...(one ? [{ label: SHOW_IN, action: () => revealItemInDir(one.path) }] : []),
     ...extra,
     { label: "", sep: true },
     {
@@ -59,7 +60,7 @@ export function trackMenu(ids: number[], extra: MenuItem[] = []): MenuItem[] {
         const s = sheet(
           `${ids.length} Datei${ids.length === 1 ? "" : "en"} in den Papierkorb`,
           h("div", {},
-            h("div", { class: "note" }, "Die Dateien landen im Windows-Papierkorb und können von dort wiederhergestellt werden."),
+            h("div", { class: "note" }, `Die Dateien landen im ${TRASH} und können von dort wiederhergestellt werden.`),
             h("div", { class: "foot" },
               h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"),
               holdButton("In den Papierkorb", async () => {

@@ -1,6 +1,6 @@
 # Minimal Library
 
-Musikbibliothek für Windows im SilentApps-Minimal-Stil – sortieren, taggen, Duplikate finden, Playlisten für Minimal Player.
+Musikbibliothek für Windows und macOS im SilentApps-Minimal-Stil – sortieren, taggen, Duplikate finden, Playlisten für Minimal Player.
 
 ## Funktionen
 
@@ -23,7 +23,7 @@ Musikbibliothek für Windows im SilentApps-Minimal-Stil – sortieren, taggen, D
 | **Minimal Player** | Playlist-Ordner: alle Playlisten werden automatisch als `.m3u8` mit relativen Pfaden aktuell gehalten |
 | **Export** | Playlisten samt Original-Dateien + M3U8 kopieren (nummeriert / flach / gemeinsamer Musikordner), erneuter Export kopiert nur Fehlendes |
 
-Hell/Dunkel: Schalter oben links oder Einstellungen → Darstellung (Wie Windows / Dunkel / Hell).
+Hell/Dunkel: Schalter oben links oder Einstellungen → Darstellung (wie System / Dunkel / Hell).
 
 Riskante Aktionen (Papierkorb, Löschen, Rückgängig) werden **gedrückt gehalten** statt per Rückfrage bestätigt.
 
@@ -40,7 +40,9 @@ Daten liegen in `%APPDATA%\de.philipdecker.minimallibrary\library.db` (SQLite). 
 
 ## Bauen
 
-**Windows-Build über GitHub Actions:** jeder Push auf `main` erzeugt unter *Actions → Artefakte* den Installer (`.exe` und `.msi`) und die portable `minimal-library.exe`.
+**Builds über GitHub Actions:** jeder Push auf `main` erzeugt unter *Actions → Artefakte*
+- Windows: Installer (`.exe` und `.msi`) und die portable `minimal-library.exe`
+- macOS: `.dmg` (Universal, Apple Silicon + Intel). Nicht von Apple beglaubigt: beim ersten Start Rechtsklick → Öffnen bzw. Systemeinstellungen → Datenschutz & Sicherheit → „Trotzdem öffnen“.
 
 **Lokal unter Windows:**
 

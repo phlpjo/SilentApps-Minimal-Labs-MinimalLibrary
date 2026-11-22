@@ -1177,6 +1177,18 @@ pub fn run() {
             quit_app,
             app_version,
         ])
-        .run(tauri::generate_context!())
-        .expect("Fehler beim Starten von Minimal Library");
+        .build(tauri::generate_context!())
+        .expect("Fehler beim Starten von Minimal Library")
+        .run(|_app, event| match event {
+            // macOS: Klick aufs Dock-Symbol holt das versteckte Fenster zurück
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => show_main(_app),
+            // ⌘Q / Beenden: Heimnetz-Stream stoppen
+            tauri::RunEvent::ExitRequested { .. } => {
+                if let Some(d) = cast::active_device() {
+                    let _ = cast::stop(&d);
+                }
+            }
+            _ => {}
+        });
 }

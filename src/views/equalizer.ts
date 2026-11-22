@@ -4,6 +4,7 @@ import { cachedDevices, discoverIfStale, isFound, isSearching, labelsHidden, loc
 import { player } from "../player";
 import { store } from "../store";
 import { clear, h, toast } from "../ui";
+import { OS } from "../platform";
 
 export function equalizerView(): { el: HTMLElement; destroy: () => void } {
   const outBox = h("div", {});
@@ -16,10 +17,10 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
       h("div", { class: "out-item" + (on ? " on" : "") + (dim ? " dim" : ""), onclick: click }, h("span", {}, label), h("small", {}, sub));
     outBox.append(
       h("div", { class: "out-group" }, h("h3", {}, "Dieser PC"),
-        ...locals.map((o) => item(o.id === "default" ? "Standard-Ausgabe" : o.label, o.id === "default" ? "wie in Windows eingestellt" : "Soundkarte", !player.device && player.localSink === o.id, () => selectLocal(o.id))),
+        ...locals.map((o) => item(o.id === "default" ? "Standard-Ausgabe" : o.label, o.id === "default" ? `wie in ${OS} eingestellt` : "Soundkarte", !player.device && player.localSink === o.id, () => selectLocal(o.id))),
         labelsHidden() ? h("div", { class: "note", style: { marginTop: "6px" } }, "Gerätenamen verborgen – ",
           h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); unlockLabels(); } }, "Namen anzeigen"),
-          " (Windows fragt einmalig nach dem Mikrofon, es wird nichts aufgenommen).") : "",
+          ` (${OS} fragt einmalig nach dem Mikrofon, es wird nichts aufgenommen).`) : "",
       ),
       h("div", { class: "out-group" }, h("h3", {}, "Heimnetz", isSearching() ? h("span", { class: "note" }, "  · sucht …") : ""),
         ...cachedDevices().map((d) => item(d.name, `${d.kind === "sonos" ? "Sonos" : "DLNA"}${player.device?.id === d.id ? " · streamt" : ""}`, player.device?.id === d.id, () => selectCast(d), !isFound(d.id))),

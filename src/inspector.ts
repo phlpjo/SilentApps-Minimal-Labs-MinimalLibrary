@@ -3,6 +3,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, type Candidate, type TagUpdate, type Track } from "./api";
 import { store } from "./store";
 import { basename, clear, ext, fmtSize, fmtTime, h, holdButton, keyLabel, reportErrors, sheet, toast } from "./ui";
+import { SHOW_IN } from "./platform";
 
 type FieldKey = keyof TagUpdate;
 const FIELDS: { key: FieldKey; label: string; get: (t: Track) => string }[] = [
@@ -123,7 +124,7 @@ export class Inspector {
         one ? h("button", { class: "btn", onclick: () => this.recognize(one), title: "Erkennt den Titel am Audio-Fingerabdruck – auch ohne Tags" }, "Am Klang erkennen (AcoustID) …") : "",
         h("button", { class: "btn", onclick: () => this.fromFilename(tracks) }, "Dateiname → Tags …"),
         tracks.some((t) => t.bpm || t.key) ? h("button", { class: "btn", onclick: () => this.analysisToTags() }, "BPM + Tonart in Datei schreiben") : null,
-        one ? h("button", { class: "btn", onclick: () => revealItemInDir(one.path) }, "Im Explorer zeigen") : null,
+        one ? h("button", { class: "btn", onclick: () => revealItemInDir(one.path) }, SHOW_IN) : null,
       ),
     );
 

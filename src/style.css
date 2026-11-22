@@ -358,3 +358,6 @@ body.is-dragging .pl-new-drop { display: block; }
 .eq-band .vslider { width: 170px; transform: rotate(-90deg); flex: none; }
 .eq-freq, .eq-val { font-size: 11px; color: var(--weak); font-variant-numeric: tabular-nums; }
 .eq-val { color: var(--dim); min-width: 34px; text-align: center; }
+
+/* macOS: native Ampel-Knöpfe links, eigene Fensterknöpfe ausgeblendet */
+html.mac #titlebar { padding-left: 78px; }

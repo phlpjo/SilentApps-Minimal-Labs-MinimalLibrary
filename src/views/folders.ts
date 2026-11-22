@@ -49,11 +49,12 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
   });
 
   const list = new TrackList({
+    columns: "folders",
     defaultSort: "pos",
     menu: (ids) => trackMenu(ids),
     emptyText: "Keine Musik in diesem Ordner. Titel aus der Liste auf einen Ordner links ziehen, um sie hierher zu verschieben.",
   });
-  list.sort = "title";
+  list.sort = (localStorage.getItem("ml.folderSort") as typeof list.sort) ?? "trackNo";
 
   // ---------- Daten ----------
   const load = async (path: string, force = false) => {
@@ -377,5 +378,5 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     else renderTree();
   })();
 
-  return { el, destroy: () => { unsubs.forEach((u) => u()); list.destroy(); document.removeEventListener("keydown", onKey); } };
+  return { el, destroy: () => { localStorage.setItem("ml.folderSort", list.sort); unsubs.forEach((u) => u()); list.destroy(); document.removeEventListener("keydown", onKey); } };
 }

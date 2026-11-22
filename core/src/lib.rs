@@ -1,10 +1,12 @@
 //! Kern von Minimal Library: Bibliothek, Tags, Analyse, Duplikate, Sortieren, Playlisten, Export.
 //! Ohne GUI-Abhängigkeit, damit alles testbar bleibt.
 
+pub mod acoustid;
 pub mod analysis;
 pub mod db;
 pub mod dirs;
 pub mod duplicates;
+pub mod history;
 pub mod export;
 pub mod musicbrainz;
 pub mod organize;
@@ -12,6 +14,7 @@ pub mod paths;
 pub mod playlists;
 pub mod scanner;
 pub mod tags;
+pub mod watch;
 
 /// Fortschritt: (erledigt, gesamt, Text)
 pub type Progress<'a> = &'a (dyn Fn(usize, usize, &str) + Sync);

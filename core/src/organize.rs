@@ -249,6 +249,8 @@ pub fn apply(
 #[serde(rename_all = "camelCase")]
 pub struct Batch {
     pub id: i64,
+    /// move, tags, trash, dir
+    pub kind: String,
     pub created: i64,
     pub description: String,
     pub count: i64,
@@ -256,9 +258,9 @@ pub struct Batch {
 }
 
 pub fn batches(conn: &Connection) -> Result<Vec<Batch>> {
-    let mut st = conn.prepare("SELECT id, created, description, count, undone FROM move_batches ORDER BY id DESC LIMIT 30")?;
+    let mut st = conn.prepare("SELECT id, created, description, count, undone, kind FROM move_batches ORDER BY id DESC LIMIT 100")?;
     let rows = st.query_map([], |r| {
-        Ok(Batch { id: r.get(0)?, created: r.get(1)?, description: r.get(2)?, count: r.get(3)?, undone: r.get::<_, i64>(4)? != 0 })
+        Ok(Batch { id: r.get(0)?, created: r.get(1)?, description: r.get(2)?, count: r.get(3)?, undone: r.get::<_, i64>(4)? != 0, kind: r.get(5)? })
     })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }

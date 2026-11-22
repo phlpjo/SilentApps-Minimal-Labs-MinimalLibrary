@@ -52,7 +52,31 @@ CREATE TABLE IF NOT EXISTS moves (
     copied INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tag_backups (
+    batch_id INTEGER NOT NULL REFERENCES move_batches(id) ON DELETE CASCADE,
+    track_id INTEGER NOT NULL,
+    tags TEXT NOT NULL,
+    cover_changed INTEGER NOT NULL DEFAULT 0,
+    cover BLOB
+);
+CREATE TABLE IF NOT EXISTS trash_backups (
+    batch_id INTEGER NOT NULL REFERENCES move_batches(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    is_dir INTEGER NOT NULL DEFAULT 0,
+    playlists TEXT NOT NULL DEFAULT '[]'
+);
 "#;
+
+/// Spalten nachrüsten, die in älteren Datenbanken fehlen.
+fn migrate(conn: &Connection) -> Result<()> {
+    let has = |table: &str, col: &str| -> bool {
+        conn.prepare(&format!("SELECT {col} FROM {table} LIMIT 0")).is_ok()
+    };
+    if !has("move_batches", "kind") {
+        conn.execute_batch("ALTER TABLE move_batches ADD COLUMN kind TEXT NOT NULL DEFAULT 'move'")?;
+    }
+    Ok(())
+}
 
 pub fn open(path: &Path) -> Result<Connection> {
     if let Some(dir) = path.parent() {
@@ -60,6 +84,7 @@ pub fn open(path: &Path) -> Result<Connection> {
     }
     let conn = Connection::open(path)?;
     conn.execute_batch(SCHEMA)?;
+    migrate(&conn)?;
     Ok(conn)
 }
 

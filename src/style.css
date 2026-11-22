@@ -277,3 +277,14 @@ table.grid td.mono { font-family: var(--mono); font-size: 11px; word-break: brea
 body.is-dragging, body.is-dragging * { cursor: grabbing !important; }
 .nav-item.drop { outline: 1px solid var(--ink); background: var(--sel); color: var(--ink); }
 .list-body.drop { outline: none; }
+
+/* Spaltenkopf: Breite ziehen */
+.list-head .hcell { position: relative; overflow: visible; }
+.list-head .hcell.num { text-align: right; }
+.list-head .hlabel { display: block; overflow: hidden; text-overflow: ellipsis; }
+.list-head .rz { position: absolute; top: -4px; bottom: -4px; right: -9px; width: 7px; cursor: col-resize; z-index: 2; }
+.list-head .rz::after { content: ""; position: absolute; left: 3px; top: 8px; bottom: 8px; width: 1px; background: transparent; }
+.list-head:hover .rz::after { background: var(--line-soft); }
+.list-head .rz:hover::after { background: var(--ink); }
+body.is-resizing, body.is-resizing * { cursor: col-resize !important; user-select: none; }
+.setting.undone .t1 { color: var(--weak); }

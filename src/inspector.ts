@@ -121,6 +121,7 @@ export class Inspector {
     this.el.append(
       h("div", { class: "acts" },
         h("button", { class: "btn", onclick: () => this.onlineSearch(tracks[0]) }, "Online suchen (MusicBrainz) …"),
+        one ? h("button", { class: "btn", onclick: () => this.recognize(one), title: "Erkennt den Titel am Audio-Fingerabdruck – auch ohne Tags" }, "Am Klang erkennen (AcoustID) …") : "",
         h("button", { class: "btn", onclick: () => this.fromFilename(tracks) }, "Dateiname → Tags …"),
         tracks.some((t) => t.bpm || t.key) ? h("button", { class: "btn", onclick: () => this.analysisToTags() }, "BPM + Tonart in Datei schreiben") : null,
         one ? h("button", { class: "btn", onclick: () => revealItemInDir(one.path) }, "Im Explorer zeigen") : null,
@@ -339,6 +340,45 @@ export class Inspector {
       ),
       { wide: true },
     );
+    run();
+  }
+
+  /** Titel am Klang erkennen (Fingerabdruck → AcoustID → MusicBrainz) */
+  private async recognize(t: Track) {
+    const results = h("div", {}, h("div", { class: "note" }, "Erkenne …"));
+    const withCover = true;
+    const s = sheet("Am Klang erkennen", h("div", {},
+      h("div", { class: "note", style: { marginBottom: "10px" } }, `${store.label(t)} – der Audio-Fingerabdruck wird mit der freien AcoustID-Datenbank verglichen. Es werden nur Fingerabdruck und Dauer übertragen.`),
+      results,
+    ), { wide: true });
+    const run = async () => {
+      if (!t.analyzed || t.analysisError) {
+        results.replaceChildren(h("div", { class: "err" }, "Dieser Titel ist noch nicht analysiert – erst nach der Analyse gibt es einen Fingerabdruck."));
+        return;
+      }
+      if (!store.settings.acoustidKey) {
+        results.replaceChildren(h("div", { class: "err" }, "Kein AcoustID-Schlüssel eingetragen."), h("div", { class: "note" }, "Einstellungen → Online: kostenlosen Schlüssel eintragen (einmalig)."));
+        return;
+      }
+      results.replaceChildren(h("div", { class: "note" }, "Erkenne …"));
+      try {
+        const list = await api.acoustidLookup(t.id);
+        if (!list.length) {
+          results.replaceChildren(h("div", { class: "note" }, "Nicht erkannt. Der Titel ist wahrscheinlich nicht in der AcoustID-Datenbank."));
+          return;
+        }
+        results.replaceChildren(
+          ...list.map((c) =>
+            h("div", { class: "option", onclick: () => this.pickFields(c, withCover, s, results, run) },
+              h("div", {}, h("div", { class: "t1" }, `${c.artist} – ${c.title}`), h("div", { class: "t2" }, [c.album, c.year, c.trackNo ? `Track ${c.trackNo}` : null].filter(Boolean).join(" · "))),
+              h("small", {}, `${c.length ? fmtTime(c.length) + " · " : ""}${c.score} %`),
+            ),
+          ),
+        );
+      } catch (e) {
+        results.replaceChildren(h("div", { class: "err" }, String(e)));
+      }
+    };
     run();
   }
 

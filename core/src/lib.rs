@@ -12,6 +12,7 @@ pub mod export;
 pub mod musicbrainz;
 pub mod organize;
 pub mod paths;
+pub mod pioneer;
 pub mod playlists;
 pub mod ripper;
 pub mod scanner;

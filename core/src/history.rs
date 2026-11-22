@@ -119,6 +119,7 @@ pub fn undo(conn: &Mutex<Connection>, batch: i64, stop_dirs: &[PathBuf]) -> Resu
         "tags" => undo_tags(conn, batch)?,
         "trash" => undo_trash(conn, batch)?,
         "dir" => undo_dir(conn, batch)?,
+        "grid" => UndoReport { restored: crate::pioneer::undo(&conn.lock().unwrap(), batch)?, ..Default::default() },
         k => return Err(anyhow!("Unbekannte Art: {k}")),
     };
     conn.lock().unwrap().execute("UPDATE move_batches SET undone = 1 WHERE id = ?1", [batch])?;

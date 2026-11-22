@@ -77,6 +77,32 @@ fn migrate(conn: &Connection) -> Result<()> {
     let has = |table: &str, col: &str| -> bool {
         conn.prepare(&format!("SELECT {col} FROM {table} LIMIT 0")).is_ok()
     };
+    // Pioneer-Export: Beatgrid, Pioneer-Wellenform und Cues (nur genutzt, wenn eingeschaltet)
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS pioneer_analysis (
+            track_id INTEGER PRIMARY KEY,
+            bpm REAL NOT NULL DEFAULT 0,
+            downbeat_ms REAL NOT NULL DEFAULT 0,
+            grid_edited INTEGER NOT NULL DEFAULT 0,
+            frames BLOB,
+            updated INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS cues (
+            id INTEGER PRIMARY KEY,
+            track_id INTEGER NOT NULL,
+            kind INTEGER NOT NULL,
+            start_ms REAL NOT NULL,
+            end_ms REAL,
+            color INTEGER,
+            comment TEXT
+        );
+        CREATE INDEX IF NOT EXISTS cues_track ON cues(track_id);
+        CREATE TABLE IF NOT EXISTS grid_backups (batch_id INTEGER NOT NULL, track_id INTEGER NOT NULL, grid TEXT, cues TEXT NOT NULL);
+        CREATE TRIGGER IF NOT EXISTS tracks_pioneer_cleanup AFTER DELETE ON tracks BEGIN
+            DELETE FROM pioneer_analysis WHERE track_id = old.id;
+            DELETE FROM cues WHERE track_id = old.id;
+        END;",
+    )?;
     if !has("move_batches", "kind") {
         conn.execute_batch("ALTER TABLE move_batches ADD COLUMN kind TEXT NOT NULL DEFAULT 'move'")?;
     }

@@ -200,7 +200,7 @@ mod win {
     use std::path::{Component, Path};
 
     #[link(name = "kernel32")]
-    extern "system" {
+    unsafe extern "system" {
         fn GetVolumeInformationW(
             root: *const u16,
             name: *mut u16,

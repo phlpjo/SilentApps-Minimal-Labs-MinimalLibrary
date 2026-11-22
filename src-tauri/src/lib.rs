@@ -1263,11 +1263,11 @@ async fn sync_preview(state: Tab, id: i64) -> R<sync::Preview> {
 }
 
 #[tauri::command]
-async fn sync_run(app: AppHandle, state: Tab, id: i64) -> R<sync::Report> {
+async fn sync_run(app: AppHandle, state: Tab, id: i64, force: Option<bool>) -> R<sync::Report> {
     let db = state.db.clone();
     let cancel = state.task();
     let prog = emitter(&app, &state.label, "sync");
-    blocking(move || sync::run(&db, id, &cancel, &prog)).await
+    blocking(move || sync::run_with(&db, id, force.unwrap_or(false), &cancel, &prog)).await
 }
 
 #[tauri::command]

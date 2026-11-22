@@ -36,6 +36,8 @@ pub struct Target {
     /// Ganze Ordner (eine Richtung: Quellordner → Ziel). Auf dem Ziel als „<Ordnername>/…“ mit
     /// gleicher Unterordner-Struktur.
     pub folders: Vec<String>,
+    /// Freien Platz nicht prüfen (Cloud-/Netzlaufwerke melden oft nur den lokalen Zwischenspeicher)
+    pub ignore_space: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -239,6 +241,11 @@ pub struct Report {
 }
 
 pub fn run(conn: &Mutex<Connection>, id: i64, cancel: &AtomicBool, progress: Progress) -> Result<Report> {
+    run_with(conn, id, false, cancel, progress)
+}
+
+/// `force = true`: trotz zu wenig gemeldetem Platz synchronisieren
+pub fn run_with(conn: &Mutex<Connection>, id: i64, force: bool, cancel: &AtomicBool, progress: Progress) -> Result<Report> {
     let (t, p) = {
         let c = conn.lock().unwrap();
         let t = get(&c, id)?;
@@ -250,10 +257,12 @@ pub fn run(conn: &Mutex<Connection>, id: i64, cancel: &AtomicBool, progress: Pro
         return Err(anyhow!("„{}“ ist nicht verbunden", t.name));
     }
     let needed: u64 = p.files.iter().filter(|(s, r, z)| !same_file(s, &root.join(r), *z)).map(|f| f.2).sum();
-    if let Ok(free) = fs4::available_space(&root) {
+    let check = !force && !t.ignore_space;
+    if let Ok(free) = fs4::available_space(&root).map_err(|_| ()).and_then(|f| if check { Ok(f) } else { Err(()) }) {
         if needed > free + 1024 * 1024 {
+            // „NOSPACE:“ erkennt die Oberfläche und bietet „Trotzdem synchronisieren“ an
             return Err(anyhow!(
-                "Nicht genug Platz auf „{}“: {:.1} GB nötig, {:.1} GB frei",
+                "NOSPACE:Nicht genug Platz auf „{}“: {:.1} GB nötig, {:.1} GB frei",
                 t.name,
                 needed as f64 / 1e9,
                 free as f64 / 1e9

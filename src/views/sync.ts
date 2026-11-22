@@ -62,16 +62,18 @@ export function startSyncWatch() {
   store.on("playlists", () => targets.forEach((t) => refreshPreview(t)));
 }
 
-export async function runSync(id: number) {
+export async function runSync(id: number, force = false) {
   if (running.has(id)) return;
   running.add(id);
   store.emit("sync");
   try {
-    const r = await api.syncRun(id);
+    const r = await api.syncRun(id, force);
     const parts = [`${r.copied} kopiert`, r.skipped ? `${r.skipped} schon aktuell` : "", r.removed ? `${r.removed} entfernt` : "", r.bytes ? fmtSize(r.bytes) : ""].filter(Boolean);
     reportErrors(r.errors, `Sync fertig: ${parts.join(", ")}`);
   } catch (e) {
-    toast(String(e), 8000);
+    const msg = String(e);
+    if (msg.includes("NOSPACE:")) noSpaceDialog(id, msg.slice(msg.indexOf("NOSPACE:") + 8));
+    else toast(msg, 8000);
   } finally {
     running.delete(id);
     await poll();
@@ -79,6 +81,26 @@ export async function runSync(id: number) {
     if (t) refreshPreview(t);
     store.emit("sync");
   }
+}
+
+/** Zu wenig Platz gemeldet – bei Cloud-/Netzlaufwerken oft falsch (nur der lokale Zwischenspeicher) */
+function noSpaceDialog(id: number, msg: string) {
+  const s = sheet("Zu wenig Platz?", h("div", {},
+    h("div", {}, msg),
+    h("div", { class: "note", style: { marginTop: "8px" } },
+      "Cloud- und Netzlaufwerke (z. B. pCloud, Google Drive, OneDrive) melden oft nur den Platz ihres lokalen Zwischenspeichers. Wenn das Ziel tatsächlich genug Platz hat, kannst du trotzdem synchronisieren – ist es wirklich voll, brechen die Kopien mit einer Meldung ab."),
+    h("div", { class: "foot" },
+      h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"),
+      h("span", { class: "spacer" }),
+      h("button", { class: "btn", onclick: async () => {
+        s.close();
+        const t = targets.find((x) => x.id === id);
+        if (t) await api.syncSave({ ...t, ignoreSpace: true });
+        await poll();
+        runSync(id, true);
+      } }, "Bei diesem Ziel nie mehr prüfen"),
+      h("button", { class: "btn primary", onclick: () => { s.close(); runSync(id, true); } }, "Trotzdem synchronisieren"),
+    )));
 }
 
 // ---------- Ansicht ----------
@@ -194,6 +216,7 @@ function editTarget(t: SyncTargetState | null) {
   const path = h("input", { type: "text", value: v.path, placeholder: "Ordner auf dem Gerät, z. B. E:\\", style: { width: "100%" } });
   const auto = h("input", { type: "checkbox", checked: v.auto });
   const mirror = h("input", { type: "checkbox", checked: v.mirror });
+  const ignoreSpace = h("input", { type: "checkbox", checked: !!v.ignoreSpace }) as HTMLInputElement;
   const chosen = new Set(v.playlists);
   const plBox = h("div", { style: { maxHeight: "240px", overflowY: "auto" } },
     ...(store.playlists.length
@@ -235,6 +258,7 @@ function editTarget(t: SyncTargetState | null) {
     h("div", { class: "line" }, h("label", { class: "check" }, m3u, "Playlist-Dateien (.m3u8) mit ablegen")),
     h("div", { class: "line" }, h("label", { class: "check" }, auto, "Automatisch synchronisieren, sobald das Gerät angeschlossen wird")),
     h("div", { class: "line" }, h("label", { class: "check" }, mirror, "Aufräumen: von der App kopierte Titel löschen, die in keiner gewählten Playlist bzw. keinem gewählten Ordner mehr sind")),
+    h("div", { class: "line" }, h("label", { class: "check" }, ignoreSpace, "Freien Platz nicht prüfen (Cloud- und Netzlaufwerke wie pCloud melden oft zu wenig)")),
     h("div", { class: "foot" },
       t ? holdButton("Ziel löschen", async () => { await api.syncDelete(t.id); s.close(); await poll(); store.emit("sync"); }, "halten") : "",
       h("span", { class: "spacer" }),
@@ -243,7 +267,7 @@ function editTarget(t: SyncTargetState | null) {
         class: "btn primary",
         onclick: async () => {
           if (!path.value.trim()) return toast("Bitte einen Ordner wählen");
-          const id = await api.syncSave({ ...v, name: name.value.trim() || path.value.trim(), path: path.value.trim(), playlists: [...chosen], auto: auto.checked, mirror: mirror.checked, layout, noPlaylistFiles: !m3u.checked, folders: v.folders });
+          const id = await api.syncSave({ ...v, name: name.value.trim() || path.value.trim(), path: path.value.trim(), playlists: [...chosen], auto: auto.checked, mirror: mirror.checked, layout, noPlaylistFiles: !m3u.checked, folders: v.folders, ignoreSpace: ignoreSpace.checked });
           s.close();
           await poll();
           const nt = targets.find((x) => x.id === id);

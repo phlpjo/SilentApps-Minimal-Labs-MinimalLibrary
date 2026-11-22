@@ -41,6 +41,8 @@ export interface Settings {
   pioneer: boolean;
   /** Musikordner, deren Titel nicht mit anderen Musikordnern auf Duplikate verglichen werden */
   noCrossDup: string[];
+  onDemand?: string[];
+  onDemandOff?: string[];
   /** Bibliothek nicht für Minimal Player Connected freigeben */
   remoteOff: boolean;
   /** Ablage für Musik vom Handy (leer = Musik/Minimal Library) */
@@ -118,7 +120,9 @@ export const api = {
   getTracks: (ids: number[]) => invoke<Track[]>("get_tracks", { ids }),
   getPeaks: (ids: number[]) => invoke<Record<string, string>>("get_peaks", { ids }),
   allowPlay: (path: string) => invoke<void>("allow_play", { path }),
-  analyze: (ids: number[] | null) => invoke<number>("analyze", { ids }),
+  analyze: (ids: number[] | null, explicit = false) => invoke<number>("analyze", { ids, explicit }),
+  analyzeQuiet: (ids: number[]) => invoke<number>("analyze_quiet", { ids }),
+  onDemandRoots: () => invoke<string[]>("on_demand_roots"),
   cancel: () => invoke<void>("cancel_task"),
   removeFromLibrary: (ids: number[]) => invoke<void>("remove_from_library", { ids }),
   trash: (ids: number[], replace: Record<string, number> | null = null) => invoke<string[]>("trash_tracks", { ids, replace }),

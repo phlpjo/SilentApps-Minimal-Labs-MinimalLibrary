@@ -222,7 +222,7 @@ export function pioneerPanel(trackId: number): HTMLElement {
       box.replaceChildren(
         h("div", { class: "section", style: { padding: "18px 0 6px" } }, "Pioneer: Beatgrid & Cues"),
         h("div", { class: "note" }, "Für diesen Titel fehlt noch die Pioneer-Analyse (Beatgrid, Wellenform)."),
-        h("button", { class: "btn", onclick: () => analyzeIds([trackId]) }, "Jetzt analysieren"),
+        h("button", { class: "btn", onclick: () => analyzeIds([trackId], true) }, "Jetzt analysieren"),
         cueBox,
       );
     }

@@ -23,6 +23,7 @@ class Player {
   private posListeners = new Set<PosListener>();
   private raf = 0;
   private token = 0;
+  private onDemandTimer = 0;
   private shuffleBag: number[] = [];
   private history: number[] = [];
   private remote = { playing: false, pos: 0, at: 0, dur: 0, poll: 0, startedAt: 0, seekUntil: 0, loading: false, pollTick: 0 };
@@ -177,6 +178,13 @@ class Player {
     await api.allowPlay(t.path);
     if (my !== this.token) return;
     this.current = t;
+    // Cloud-Ordner: Wellenform & Co. erst holen, wenn der Titel wirklich gehört wird (nicht beim Durchskippen)
+    clearTimeout(this.onDemandTimer);
+    if (!t.analyzed && store.isOnDemand(t.path)) {
+      this.onDemandTimer = window.setTimeout(() => {
+        if (this.current?.id === t.id && !store.tracks.get(t.id)?.analyzed) api.analyzeQuiet([t.id]).catch(() => {});
+      }, 12000);
+    }
     this.audio.src = convertFileSrc(t.path);
     if (frac > 0) {
       const onMeta = () => {

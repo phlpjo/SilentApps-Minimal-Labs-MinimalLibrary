@@ -157,3 +157,127 @@ mod tests {
         );
     }
 }
+
+/// Liegt der Ordner in einem Cloud-Laufwerk (pCloud, OneDrive, iCloud, Google Drive, Dropbox …)?
+/// Dort lädt jedes vollständige Lesen die Datei herunter – solche Ordner werden nur bei Bedarf analysiert.
+pub fn is_cloud(p: &Path) -> bool {
+    let s = p.to_string_lossy().to_lowercase().replace('\\', "/");
+    const HINTS: &[&str] = &[
+        "pcloud",
+        "onedrive",
+        "google drive",
+        "googledrive",
+        "/my drive",
+        "dropbox",
+        "icloud",
+        "/library/cloudstorage/",
+        "/mobile documents/",
+        "nextcloud",
+        "owncloud",
+        "megasync",
+        "/mega/",
+        "box drive",
+        "synology drive",
+        "tresorit",
+        "/proton drive",
+    ];
+    if HINTS.iter().any(|h| s.contains(h)) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        if win::cloud(p) {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(windows)]
+mod win {
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::fs::MetadataExt;
+    use std::path::{Component, Path};
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetVolumeInformationW(
+            root: *const u16,
+            name: *mut u16,
+            name_len: u32,
+            serial: *mut u32,
+            max_len: *mut u32,
+            flags: *mut u32,
+            fs: *mut u16,
+            fs_len: u32,
+        ) -> i32;
+    }
+
+    /// Laufwerksname/Dateisystem verrät das Cloud-Laufwerk (z. B. „pCloud Drive“ auf P:),
+    /// Platzhalter-Attribute verraten Dateien, die erst beim Lesen geladen werden (OneDrive & Co.)
+    pub fn cloud(p: &Path) -> bool {
+        const RECALL: u32 = 0x0040_0000 | 0x0004_0000 | 0x0010_0000 | 0x0000_1000;
+        if let Ok(m) = std::fs::metadata(p) {
+            if m.file_attributes() & RECALL != 0 {
+                return true;
+            }
+        }
+        let mut root = std::path::PathBuf::new();
+        for c in p.components() {
+            match c {
+                Component::Prefix(_) | Component::RootDir => root.push(c.as_os_str()),
+                _ => break,
+            }
+        }
+        if root.as_os_str().is_empty() {
+            return false;
+        }
+        let mut r: Vec<u16> = root.as_os_str().encode_wide().collect();
+        if r.last() != Some(&(b'\\' as u16)) {
+            r.push(b'\\' as u16);
+        }
+        r.push(0);
+        let mut name = [0u16; 261];
+        let mut fs = [0u16; 261];
+        let (mut serial, mut max, mut flags) = (0u32, 0u32, 0u32);
+        let ok = unsafe {
+            GetVolumeInformationW(
+                r.as_ptr(),
+                name.as_mut_ptr(),
+                261,
+                &mut serial,
+                &mut max,
+                &mut flags,
+                fs.as_mut_ptr(),
+                261,
+            )
+        };
+        if ok == 0 {
+            return false;
+        }
+        let z = |b: &[u16]| {
+            String::from_utf16_lossy(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())])
+                .to_lowercase()
+        };
+        let (n, f) = (z(&name), z(&fs));
+        [
+            "pcloud", "onedrive", "google", "dropbox", "icloud", "mega", "box", "cloud",
+        ]
+        .iter()
+        .any(|h| n.contains(h) || f.contains(h))
+    }
+}
+
+#[cfg(test)]
+mod cloud_tests {
+    #[test]
+    fn hints() {
+        assert!(super::is_cloud(std::path::Path::new(
+            "/Volumes/pCloud Drive/Musik"
+        )));
+        assert!(super::is_cloud(std::path::Path::new(
+            "/Users/a/Library/CloudStorage/OneDrive-Privat/Musik"
+        )));
+        assert!(!super::is_cloud(std::path::Path::new("/home/a/Musik")));
+    }
+}

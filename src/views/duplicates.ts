@@ -26,11 +26,18 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
   const canvases: { id: number; c: HTMLCanvasElement }[] = [];
 
   const updateHint = () => {
-    const pending = [...store.tracks.values()].filter((t) => !t.analyzed).length;
+    const open = [...store.tracks.values()].filter((t) => !t.analyzed);
+    const cloud = open.filter((t) => store.isOnDemand(t.path));
+    const pending = open.length - cloud.length;
     clear(hint);
     if (modes.audio.checked && pending) {
       hint.append(`${pending} Titel sind noch nicht analysiert – für sie gibt es noch keinen Audio-Fingerabdruck. `,
         h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); analyzeIds(null); } }, "Jetzt analysieren"));
+    }
+    if (modes.audio.checked && cloud.length) {
+      if (pending) hint.append(h("br"));
+      hint.append(`${cloud.length} Titel aus Cloud-Ordnern (nur bei Bedarf) haben noch keinen Fingerabdruck. `,
+        h("a", { href: "#", style: { color: "inherit" }, title: "Lädt diese Titel vom Cloud-Laufwerk herunter", onclick: (e: Event) => { e.preventDefault(); analyzeIds(cloud.map((t) => t.id), true); } }, "Trotzdem analysieren (lädt herunter)"));
     }
   };
 

@@ -339,10 +339,11 @@ function setStatus(task: string, done: number, total: number, msg: string) {
   if ((total && done >= total) || msg === "Fertig") hideTimer = window.setTimeout(() => status.replaceChildren(), 4000);
 }
 
-export async function analyzeIds(ids: number[] | null) {
+/** explicit = vom Benutzer angestoßen: auch Titel aus Cloud-Ordnern („nur bei Bedarf“) */
+export async function analyzeIds(ids: number[] | null, explicit = false) {
   busy++;
   try {
-    const n = await api.analyze(ids);
+    const n = await api.analyze(ids, explicit);
     if (n) toast(`${n} Titel analysiert`);
   } catch (e) {
     toast(String(e));

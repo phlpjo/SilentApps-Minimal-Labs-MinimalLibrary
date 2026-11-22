@@ -9,6 +9,8 @@ class Store {
   settings: Settings = { roots: [], playlistDir: null, organizeTarget: null, pattern: "", threads: 4, autoAnalyze: true, acoustidKey: "", ripDir: null, ripFormat: "mp3", closeToTray: true, pioneer: false, noCrossDup: [], remoteOff: false, phoneDir: null };
   /** Auswahl in der aktuellen Liste */
   selection = new Set<number>();
+  /** Musikordner „nur bei Bedarf“ (Cloud-Laufwerk): Analyse erst beim Abspielen/Export */
+  onDemand: string[] = [];
   private listeners = new Map<string, Set<Listener>>();
   private pendingPeaks = new Set<number>();
   private peakTimer = 0;
@@ -48,12 +50,14 @@ class Store {
 
   async loadSettings() {
     this.settings = await api.getSettings();
+    this.onDemand = await api.onDemandRoots().catch(() => []);
     this.emit("settings");
   }
 
   async saveSettings(patch: Partial<Settings>) {
     this.settings = { ...this.settings, ...patch };
     const pruned = await api.setSettings(this.settings);
+    this.onDemand = await api.onDemandRoots().catch(() => []);
     this.emit("settings");
     if (pruned > 0) {
       // Musikordner entfernt: Titel daraus sind weg, die laufende Analyse wurde gestoppt
@@ -65,6 +69,14 @@ class Store {
   }
 
   /** Wellenform anfordern (gebündelt). Gibt vorhandene sofort zurück. */
+  isOnDemand(path: string): boolean {
+    const p = path.replace(/\\/g, "/").toLowerCase();
+    return this.onDemand.some((r) => {
+      const root = r.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+      return p === root || p.startsWith(root + "/");
+    });
+  }
+
   peaksFor(id: number): Uint8Array | undefined {
     const p = this.peaks.get(id);
     if (p) return p;

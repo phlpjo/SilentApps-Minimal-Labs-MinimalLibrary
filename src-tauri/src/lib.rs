@@ -238,6 +238,61 @@ struct Settings {
     remote_off: bool,
     /// Ablage für Musik vom Handy (leer = „Musik/Minimal Library“ des Benutzers); je Gerät ein Unterordner
     phone_dir: Option<String>,
+    /// Musikordner, die nur bei Bedarf gelesen werden (Cloud-Laufwerk) – zusätzlich zur Erkennung
+    on_demand: Vec<String>,
+    /// Musikordner, bei denen die Cloud-Erkennung ausgeschaltet wurde
+    on_demand_off: Vec<String>,
+}
+
+impl Settings {
+    /// Musikordner, deren Titel NICHT automatisch analysiert werden (sonst lädt das Cloud-Laufwerk alles herunter)
+    fn on_demand_roots(&self) -> Vec<String> {
+        self.roots
+            .iter()
+            .filter(|r| {
+                !self.on_demand_off.contains(r)
+                    && (self.on_demand.contains(r)
+                        || musiccore::paths::is_cloud(Path::new(r.as_str())))
+            })
+            .cloned()
+            .collect()
+    }
+}
+
+/// Titel ohne die aus „nur bei Bedarf“-Ordnern
+fn without_on_demand(
+    c: &Connection,
+    s: &Settings,
+    ids: Option<Vec<i64>>,
+) -> anyhow::Result<Option<Vec<i64>>> {
+    let od: Vec<PathBuf> = s.on_demand_roots().into_iter().map(PathBuf::from).collect();
+    if od.is_empty() {
+        return Ok(ids);
+    }
+    let rows: Vec<(i64, String)> = match &ids {
+        Some(ids) => {
+            let mut st = c.prepare("SELECT id, path FROM tracks WHERE id = ?1")?;
+            ids.iter()
+                .filter_map(|id| st.query_row([id], |r| Ok((r.get(0)?, r.get(1)?))).ok())
+                .collect()
+        }
+        None => {
+            let mut st = c.prepare(
+                "SELECT id, path FROM tracks WHERE analyzed = 0
+                   OR (?1 AND analysis_error IS NULL AND id NOT IN (SELECT track_id FROM pioneer_analysis)) ORDER BY id",
+            )?;
+            let v = st
+                .query_map([s.pioneer], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            v
+        }
+    };
+    Ok(Some(
+        rows.into_iter()
+            .filter(|(_, p)| !od.iter().any(|r| Path::new(p).starts_with(r)))
+            .map(|(id, _)| id)
+            .collect(),
+    ))
 }
 
 impl Default for Settings {
@@ -258,6 +313,8 @@ impl Default for Settings {
             close_to_tray: true,
             pioneer: false,
             no_cross_dup: vec![],
+            on_demand: vec![],
+            on_demand_off: vec![],
             remote_off: false,
             phone_dir: None,
         }
@@ -639,10 +696,21 @@ fn allow_play(app: AppHandle, path: String) -> R<()> {
 }
 
 #[tauri::command]
-async fn analyze(app: AppHandle, state: Tab, ids: Option<Vec<i64>>) -> R<usize> {
+async fn analyze(
+    app: AppHandle,
+    state: Tab,
+    ids: Option<Vec<i64>>,
+    explicit: Option<bool>,
+) -> R<usize> {
     let db = state.db.clone();
     let cancel = state.task();
     let s = load_settings(&db.lock().unwrap());
+    // Automatisch: Cloud-Ordner auslassen (werden beim Abspielen/Export analysiert)
+    let ids = if explicit == Some(true) {
+        ids
+    } else {
+        without_on_demand(&db.lock().unwrap(), &s, ids).map_err(err)?
+    };
     let (threads, pioneer) = (s.threads, s.pioneer);
     let prog = emitter(&app, &state.label, "analyze");
     let app2 = app.clone();
@@ -658,6 +726,27 @@ async fn analyze(app: AppHandle, state: Tab, ids: Option<Vec<i64>>) -> R<usize> 
         Ok(n)
     })
     .await
+}
+
+/// Still im Hintergrund analysieren (z. B. Titel aus einem Cloud-Ordner, der gerade läuft)
+#[tauri::command]
+async fn analyze_quiet(app: AppHandle, state: Tab, ids: Vec<i64>) -> R<usize> {
+    let db = state.db.clone();
+    let cancel = state.task();
+    let pioneer = load_settings(&db.lock().unwrap()).pioneer;
+    let label = state.label.clone();
+    blocking(move || {
+        analysis::analyze_pending_with(&db, Some(ids), 1, pioneer, &cancel, &|_, _, _| {}, &|id| {
+            let _ = app.emit_to(&label, "analyzed", id);
+        })
+    })
+    .await
+}
+
+/// Musikordner, die nur bei Bedarf gelesen werden (eingestellt oder als Cloud-Laufwerk erkannt)
+#[tauri::command]
+async fn on_demand_roots(state: Tab) -> R<Vec<String>> {
+    Ok(load_settings(&state.db.lock().unwrap()).on_demand_roots())
 }
 
 #[tauri::command]
@@ -2395,6 +2484,8 @@ pub fn run() {
             get_peaks,
             allow_play,
             analyze,
+            analyze_quiet,
+            on_demand_roots,
             cancel_task,
             remove_from_library,
             trash_tracks,

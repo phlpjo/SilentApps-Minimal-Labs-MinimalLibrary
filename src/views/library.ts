@@ -37,7 +37,7 @@ export function trackMenu(ids: number[], extra: MenuItem[] = []): MenuItem[] {
       ],
     },
     { label: "", sep: true },
-    { label: "Neu analysieren", action: () => analyzeIds(ids) },
+    { label: "Neu analysieren", action: () => analyzeIds(ids, true) },
     ...(one ? [{ label: "Songtext …", action: () => editLyrics(one.id) }] : []),
     { label: "Songtexte holen (LRCLIB)", action: () => fetchLyricsMany(ids) },
     { label: "BPM + Tonart in Datei schreiben", action: async () => { reportErrors(await api.writeAnalysisToTags(ids), "Geschrieben"); store.refreshTracks(ids); } },

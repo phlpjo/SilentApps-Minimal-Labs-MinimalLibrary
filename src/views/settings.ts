@@ -26,10 +26,19 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
               cross.checked ? set.delete(r) : set.add(r);
               store.saveSettings({ noCrossDup: [...set] });
             });
+            // Cloud-Laufwerk (pCloud, OneDrive …): nichts automatisch komplett lesen, sonst lädt es alles herunter
+            const od = h("input", { type: "checkbox", checked: store.onDemand.includes(r) }) as HTMLInputElement;
+            od.addEventListener("change", () => {
+              const on = new Set(s.onDemand ?? []);
+              const off = new Set(s.onDemandOff ?? []);
+              if (od.checked) { on.add(r); off.delete(r); } else { on.delete(r); off.add(r); }
+              store.saveSettings({ onDemand: [...on], onDemandOff: [...off] });
+            });
             return h("div", { class: "setting", style: { flexWrap: "wrap", gap: "6px 14px" } },
               h("span", { style: { fontFamily: "var(--mono)", fontSize: "12px", flex: "1", minWidth: "220px", wordBreak: "break-all" } }, r),
               s.roots.length > 1 ? h("label", { class: "check", title: "Aus: Duplikate nur innerhalb dieses Ordners suchen" }, cross, "Duplikate mit anderen Musikordnern finden") : "",
-              h("button", { class: "btn", onclick: async () => { await store.saveSettings({ roots: s.roots.filter((x) => x !== r), noCrossDup: (s.noCrossDup ?? []).filter((x) => x !== r) }); render(); scanNow(); } }, "Entfernen"),
+              h("label", { class: "check", title: "Für Cloud-Laufwerke wie pCloud oder OneDrive: Titel und Tags werden gelesen, aber Wellenform, Tempo, Tonart und Fingerabdruck erst beim Abspielen oder Export – so lädt das Laufwerk nicht alles herunter. Wird automatisch erkannt." }, od, "Nur bei Bedarf laden (Cloud)"),
+              h("button", { class: "btn", onclick: async () => { await store.saveSettings({ roots: s.roots.filter((x) => x !== r), noCrossDup: (s.noCrossDup ?? []).filter((x) => x !== r), onDemand: (s.onDemand ?? []).filter((x) => x !== r), onDemandOff: (s.onDemandOff ?? []).filter((x) => x !== r) }); render(); scanNow(); } }, "Entfernen"),
             );
           })
         : [h("div", { class: "note" }, "Noch kein Musikordner. Füge den Ordner hinzu, in dem deine Musik liegt.")]),

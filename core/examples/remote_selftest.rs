@@ -27,6 +27,7 @@ fn main() {
             pattern: "{artist}/{title}".into(),
             organize_target: None,
             enabled: true,
+            phone_dir: std::path::Path::new(&root).join("Handys"),
         }),
         changed: Box::new(|c| println!("geändert: {c:?}")),
     });

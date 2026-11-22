@@ -13,6 +13,25 @@ const checked = new Set<number>();
 const states = new Map<number, RipEvent>();
 let running = false;
 let urlText = "";
+
+// Liste übersteht auch Neustarts der App
+const KEY = "ml.rip";
+function saveList() {
+  try {
+    const st = [...states.values()].filter((x) => x.stage === "done" || x.stage === "error");
+    localStorage.setItem(KEY, JSON.stringify({ name: lastName, entries: lastEntries, checked: [...checked], states: st, url: urlText }));
+  } catch { /* voll → egal */ }
+}
+try {
+  const o = JSON.parse(localStorage.getItem(KEY) ?? "null");
+  if (o) {
+    lastName = o.name ?? "";
+    lastEntries = o.entries ?? [];
+    urlText = o.url ?? "";
+    (o.checked ?? []).forEach((i: number) => checked.add(i));
+    (o.states ?? []).forEach((x: RipEvent) => states.set(x.index, x));
+  }
+} catch { /* kaputt → leer */ }
 /** Liste der offenen Ansicht neu zeichnen (null = Ripper gerade nicht geöffnet) */
 let rerender: (() => void) | null = null;
 
@@ -20,6 +39,7 @@ let rerender: (() => void) | null = null;
 listen<RipEvent>("rip", (e) => {
   states.set(e.payload.index, e.payload);
   if (e.payload.stage === "done") checked.delete(e.payload.index);
+  if (e.payload.stage === "done" || e.payload.stage === "error") saveList();
   rerender?.();
 });
 
@@ -29,7 +49,7 @@ export const ripRunning = () => running;
 export function ripperView(): { el: HTMLElement; destroy: () => void } {
   const url = h("textarea", { placeholder: "Link einfügen: YouTube, SoundCloud, Spotify – Titel, Album oder Playlist. Mehrere Links: einer pro Zeile.", rows: 2, spellcheck: false, style: { width: "100%", resize: "vertical" } }) as HTMLTextAreaElement;
   url.value = urlText;
-  url.addEventListener("input", () => (urlText = url.value));
+  url.addEventListener("input", () => { urlText = url.value; saveList(); });
   const toolsBox = h("div", {});
   const listBox = h("div", {});
   const info = h("span", { class: "sub" });
@@ -90,6 +110,7 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
     all.addEventListener("change", () => {
       checked.clear();
       if (all.checked) lastEntries.forEach((e) => checked.add(e.index));
+      saveList();
       renderList();
     });
     const rows = lastEntries.map((e) => {
@@ -97,6 +118,7 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
       box.addEventListener("change", () => {
         if (box.checked) checked.add(e.index);
         else checked.delete(e.index);
+        saveList();
         info.textContent = info.textContent!.replace(/\d+ ausgewählt$/, `${checked.size} ausgewählt`);
       });
       const st = states.get(e.index);
@@ -133,14 +155,21 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
     const links = url.value.split(/\s+/).map((x) => x.trim()).filter((x) => x.startsWith("http"));
     if (!links.length) return toast("Bitte einen Link einfügen");
     if (running) return toast("Erst den laufenden Download abwarten oder abbrechen");
-    listBox.replaceChildren(h("div", { class: "empty" }, "Lese Link …"));
-    const names: string[] = [];
-    const entries: RipEntry[] = [];
+    info.textContent = "lese Link …";
+    const names: string[] = lastName ? [lastName] : [];
+    const entries: RipEntry[] = [...lastEntries];
+    let next = entries.reduce((m, e) => Math.max(m, e.index + 1), 0);
+    const fresh: number[] = [];
     for (const l of links) {
       try {
         const r = await api.ripResolve(l);
-        names.push(r.name);
-        for (const e of r.entries) entries.push({ ...e, index: entries.length });
+        if (!names.includes(r.name)) names.push(r.name);
+        // schon in der Liste (gleiche Quelle) → nicht doppelt
+        for (const e of r.entries) {
+          if (entries.some((x) => x.source === e.source)) continue;
+          entries.push({ ...e, index: next });
+          fresh.push(next++);
+        }
         if (l.includes("spotify") && r.entries.length >= 100) toast("Spotify zeigt ohne Konto höchstens 100 Titel einer Playlist an.", 7000);
       } catch (e) {
         toast(`${l}\n${e}`, 8000);
@@ -148,9 +177,8 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
     }
     lastName = names.join(", ");
     lastEntries = entries;
-    checked.clear();
-    states.clear();
-    entries.filter((e) => !e.inLibrary).forEach((e) => checked.add(e.index));
+    entries.filter((e) => fresh.includes(e.index) && !e.inLibrary).forEach((e) => checked.add(e.index));
+    saveList();
     rerender?.();
   };
 
@@ -204,6 +232,12 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
         url,
         h("div", { class: "line" },
           h("button", { class: "btn primary", onclick: load }, "Laden"),
+          h("button", { class: "btn", onclick: () => {
+            if (running) return toast("Download läuft noch");
+            lastName = ""; lastEntries = []; checked.clear(); states.clear(); urlText = ""; url.value = "";
+            saveList();
+            renderList();
+          } }, "Liste leeren"),
           h("span", { class: "spacer" }),
           h("span", { class: "note" }, "YouTube · YouTube Music · SoundCloud · Spotify · Bandcamp · Mixcloud u. v. m."),
         ),

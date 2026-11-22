@@ -72,6 +72,12 @@ export interface ToolStatus { ytdlp: string | null; ffmpeg: boolean; dir: string
 export interface RipEntry { index: number; artist: string; title: string; album: string | null; duration: number | null; source: string; site: string; inLibrary: [number, string] | null }
 export interface RipEvent { index: number; stage: "download" | "convert" | "done" | "error"; percent: number; message: string; trackId: number | null }
 
+export interface SyncTarget { id: number; name: string; path: string; playlists: number[]; auto: boolean; mirror: boolean; lastSync: number }
+export interface SyncTargetState extends SyncTarget { available: boolean; free: number | null }
+export interface SyncPreview { toCopy: number; copyBytes: number; upToDate: number; toRemove: number; totalBytes: number }
+export interface SyncReport { copied: number; skipped: number; removed: number; bytes: number; errors: string[] }
+export interface CastSound { supported: boolean; bass: number; treble: number; loudness: boolean }
+
 export type Layout = "numbered" | "flat" | "structured";
 export interface ExportReport { copied: number; skipped: number; bytes: number; playlists: string[]; errors: string[] }
 
@@ -132,6 +138,14 @@ export const api = {
   ripUpdate: () => invoke<string>("rip_update"),
   ripResolve: (url: string) => invoke<{ name: string; entries: RipEntry[] }>("rip_resolve", { url }),
   ripDownload: (entries: RipEntry[], dir: string, format: "mp3" | "original") => invoke<{ ids: number[]; errors: string[] }>("rip_download", { entries, dir, format }),
+  syncTargets: () => invoke<SyncTargetState[]>("sync_targets"),
+  syncSave: (target: SyncTarget) => invoke<number>("sync_save", { target }),
+  syncDelete: (id: number) => invoke<void>("sync_delete", { id }),
+  syncPreview: (id: number) => invoke<SyncPreview>("sync_preview", { id }),
+  syncRun: (id: number) => invoke<SyncReport>("sync_run", { id }),
+  syncEject: (path: string) => invoke<void>("sync_eject", { path }),
+  castSound: (device: string) => invoke<CastSound>("cast_sound", { device }),
+  castSetSound: (device: string, sound: CastSound) => invoke<void>("cast_set_sound", { device, sound }),
   castDevices: () => invoke<CastDevice[]>("cast_devices"),
   castPlay: (device: string, id: number, start: number) => invoke<void>("cast_play", { device, id, start }),
   castPause: (device: string) => invoke<void>("cast_pause", { device }),

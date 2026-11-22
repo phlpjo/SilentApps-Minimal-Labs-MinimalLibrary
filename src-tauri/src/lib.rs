@@ -1,5 +1,5 @@
 use base64::Engine;
-use musiccore::{acoustid, analysis, cast, ripper, db, dirs, duplicates, history, watch, export, musicbrainz, organize, playlists, scanner, tags};
+use musiccore::{acoustid, analysis, cast, ripper, sync, db, dirs, duplicates, history, watch, export, musicbrainz, organize, playlists, scanner, tags};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -807,6 +807,48 @@ async fn rename_by_pattern(state: State<'_, AppState>, ids: Vec<i64>, pattern: S
     .await
 }
 
+// ---------- Sync (USB-Stick, SD-Karte …) ----------
+
+#[tauri::command]
+fn sync_targets(state: State<AppState>) -> R<Vec<sync::TargetState>> {
+    sync::list(&state.db.lock().unwrap()).map_err(err)
+}
+
+#[tauri::command]
+fn sync_save(state: State<AppState>, target: sync::Target) -> R<i64> {
+    sync::save(&state.db.lock().unwrap(), &target).map_err(err)
+}
+
+#[tauri::command]
+fn sync_delete(state: State<AppState>, id: i64) -> R<()> {
+    sync::delete(&state.db.lock().unwrap(), id).map_err(err)
+}
+
+#[tauri::command]
+async fn sync_preview(state: State<'_, AppState>, id: i64) -> R<sync::Preview> {
+    let db = state.db.clone();
+    blocking(move || {
+        let c = db.lock().unwrap();
+        let t = sync::get(&c, id)?;
+        sync::preview(&c, &t)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn sync_run(app: AppHandle, state: State<'_, AppState>, id: i64) -> R<sync::Report> {
+    let db = state.db.clone();
+    let cancel = state.cancel.clone();
+    cancel.store(false, Ordering::Relaxed);
+    let prog = emitter(&app, "sync");
+    blocking(move || sync::run(&db, id, &cancel, &prog)).await
+}
+
+#[tauri::command]
+async fn sync_eject(path: String) -> R<()> {
+    blocking(move || sync::eject(&path)).await
+}
+
 // ---------- Link-Ripper ----------
 
 fn tools_dir(app: &AppHandle) -> PathBuf {
@@ -942,6 +984,16 @@ async fn cast_seek(device: String, sec: f64) -> R<()> {
 #[tauri::command]
 async fn cast_volume(device: String, volume: u8) -> R<()> {
     blocking(move || cast::set_volume(&device, volume)).await
+}
+
+#[tauri::command]
+async fn cast_sound(device: String) -> R<cast::Sound> {
+    blocking(move || cast::sound_get(&device)).await
+}
+
+#[tauri::command]
+async fn cast_set_sound(device: String, sound: cast::Sound) -> R<()> {
+    blocking(move || cast::sound_set(&device, &sound)).await
 }
 
 #[tauri::command]
@@ -1100,6 +1152,12 @@ pub fn run() {
             rename_track,
             rename_preview,
             rename_by_pattern,
+            sync_targets,
+            sync_save,
+            sync_delete,
+            sync_preview,
+            sync_run,
+            sync_eject,
             rip_tools,
             rip_install,
             rip_update,
@@ -1113,6 +1171,8 @@ pub fn run() {
             cast_seek,
             cast_volume,
             cast_status,
+            cast_sound,
+            cast_set_sound,
             set_tray_title,
             quit_app,
             app_version,

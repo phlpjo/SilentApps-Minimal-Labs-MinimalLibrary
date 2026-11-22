@@ -2,8 +2,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { store } from "../store";
-import { clear, h, holdButton, toast } from "../ui";
-import { analyzeIds, scanNow } from "../main";
+import { clear, h, holdButton } from "../ui";
+import { analyzeIds, nav, scanNow } from "../main";
 import { applyTheme, themeMode, type ThemeMode } from "../theme";
 
 export function settingsView(): { el: HTMLElement; destroy: () => void } {
@@ -51,21 +51,9 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
         ),
         h("div", { class: "note" }, "Die Musikordner werden laufend überwacht: Was du im Explorer hinzufügst, verschiebst, umbenennst oder löschst, übernimmt die App sofort – Analyse und Playlisten bleiben beim Verschieben erhalten."),
       ),
-      h("div", { class: "card" }, h("h3", {}, "Playlist-Ordner für Minimal Player"),
-        h("div", { class: "setting" }, h("span", {}, "Ordner"), h("span", { class: "v", style: { fontFamily: "var(--mono)", fontSize: "12px" } }, s.playlistDir || "aus")),
-        h("div", { class: "line" },
-          h("button", { class: "btn", onclick: async () => {
-            const d = await open({ directory: true });
-            if (!d) return;
-            await store.saveSettings({ playlistDir: d as string });
-            const n = await api.syncPlaylistFolder().catch(() => 0);
-            toast(`${n} Playlisten geschrieben`);
-            render();
-          } }, "Wählen …"),
-          s.playlistDir ? h("button", { class: "btn", onclick: async () => { await store.saveSettings({ playlistDir: null }); render(); } }, "Ausschalten") : null,
-          s.playlistDir ? h("button", { class: "btn", onclick: async () => toast(`${await api.syncPlaylistFolder()} Playlisten geschrieben`) }, "Jetzt schreiben") : null,
-        ),
-        h("div", { class: "note" }, "Alle Playlisten werden hier automatisch als .m3u8 mit relativen Pfaden aktuell gehalten. Liegt der Ordner im Musikordner (z. B. Musik\\Playlists), kopierst du einfach den ganzen Musikordner aufs Handy – Minimal Player findet Lieder und Playlisten."),
+      h("div", { class: "card" }, h("h3", {}, "Minimal Player"),
+        h("div", { class: "note" }, "Playlisten samt Musik aufs Handy, den USB-Stick oder die SD-Karte bringst du jetzt über ",
+          h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); nav("sync"); } }, "Sync"), "."),
       ),
       h("div", { class: "card" }, h("h3", {}, "Analyse"),
         h("div", { class: "setting" }, h("span", {}, "Gleichzeitige Analysen"), threads),

@@ -7,7 +7,7 @@ import { api, type LibraryChange } from "./api";
 import { Inspector } from "./inspector";
 import { player } from "./player";
 import { store } from "./store";
-import { artistLinks, clear, contextMenu, fmtTime, h, onArtistClick, sheet, toast, type MenuItem } from "./ui";
+import { artistLinks, clear, contextMenu, fmtTime, h, onArtistClick, sheet, toast } from "./ui";
 import { drawWave, waveElement } from "./waveform";
 import { beginDrag, dragging, dropTarget } from "./dnd";
 import { duplicatesView } from "./views/duplicates";
@@ -15,13 +15,16 @@ import { libraryView, trackMenu } from "./views/library";
 import { foldersView } from "./views/folders";
 import { historyView, undo } from "./views/history";
 import { ripperView } from "./views/ripper";
+import { syncView, startSyncWatch, syncReadyCount } from "./views/sync";
+import { equalizerView } from "./views/equalizer";
+import { currentOutputLabel, outputPopup, restoreOutput } from "./outputs";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { organizeView } from "./views/organize";
 import { exportDialog, playlistView, smartEditor } from "./views/playlist";
 import { settingsView } from "./views/settings";
 import logo from "./logo.svg";
 
-type ViewName = "library" | "folders" | "history" | "ripper" | "playlist" | "duplicates" | "organize" | "settings";
+type ViewName = "library" | "folders" | "history" | "ripper" | "sync" | "equalizer" | "playlist" | "duplicates" | "organize" | "settings";
 
 const app = document.getElementById("app")!;
 const win = getCurrentWindow();
@@ -120,6 +123,8 @@ export function nav(name: ViewName, arg?: number[], path?: string, fromBack = fa
     case "folders": v = foldersView(path); break;
     case "history": v = historyView(); break;
     case "ripper": v = ripperView(); break;
+    case "sync": v = syncView(); break;
+    case "equalizer": v = equalizerView(); break;
     case "playlist": v = playlistView(arg![0]); break;
     case "duplicates": v = duplicatesView(); break;
     case "organize": v = organizeView(arg); break;
@@ -147,6 +152,12 @@ const status = h("div", { class: "status" });
 
 /** Beim Ziehen kurz über dem Menüpunkt halten → Ansicht wechselt, Ziehen geht weiter */
 let springTimer = 0;
+/** Sync: Punkt, wenn ein Ziel angeschlossen und bereit ist */
+function syncBadge(): string | undefined {
+  const n = syncReadyCount();
+  return n ? `● ${n}` : undefined;
+}
+
 /** Titel auf „+ Neu“ ziehen → neue Playlist anlegen, Titel kommen direkt hinein */
 function newDrop(el: HTMLElement) {
   dropTarget(el, {
@@ -199,10 +210,12 @@ function renderSide() {
   mainnav.replaceChildren(
     navItem("Bibliothek", n === "library", () => nav("library"), store.tracks.size.toLocaleString("de")),
     springLoaded(navItem("Ordner", n === "folders", () => nav("folders")), "folders"),
-    navItem("Duplikate", n === "duplicates", () => nav("duplicates")),
-    navItem("Verlauf", n === "history", () => nav("history")),
+    navItem("Sync", n === "sync", () => nav("sync"), syncBadge()),
+    navItem("Equalizer", n === "equalizer", () => nav("equalizer")),
     navItem("Ripper", n === "ripper", () => nav("ripper")),
     navItem("Sortieren", n === "organize", () => nav("organize", n === "library" ? [...store.selection] : undefined)),
+    navItem("Duplikate", n === "duplicates", () => nav("duplicates")),
+    navItem("Verlauf", n === "history", () => nav("history")),
     navItem("Einstellungen", n === "settings", () => nav("settings")),
   );
   plList.replaceChildren(
@@ -268,13 +281,13 @@ export function newPlaylistFromIds(ids: number[]) {
 }
 
 // ---------- Hintergrund-Aufgaben + Fortschritt ----------
-const TASKS: Record<string, string> = { rip: "Ripper", tools: "Werkzeuge laden", scan: "Scannen", analyze: "Analysieren", duplicates: "Duplikate", organize: "Sortieren", export: "Exportieren" };
+const TASKS: Record<string, string> = { sync: "Sync", rip: "Ripper", tools: "Werkzeuge laden", scan: "Scannen", analyze: "Analysieren", duplicates: "Duplikate", organize: "Sortieren", export: "Exportieren" };
 let busy = 0;
 let hideTimer = 0;
 function setStatus(task: string, done: number, total: number, msg: string) {
   clearTimeout(hideTimer);
   const pct = total ? Math.round((done / total) * 100) : 0;
-  const cancellable = task === "analyze" || task === "export" || task === "rip";
+  const cancellable = task === "analyze" || task === "export" || task === "rip" || task === "sync";
   status.replaceChildren(
     h("div", { class: "srow" }, h("span", {}, `${TASKS[task] ?? task}${total ? ` ${done.toLocaleString("de")} / ${total.toLocaleString("de")}` : ""}`),
       cancellable && done < total ? h("span", { class: "act", style: { cursor: "pointer" }, onclick: () => api.cancel() }, "Abbrechen") : null),
@@ -381,26 +394,15 @@ function buildPlayer() {
   vol.addEventListener("input", () => player.setVolume(Number(vol.value)));
   const shuffleBtn = h("button", { class: "btn", title: "Zufallswiedergabe", onclick: () => player.setShuffle(!player.shuffle) }, "Zufall");
   const devBtn = h("button", { class: "btn dev", title: "Ausgabegerät: dieser PC oder Lautsprecher im Heimnetz" }, "Dieser PC");
-  devBtn.addEventListener("click", async () => {
-    const r = devBtn.getBoundingClientRect();
-    contextMenu(r.left, r.top - 60, [{ label: "Suche Geräte im Heimnetz …", disabled: true }]);
-    const list = await api.castDevices().catch((e) => {
-      toast(String(e));
-      return [];
-    });
-    const items: MenuItem[] = [
-      { label: (player.device ? "\u2003\u2002" : "✓\u2002") + "Dieser PC", action: () => player.setDevice(null) },
-      { label: "", sep: true },
-      ...list.map((d) => ({
-        label: (player.device?.id === d.id ? "✓\u2002" : "\u2003\u2002") + d.name,
-        hint: d.kind === "sonos" ? "Sonos" : "DLNA",
-        action: () => player.setDevice(d),
-      })),
-    ];
-    if (!list.length) items.push({ label: "Keine Geräte gefunden", disabled: true });
-    const h2 = items.length * 36 + 20;
-    contextMenu(r.left, r.top - h2, items);
-  });
+  devBtn.addEventListener("click", () => outputPopup(devBtn));
+  // Lautstärke: größere Fläche, Mausrad = ±5 %
+  const volBox = h("div", { class: "vol-box", title: "Lautstärke (Mausrad)" }, vol);
+  volBox.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const v = Math.max(0, Math.min(1, player.volumeLevel + (e.deltaY < 0 ? 0.05 : -0.05)));
+    player.setVolume(Math.round(v * 100) / 100);
+    vol.value = String(player.volumeLevel);
+  }, { passive: false });
   const nowInfo = h("div", { style: { minWidth: "0" } }, t1, t2);
   // Rechtsklick auf den laufenden Titel: gleiches Menü wie in der Liste
   for (const el of [cover, nowInfo]) {
@@ -436,7 +438,7 @@ function buildPlayer() {
       h("button", { class: "btn", onclick: () => player.next() }, "Weiter"),
     ),
     h("div", { class: "bigwave" }, wrap, h("div", { class: "time" }, tCur, tDur)),
-    h("div", { class: "vol" }, devBtn, vol),
+    h("div", { class: "vol" }, devBtn, volBox),
   );
   let coverFor = -1;
   const update = () => {
@@ -454,7 +456,7 @@ function buildPlayer() {
     drawWave(canvas, t ? store.peaksFor(t.id) : undefined, t ? player.frac() : -1);
     tCur.textContent = fmtTime(player.currentTime);
     shuffleBtn.classList.toggle("on", player.shuffle);
-    devBtn.textContent = player.device ? "▸ " + player.device.name : "Dieser PC";
+    devBtn.textContent = (player.device ? "▸ " : "") + currentOutputLabel();
     devBtn.classList.toggle("on", !!player.device);
     if (document.activeElement !== vol) vol.value = String(player.volumeLevel);
   };
@@ -494,6 +496,7 @@ document.addEventListener("contextmenu", (e) => {
 });
 
 store.on("playlists", renderSide);
+store.on("sync", renderSide);
 store.on("tracks", renderSide);
 
 async function start() {
@@ -508,5 +511,9 @@ async function start() {
     nav("library");
     scanNow();
   }
+  // Alter Playlist-Ordner (nur .m3u8) ist durch Sync ersetzt
+  if (store.settings.playlistDir) store.saveSettings({ playlistDir: null });
+  startSyncWatch();
+  restoreOutput();
 }
 start();

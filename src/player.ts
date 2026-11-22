@@ -2,6 +2,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { api, type CastDevice, type Track } from "./api";
 import { store } from "./store";
 import { toast } from "./ui";
+import { eq } from "./eq";
 
 type PosListener = (id: number, frac: number) => void;
 
@@ -16,6 +17,8 @@ class Player {
   shuffle = localStorage.getItem("ml.shuffle") === "1";
   /** Gewähltes Netzwerkgerät (null = dieser PC) */
   device: CastDevice | null = null;
+  /** Soundkarte dieses PCs ("default" = Windows-Standard) */
+  localSink = localStorage.getItem("ml.localSink") ?? "default";
   private posListeners = new Set<PosListener>();
   private raf = 0;
   private token = 0;
@@ -37,6 +40,7 @@ class Player {
     const a = new Audio();
     a.preload = "auto";
     a.volume = this.volume;
+    eq.attach(a); // Equalizer (Web Audio) – setzt crossOrigin vor dem ersten src
     a.addEventListener("ended", () => a === this.audio && this.next(true));
     a.addEventListener("play", () => {
       if (a !== this.audio) return;
@@ -299,6 +303,7 @@ class Player {
       this.audio.pause();
     }
     this.device = dev;
+    eq.use(dev ? "cast:" + dev.id : "local:" + this.localSink);
     if (dev) {
       const st = await api.castStatus(dev.id).catch(() => null);
       if (st && st.volume >= 0) this.volume = st.volume / 100;
@@ -344,6 +349,16 @@ class Player {
         this.next(true); // Titel zu Ende
       }
     }, 1000);
+  }
+
+  /** Ausgabe auf eine Soundkarte dieses PCs legen (beendet ggf. das Streamen ins Heimnetz) */
+  async setLocalSink(id: string) {
+    this.localSink = id;
+    localStorage.setItem("ml.localSink", id);
+    if (this.isRemote) await this.setDevice(null);
+    await eq.setSink(id, this.audio);
+    eq.use("local:" + id);
+    store.emit("player");
   }
 
   /** Datei wird gelöscht → Wiedergabe lösen */

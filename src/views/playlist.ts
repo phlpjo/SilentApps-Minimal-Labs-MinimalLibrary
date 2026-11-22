@@ -116,6 +116,27 @@ const OPS: Record<string, [string, string][]> = {
   date: [["inLastDays", "in den letzten … Tagen"]],
 };
 
+/** Regelzeilen (Feld · Bedingung · Wert) – für smarte Playlisten und die erweiterte Suche */
+export function renderRuleRows(box: HTMLElement, list: Rule[], onChange: () => void) {
+  const render = () => {
+    clear(box);
+    list.forEach((r: Rule, i) => {
+      const kind = FIELDS.find((f) => f[0] === r.field)?.[2] ?? "text";
+      if (!OPS[kind].some(([o]) => o === r.op)) r.op = OPS[kind][0][0];
+      const f = h("select", {}, ...FIELDS.map(([v, l]) => h("option", { value: v, selected: v === r.field }, l)));
+      const o = h("select", {}, ...OPS[kind].map(([v, l]) => h("option", { value: v, selected: v === r.op }, l)));
+      const v1 = h("input", { type: "text", value: r.value, placeholder: kind === "num" ? "von" : "Wert" });
+      const v2 = h("input", { type: "text", value: r.value2, placeholder: "bis", style: { visibility: r.op === "between" ? "visible" : "hidden" } });
+      f.addEventListener("change", () => { r.field = f.value; render(); onChange(); });
+      o.addEventListener("change", () => { r.op = o.value; render(); onChange(); });
+      v1.addEventListener("input", () => { r.value = v1.value; onChange(); });
+      v2.addEventListener("input", () => { r.value2 = v2.value; onChange(); });
+      box.appendChild(h("div", { class: "rule" }, f, o, v1, v2, h("button", { class: "btn", onclick: () => { list.splice(i, 1); render(); onChange(); } }, "Entfernen")));
+    });
+  };
+  render();
+}
+
 export function smartEditor(p?: Playlist) {
   const rules: SmartRules = p?.rules ? structuredClone(p.rules) : { all: true, rules: [{ field: "genre", op: "contains", value: "", value2: "" }], sort: "artist", desc: false, limit: null };
   const name = h("input", { type: "text", value: p?.name ?? "Neue smarte Playlist", style: { width: "100%" } });
@@ -140,22 +161,7 @@ export function smartEditor(p?: Playlist) {
     desc: descBox.checked,
     limit: limit.value ? Number(limit.value) : null,
   });
-  const renderRules = () => {
-    clear(box);
-    rules.rules.forEach((r: Rule, i) => {
-      const kind = FIELDS.find((f) => f[0] === r.field)?.[2] ?? "text";
-      if (!OPS[kind].some(([o]) => o === r.op)) r.op = OPS[kind][0][0];
-      const f = h("select", {}, ...FIELDS.map(([v, l]) => h("option", { value: v, selected: v === r.field }, l)));
-      const o = h("select", {}, ...OPS[kind].map(([v, l]) => h("option", { value: v, selected: v === r.op }, l)));
-      const v1 = h("input", { type: "text", value: r.value, placeholder: kind === "num" ? "von" : "Wert" });
-      const v2 = h("input", { type: "text", value: r.value2, placeholder: "bis", style: { visibility: r.op === "between" ? "visible" : "hidden" } });
-      f.addEventListener("change", () => { r.field = f.value; renderRules(); preview(); });
-      o.addEventListener("change", () => { r.op = o.value; renderRules(); preview(); });
-      v1.addEventListener("input", () => { r.value = v1.value; preview(); });
-      v2.addEventListener("input", () => { r.value2 = v2.value; preview(); });
-      box.appendChild(h("div", { class: "rule" }, f, o, v1, v2, h("button", { class: "btn", onclick: () => { rules.rules.splice(i, 1); renderRules(); preview(); } }, "Entfernen")));
-    });
-  };
+  const renderRules = () => renderRuleRows(box, rules.rules, preview);
   [allSel, sortSel, descBox, limit].forEach((e) => e.addEventListener("change", preview));
   renderRules();
   preview();

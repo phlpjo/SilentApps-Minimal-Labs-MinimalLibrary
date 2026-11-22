@@ -6,6 +6,7 @@ import { clear, h, holdButton } from "../ui";
 import { analyzeIds, nav, scanNow } from "../main";
 import { applyTheme, themeMode, type ThemeMode } from "../theme";
 import { IS_MAC, FILE_MANAGER } from "../platform";
+import { autoInstall, checkUpdate, installUpdate, updater } from "../updater";
 
 export function settingsView(): { el: HTMLElement; destroy: () => void } {
   const body = h("div", { class: "view-scroll" });
@@ -79,6 +80,7 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
           ["Strg+S", "Tags speichern"], ["Strg+Z", "Letzte Änderung rückgängig"], ["F2", "Datei umbenennen"], ["Enter", "Auswahl abspielen"], ["Entf", "Aus Playlist entfernen"], ["Doppelklick", "Abspielen"], ["Klick in Wellenform", "ab dieser Stelle abspielen"],
         ].map(([k, v]) => h("div", { class: "setting" }, h("span", {}, v), h("span", { class: "v", style: { fontFamily: "var(--mono)", fontSize: "12px" } }, k))),
       ),
+      updateCard(version),
       h("div", { class: "card" }, h("h3", {}, "Über"),
         h("div", { class: "setting" }, h("span", {}, "Version"), h("span", { class: "v" }, version)),
         h("div", { class: "setting" }, h("span", {}, "Lizenzen"), h("span", { class: "v" }, "Space Grotesk (OFL 1.1) · Symphonia (MPL-2.0) · Lofty (MIT/Apache-2.0) · rusty-chromaprint (MIT) · Tauri (MIT/Apache-2.0)")),
@@ -87,8 +89,31 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
       ),
     );
   };
-  const unsub = store.on("settings", render);
+  const unsubs = [store.on("settings", render), store.on("update", render)];
   render();
   const el = h("div", { style: { display: "contents" } }, h("div", { class: "head" }, h("h1", {}, "Einstellungen")), body);
-  return { el, destroy: unsub };
+  return { el, destroy: () => unsubs.forEach((u) => u()) };
+}
+
+function updateCard(version: string) {
+  const u = updater;
+  const status =
+    u.state === "checking" ? "Suche nach Updates …"
+    : u.state === "available" ? `Version ${u.available!.version} ist verfügbar`
+    : u.state === "downloading" ? `Lädt … ${Math.round(u.progress * 100)} %`
+    : u.state === "error" ? `Prüfung fehlgeschlagen: ${u.error}`
+    : u.state === "none" ? `Aktuell (${version})`
+    : `Installiert: ${version}`;
+  const auto = h("input", { type: "checkbox", checked: autoInstall.on });
+  auto.addEventListener("change", () => (autoInstall.on = auto.checked));
+  return h("div", { class: "card" }, h("h3", {}, "Updates"),
+    h("div", { class: "setting" }, h("span", {}, status),
+      u.state === "available"
+        ? h("button", { class: "btn primary", onclick: () => installUpdate() }, "Installieren & neu starten")
+        : h("button", { class: "btn", disabled: u.state === "checking" || u.state === "downloading", onclick: () => checkUpdate(true) }, "Jetzt prüfen"),
+    ),
+    u.state === "available" && u.available!.body ? h("div", { class: "note" }, u.available!.body) : null,
+    h("label", { class: "check", style: { marginTop: "8px" } }, auto, "Beim Start automatisch installieren (nur wenn gerade keine Musik läuft)"),
+    h("div", { class: "note" }, "Updates kommen signiert aus den GitHub-Releases. Die App prüft beim Start und alle 6 Stunden."),
+  );
 }

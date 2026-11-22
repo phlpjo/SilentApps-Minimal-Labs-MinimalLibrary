@@ -1076,6 +1076,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .on_window_event(|window, event| {
             // Schließen (X, Alt+F4) → in den Infobereich, Musik läuft weiter
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

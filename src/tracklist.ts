@@ -2,7 +2,7 @@ import type { Track } from "./api";
 import { player } from "./player";
 import { store } from "./store";
 import { drawWave, waveElement } from "./waveform";
-import { artistLinks, camelot, fmtTime, h, keyLabel, keyOrder, ext, type MenuItem, contextMenu } from "./ui";
+import { albumLink, artistLinks, camelot, fmtTime, h, keyLabel, keyOrder, ext, type MenuItem, contextMenu } from "./ui";
 import { renameFileDialog } from "./fileops";
 import { beginDrag, dropTarget } from "./dnd";
 
@@ -25,7 +25,7 @@ const COLUMNS: Col[] = [
     render: (t) => h("div", { style: { minWidth: "0" } }, h("div", { class: "t1" }, store.label(t)), h("div", { class: "t2" }, artistLinks(t.artist, "Unbekannter Künstler"))),
   },
   { key: "artist", label: "Künstler", width: "minmax(100px, 1fr)", render: (t) => artistLinks(t.artist) },
-  { key: "album", label: "Album", width: "minmax(100px, 1.2fr)", hideBelow: 700, render: (t) => t.album ?? "" },
+  { key: "album", label: "Album", width: "minmax(100px, 1.2fr)", hideBelow: 700, render: (t) => albumLink(t.album) },
   { key: "albumartist", label: "Albumkünstler", width: "minmax(100px, 1fr)", render: (t) => artistLinks(t.albumArtist) },
   { key: "genre", label: "Genre", width: "minmax(70px, 0.7fr)", hideBelow: 860, render: (t) => t.genre ?? "" },
   { key: "year", label: "Jahr", width: "52px", num: true, render: (t) => t.year?.slice(0, 4) ?? "" },
@@ -438,6 +438,20 @@ export class TrackList {
   selectAll() {
     this.view.forEach((id) => store.selection.add(id));
     this.updateSel();
+  }
+
+  /** Titel auswählen und in die Mitte scrollen */
+  reveal(id: number) {
+    const i = this.view.indexOf(id);
+    if (i < 0) return false;
+    store.selection.clear();
+    store.selection.add(id);
+    this.anchor = i;
+    this.updateSel();
+    store.emit("selection");
+    this.body.scrollTop = Math.max(0, i * ROW_H - this.body.clientHeight / 2 + ROW_H / 2);
+    this.body.dispatchEvent(new Event("scroll"));
+    return true;
   }
 
   private scrollTo(i: number) {

@@ -77,10 +77,10 @@ fn parse_num(s: &str) -> Option<f64> {
 }
 
 pub fn rule_matches(t: &Track, r: &Rule) -> bool {
-    let v = r.value.trim().to_lowercase();
+    let v = amp(&r.value.trim().to_lowercase());
     match r.op.as_str() {
         "contains" | "notContains" | "is" | "isNot" | "startsWith" => {
-            let s = text(t, &r.field).unwrap_or_default().to_lowercase();
+            let s = amp(&text(t, &r.field).unwrap_or_default().to_lowercase());
             match r.op.as_str() {
                 "contains" => s.contains(&v),
                 "notContains" => !s.contains(&v),
@@ -302,4 +302,12 @@ mod tests {
         };
         assert_eq!(evaluate(&all, &r), vec![1]);
     }
+}
+
+/// "A&B", "A & B", "A  &B" gelten als gleich
+fn amp(s: &str) -> String {
+    if !s.contains('&') {
+        return s.to_string();
+    }
+    s.split('&').map(str::trim).collect::<Vec<_>>().join(" & ")
 }

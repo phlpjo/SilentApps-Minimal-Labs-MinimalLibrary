@@ -40,6 +40,8 @@ Daten liegen in `%APPDATA%\de.philipdecker.minimallibrary\library.db` (SQLite). 
 
 ## Bauen
 
+**Auto-Update:** Die App prüft beim Start und alle 6 Stunden die GitHub-Releases (signiert, `latest.json`). Jeder Push auf `main` erzeugt ein Release `v1.0.<Lauf>`, sobald das Secret `TAURI_SIGNING_PRIVATE_KEY` eingetragen ist.
+
 **Builds über GitHub Actions:** jeder Push auf `main` erzeugt unter *Actions → Artefakte*
 - Windows: Installer (`.exe` und `.msi`) und die portable `minimal-library.exe`
 - macOS: `.dmg` (Universal, Apple Silicon + Intel). Nicht von Apple beglaubigt: beim ersten Start Rechtsklick → Öffnen bzw. Systemeinstellungen → Datenschutz & Sicherheit → „Trotzdem öffnen“.

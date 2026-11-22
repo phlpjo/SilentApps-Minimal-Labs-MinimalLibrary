@@ -266,8 +266,8 @@ export function keyOrder(k: string | null): number {
 }
 
 // ---------- Klickbare Interpreten ----------
-/** Trennt "A, B & C und D u. E feat. F" in einzelne Namen (Trenner bleiben sichtbar). */
-const ARTIST_SEP = /(\s*,\s*|\s*&\s*|\s+und\s+|\s+u\.\s*|\s+(?:feat\.?|ft\.|featuring)\s+)/i;
+/** Trennt "A, B und C u. D feat. E" in einzelne Namen (Trenner bleiben sichtbar). "&" gehört zum Namen ("Simon & Garfunkel"). */
+const ARTIST_SEP = /(\s*,\s*|\s+und\s+|\s+u\.\s*|\s+(?:feat\.?|ft\.|featuring)\s+)/i;
 
 let artistHandler: ((name: string) => void) | null = null;
 export function onArtistClick(fn: (name: string) => void) {
@@ -299,3 +299,24 @@ export function artistLinks(text: string | null, fallback = ""): HTMLElement {
   });
   return span;
 }
+
+// ---------- Klickbare Alben ----------
+let albumHandler: ((name: string) => void) | null = null;
+export function onAlbumClick(fn: (name: string) => void) {
+  albumHandler = fn;
+}
+
+export function albumLink(text: string | null): HTMLElement | string {
+  if (!text) return "";
+  const a = h("span", { class: "artist-link", title: `Nach Album „${text}“ suchen` }, text);
+  a.addEventListener("pointerdown", (e) => e.stopPropagation());
+  a.addEventListener("dblclick", (e) => e.stopPropagation());
+  a.addEventListener("click", (e) => {
+    e.stopPropagation();
+    albumHandler?.(text);
+  });
+  return a;
+}
+
+/** Für die Suche: "A&B", "A & B", "A  &B" sind gleich */
+export const searchNorm = (s: string) => s.toLowerCase().replace(/\s*&\s*/g, " & ");

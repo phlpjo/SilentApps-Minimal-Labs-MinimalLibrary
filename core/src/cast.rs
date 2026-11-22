@@ -77,7 +77,13 @@ fn parse_hms(s: &str) -> f64 {
     }
 }
 
+/// Eine gemeinsame Verbindung (Keep-Alive) – spart bei jedem Befehl den Verbindungsaufbau
 fn agent() -> ureq::Agent {
+    static A: OnceLock<ureq::Agent> = OnceLock::new();
+    A.get_or_init(new_agent).clone()
+}
+
+fn new_agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(6)))
         .http_status_as_error(false)
@@ -466,41 +472,47 @@ pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<()> 
         xml_escape(&url),
     );
     let sonos = d.kind == "sonos";
-    // Nur beim Einstieg mitten im Titel stumm schalten (sonst hört man kurz den Anfang).
-    // Beim normalen Start nicht: jedes Stumm/Laut kostet Zeit und kann selbst knacken.
-    let mute_now = start > 1.0 && !get_mute(&d).unwrap_or(true);
-    if mute_now {
-        let _ = set_mute(&d, true);
+    // Sonos nimmt eine neue Adresse auch während der Wiedergabe an – ein Stop vorher kostet nur Zeit.
+    // Andere Geräte (DLNA) brauchen ihn oft.
+    if !sonos {
+        let _ = soap(&d.av_control, AVT, "Stop", &[("InstanceID", "0".into())]);
     }
-    let result = (|| -> Result<()> {
-        // Sonos nimmt eine neue Adresse auch während der Wiedergabe an – ein Stop vorher kostet nur Zeit
-        // und lässt den Puffer leer anlaufen. Andere Geräte (DLNA) brauchen ihn oft.
-        if !sonos {
-            let _ = soap(&d.av_control, AVT, "Stop", &[("InstanceID", "0".into())]);
-        }
-        soap_retry(&d.av_control, AVT, "SetAVTransportURI", &[("InstanceID", "0".into()), ("CurrentURI", url), ("CurrentURIMetaData", didl)], 3)?;
-        let play = || soap_retry(&d.av_control, AVT, "Play", &[("InstanceID", "0".into()), ("Speed", "1".into())], 4);
-        play()?;
-        if !wait_state(&d, "PLAYING", Duration::from_secs(6)) {
-            // hängt in TRANSITIONING/STOPPED → noch einmal anstoßen
-            play()?;
-            if !wait_state(&d, "PLAYING", Duration::from_secs(6)) {
-                bail!("{} startet die Wiedergabe nicht – ist der Lautsprecher erreichbar und die Firewall offen?", d.name);
+    soap_retry(&d.av_control, AVT, "SetAVTransportURI", &[("InstanceID", "0".into()), ("CurrentURI", url), ("CurrentURIMetaData", didl)], 3)?;
+    // Einstieg mitten im Titel: wie die Sonos-App erst springen, dann abspielen – kein Anspielen,
+    // kein Stumm/Laut. Klappt das Springen vor dem Start nicht (manche DLNA-Geräte), danach springen.
+    let mut seeked = start <= 1.0;
+    if !seeked {
+        for _ in 0..3 {
+            if soap(&d.av_control, AVT, "Seek", &[("InstanceID", "0".into()), ("Unit", "REL_TIME".into()), ("Target", hms(start))]).is_ok() {
+                seeked = true;
+                break;
             }
+            std::thread::sleep(Duration::from_millis(120));
         }
-        if start > 1.0 {
-            seek_dev(&d, start)?;
-            // erst laut schalten, wenn das Gerät an der neuen Stelle wirklich weiterläuft
-            wait_state(&d, "PLAYING", Duration::from_secs(4));
-            wait_position(&d, start + 0.5, Duration::from_millis(2500));
-        }
-        Ok(())
-    })();
-    if mute_now {
-        let _ = set_mute(&d, false);
     }
-    result?;
+    soap_retry(&d.av_control, AVT, "Play", &[("InstanceID", "0".into()), ("Speed", "1".into())], 4)?;
     *active().lock().unwrap() = Some(device_id.to_string());
+    let my_gen = my;
+    if !seeked {
+        // Fallback: nach dem Start springen (kurz stumm, damit man den Anfang nicht hört)
+        let muted = !get_mute(&d).unwrap_or(true) && set_mute(&d, true).is_ok();
+        wait_state(&d, "PLAYING", Duration::from_secs(5));
+        let r = seek_dev(&d, start);
+        wait_position(&d, start + 0.3, Duration::from_millis(1500));
+        if muted {
+            let _ = set_mute(&d, false);
+        }
+        r?;
+    } else {
+        // Antwort sofort zurückgeben – ob das Gerät wirklich losläuft, prüft ein Hintergrund-Thread
+        // (und stößt notfalls noch einmal an). Die Oberfläche fragt den Zustand ohnehin ab.
+        let d2 = d.clone();
+        std::thread::spawn(move || {
+            if !wait_state(&d2, "PLAYING", Duration::from_secs(5)) && GEN.load(std::sync::atomic::Ordering::SeqCst) == my_gen {
+                let _ = soap(&d2.av_control, AVT, "Play", &[("InstanceID", "0".into()), ("Speed", "1".into())]);
+            }
+        });
+    }
     Ok(())
 }
 
@@ -603,8 +615,21 @@ pub fn stop(device_id: &str) -> Result<()> {
 }
 
 pub fn seek(device_id: &str, sec: f64) -> Result<()> {
+    // Schnelles Klicken in die Wellenform: nur der letzte Sprung zählt
+    static GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let my = GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
     let d = device(device_id)?;
-    seek_dev(&d, sec)
+    for i in 0..8 {
+        if GEN.load(std::sync::atomic::Ordering::SeqCst) != my {
+            return Ok(());
+        }
+        match soap(&d.av_control, AVT, "Seek", &[("InstanceID", "0".into()), ("Unit", "REL_TIME".into()), ("Target", hms(sec))]) {
+            Ok(_) => return Ok(()),
+            Err(e) if i == 7 => return Err(e),
+            Err(_) => std::thread::sleep(Duration::from_millis(200)),
+        }
+    }
+    Ok(())
 }
 
 pub fn set_volume(device_id: &str, vol: u8) -> Result<()> {
@@ -622,7 +647,11 @@ pub fn status(device_id: &str) -> Result<Status> {
     let d = device(device_id)?;
     let ti = soap(&d.av_control, AVT, "GetTransportInfo", &[("InstanceID", "0".into())])?;
     let pi = soap(&d.av_control, AVT, "GetPositionInfo", &[("InstanceID", "0".into())])?;
+    // Lautstärke seltener abfragen (jede 5. Abfrage) – weniger Last auf dem Lautsprecher
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let ask_volume = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 5 == 0;
     let volume = match &d.rc_control {
+        _ if !ask_volume => -1,
         Some(rc) if d.group_volume => soap(rc, GRC, "GetGroupVolume", &[("InstanceID", "0".into())])
             .ok()
             .and_then(|x| tag(&x, "CurrentVolume"))

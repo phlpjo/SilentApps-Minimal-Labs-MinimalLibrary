@@ -126,6 +126,41 @@ pub fn move_into(conn: &Connection, path: &Path, target_parent: &Path) -> Result
 }
 
 /// Ordner samt Inhalt in den Papierkorb; Titel darin verlassen die Bibliothek.
+/// Liegt `path` in einem der Musikordner?
+pub fn under_any(path: &str, roots: &[PathBuf]) -> bool {
+    let norm = |s: &str| s.replace('\\', "/").to_lowercase();
+    let p = norm(path);
+    roots.iter().any(|r| {
+        let r = norm(&r.to_string_lossy());
+        let r = r.trim_end_matches('/');
+        !r.is_empty() && p.starts_with(&format!("{r}/"))
+    })
+}
+
+/// Nur Musikordner zählen: alles außerhalb der eingestellten Ordner aus der Bibliothek entfernen
+/// (samt Playlist-Einträgen, Analyse und Cues). Gibt die Anzahl entfernter Titel zurück.
+pub fn prune_outside(conn: &Connection, roots: &[PathBuf]) -> Result<usize> {
+    let rows: Vec<(i64, String)> = {
+        let mut st = conn.prepare("SELECT id, path FROM tracks")?;
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?
+    };
+    let gone: Vec<i64> = rows.into_iter().filter(|(_, p)| !under_any(p, roots)).map(|(id, _)| id).collect();
+    if gone.is_empty() {
+        return Ok(0);
+    }
+    conn.execute_batch("BEGIN")?;
+    {
+        let mut del = conn.prepare("DELETE FROM tracks WHERE id = ?1")?;
+        let mut del_items = conn.prepare("DELETE FROM playlist_items WHERE track_id = ?1")?;
+        for id in &gone {
+            del.execute([id])?;
+            del_items.execute([id])?;
+        }
+    }
+    conn.execute_batch("COMMIT")?;
+    Ok(gone.len())
+}
+
 pub fn remove_tracks_under(conn: &Connection, path: &Path) -> Result<usize> {
     let p = with_sep(&path.to_string_lossy());
     Ok(conn.execute("DELETE FROM tracks WHERE substr(path, 1, ?2) = ?1", params![p, p.chars().count() as i64])?)
@@ -134,6 +169,18 @@ pub fn remove_tracks_under(conn: &Connection, path: &Path) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn prune_keeps_only_roots() {
+        let c = crate::db::open(&std::env::temp_dir().join(format!("mlprune{}.db", std::process::id()))).unwrap();
+        for p in ["/m/a/1.mp3", "/m/ab/2.mp3", "/x/3.mp3", "C:\\Musik\\4.mp3"] {
+            c.execute("INSERT INTO tracks(path, size) VALUES(?1, 1)", [p]).unwrap();
+        }
+        let n = prune_outside(&c, &[PathBuf::from("/m/a"), PathBuf::from("C:\\Musik\\")]).unwrap();
+        assert_eq!(n, 2);
+        let left: Vec<String> = c.prepare("SELECT path FROM tracks ORDER BY path").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(left, vec!["/m/a/1.mp3".to_string(), "C:\\Musik\\4.mp3".to_string()]);
+    }
+
     #[test]
     fn rename_and_move() {
         let base = std::env::temp_dir().join(format!("mldirs{}", std::process::id()));

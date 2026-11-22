@@ -53,8 +53,15 @@ class Store {
 
   async saveSettings(patch: Partial<Settings>) {
     this.settings = { ...this.settings, ...patch };
-    await api.setSettings(this.settings);
+    const pruned = await api.setSettings(this.settings);
     this.emit("settings");
+    if (pruned > 0) {
+      // Musikordner entfernt: Titel daraus sind weg, die laufende Analyse wurde gestoppt
+      for (const id of [...this.selection]) this.selection.delete(id);
+      await this.loadTracks();
+      await this.loadPlaylists();
+      this.emit("pruned");
+    }
   }
 
   /** Wellenform anfordern (gebündelt). Gibt vorhandene sofort zurück. */

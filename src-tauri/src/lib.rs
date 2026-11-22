@@ -110,15 +110,22 @@ fn get_settings(state: State<AppState>) -> R<Settings> {
 }
 
 #[tauri::command]
-fn set_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> R<()> {
+fn set_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> R<usize> {
     let c = state.db.lock().unwrap();
     db::set_setting(&c, "settings", &serde_json::to_string(&settings).map_err(err)?).map_err(err)?;
     for r in &settings.roots {
         let _ = app.asset_protocol_scope().allow_directory(r, true);
     }
+    // Musikordner entfernt → seine Titel verschwinden aus der Bibliothek, laufende Analyse stoppt
+    let roots: Vec<PathBuf> = settings.roots.iter().map(PathBuf::from).collect();
+    let pruned = dirs::prune_outside(&c, &roots).map_err(err)?;
+    if pruned > 0 {
+        state.cancel.store(true, Ordering::Relaxed);
+        sync_playlists(&c);
+    }
     drop(c);
     restart_watcher(&app, &state);
-    Ok(())
+    Ok(pruned)
 }
 
 /// Playlist-Ordner aktuell halten (falls eingestellt).
@@ -145,9 +152,43 @@ async fn scan_library(app: AppHandle, state: State<'_, AppState>) -> R<scanner::
 }
 
 #[tauri::command]
-async fn add_paths(state: State<'_, AppState>, paths: Vec<String>) -> R<Vec<i64>> {
+async fn add_paths(app: AppHandle, state: State<'_, AppState>, paths: Vec<String>) -> R<AddReport> {
     let db = state.db.clone();
-    blocking(move || scanner::add_files(&db, &paths.iter().map(PathBuf::from).collect::<Vec<_>>())).await
+    blocking(move || {
+        // Nur Musikordner zählen: hineingezogene Ordner außerhalb werden selbst zu Musikordnern,
+        // einzelne Dateien außerhalb werden nicht aufgenommen.
+        let mut s = load_settings(&db.lock().unwrap());
+        let mut roots: Vec<PathBuf> = s.roots.iter().map(PathBuf::from).collect();
+        let mut take = Vec::new();
+        let mut rep = AddReport::default();
+        for p in paths.iter().map(PathBuf::from) {
+            if dirs::under_any(&p.to_string_lossy(), &roots) || roots.iter().any(|r| r == &p) {
+                take.push(p);
+            } else if p.is_dir() {
+                s.roots.push(p.to_string_lossy().to_string());
+                let _ = app.asset_protocol_scope().allow_directory(&p, true);
+                roots.push(p.clone());
+                rep.new_roots.push(p.to_string_lossy().to_string());
+                take.push(p);
+            } else {
+                rep.skipped += 1;
+            }
+        }
+        if !rep.new_roots.is_empty() {
+            db::set_setting(&db.lock().unwrap(), "settings", &serde_json::to_string(&s)?)?;
+        }
+        rep.ids = scanner::add_files(&db, &take)?;
+        Ok(rep)
+    })
+    .await
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AddReport {
+    ids: Vec<i64>,
+    skipped: usize,
+    new_roots: Vec<String>,
 }
 
 #[tauri::command]
@@ -1191,6 +1232,9 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             let conn = db::open(&dir.join("library.db"))?;
             musiccore::webcache::purge(&conn); // Online-Zwischenspeicher nach 3 Tagen löschen
+            // Nur, was in den Musikordnern liegt, gehört zur Bibliothek
+            let roots: Vec<PathBuf> = load_settings(&conn).roots.iter().map(PathBuf::from).collect();
+            let _ = dirs::prune_outside(&conn, &roots);
             for r in load_settings(&conn).roots {
                 let _ = app.asset_protocol_scope().allow_directory(&r, true);
             }

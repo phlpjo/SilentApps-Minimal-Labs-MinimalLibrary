@@ -347,6 +347,14 @@ export async function analyzeIds(ids: number[] | null) {
   }
 }
 
+// Musikordner entfernt: Analyse wurde gestoppt → für die übrigen Titel neu anstoßen
+store.on("pruned", () => {
+  toast("Musikordner entfernt – seine Titel sind nicht mehr in der Bibliothek.");
+  setTimeout(() => {
+    if (store.settings.autoAnalyze && [...store.tracks.values()].some((t) => !t.analyzed) && !busy) analyzeIds(null);
+  }, 1200);
+});
+
 export async function scanNow() {
   if (!store.settings.roots.length) return;
   try {
@@ -411,10 +419,11 @@ listen<LibraryChange>("library-changed", async (e) => {
 // Dateien/Ordner ins Fenster ziehen → zur Bibliothek
 getCurrentWebview().onDragDropEvent(async (e) => {
   if (e.payload.type !== "drop" || !e.payload.paths.length) return;
-  const ids = await api.addPaths(e.payload.paths);
+  const r = await api.addPaths(e.payload.paths);
+  if (r.newRoots.length) store.settings = await api.getSettings();
   await store.loadTracks();
-  toast(`${ids.length} Titel hinzugefügt`);
-  if (ids.length) analyzeIds(ids);
+  toast(`${r.ids.length} Titel hinzugefügt${r.newRoots.length ? ` · neuer Musikordner: ${r.newRoots.join(", ")}` : ""}${r.skipped ? ` · ${r.skipped} Datei${r.skipped === 1 ? "" : "en"} außerhalb der Musikordner nicht aufgenommen` : ""}`, 7000);
+  if (r.ids.length) analyzeIds(r.ids);
 });
 
 // ---------- Player-Leiste ----------

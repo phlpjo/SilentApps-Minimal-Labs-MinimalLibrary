@@ -97,9 +97,10 @@ export interface ExportReport { copied: number; skipped: number; bytes: number; 
 
 export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
-  setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
+  /** Gibt die Zahl der Titel zurück, die wegen entfernter Musikordner aus der Bibliothek fielen */
+  setSettings: (settings: Settings) => invoke<number>("set_settings", { settings }),
   scan: () => invoke<ScanReport>("scan_library"),
-  addPaths: (paths: string[]) => invoke<number[]>("add_paths", { paths }),
+  addPaths: (paths: string[]) => invoke<{ ids: number[]; skipped: number; newRoots: string[] }>("add_paths", { paths }),
   listTracks: () => invoke<Track[]>("list_tracks"),
   getTracks: (ids: number[]) => invoke<Track[]>("get_tracks", { ids }),
   getPeaks: (ids: number[]) => invoke<Record<string, string>>("get_peaks", { ids }),

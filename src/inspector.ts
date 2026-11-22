@@ -1,3 +1,4 @@
+import { lyricsPanel } from "./lyrics";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, type Candidate, type TagUpdate, type Track } from "./api";
@@ -128,6 +129,9 @@ export class Inspector {
         one ? h("button", { class: "btn", onclick: () => revealItemInDir(one.path) }, SHOW_IN) : null,
       ),
     );
+
+    // Songtext
+    if (one) this.el.append(lyricsPanel(one.id));
 
     // Pioneer: Beatgrid & Cues (nur wenn eingeschaltet)
     if (one && pioneerOn()) this.el.append(pioneerPanel(one.id));

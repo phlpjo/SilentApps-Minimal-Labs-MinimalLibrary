@@ -283,6 +283,12 @@ pub fn apply(
         };
         match res {
             Ok(()) => {
+                // Songtext (.lrc) wandert mit
+                if copy {
+                    crate::lyrics::copy_with(from, to);
+                } else {
+                    crate::lyrics::move_with(from, to);
+                }
                 let c = conn.lock().unwrap();
                 let tid = if copy {
                     // Kopie = neuer Titel; das Original bleibt, wo es ist
@@ -393,6 +399,11 @@ pub fn undo(
         };
         match res {
             Ok(()) => {
+                if copied {
+                    let _ = std::fs::remove_file(crate::lyrics::sidecar(d));
+                } else {
+                    crate::lyrics::move_with(d, s);
+                }
                 if let Some(id) = tid {
                     let c = conn.lock().unwrap();
                     if copied {

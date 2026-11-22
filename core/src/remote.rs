@@ -252,7 +252,7 @@ fn handle(host: &Host, mut req: tiny_http::Request) -> std::io::Result<()> {
                 Some((200, library(&host.db.lock().unwrap(), &s.roots)?))
             }
             (tiny_http::Method::Get | tiny_http::Method::Head, p) if p.starts_with("/a/") => None,
-            (tiny_http::Method::Get, p) if p.starts_with("/c/") => None,
+            (tiny_http::Method::Get, p) if p.starts_with("/c/") || p.starts_with("/l/") => None,
             (tiny_http::Method::Post, "/have") => Some((
                 200,
                 have(&host.db.lock().unwrap(), &s.roots, &body)?.to_string(),
@@ -328,6 +328,12 @@ fn handle(host: &Host, mut req: tiny_http::Request) -> std::io::Result<()> {
             let Some(t) = t.filter(|t| crate::dirs::under_any(&t.path, &roots_of(&s.roots))) else {
                 return text(req, 404, String::new(), false);
             };
+            if path.starts_with("/l/") {
+                return match crate::lyrics::read(Path::new(&t.path)) {
+                    Some(l) => text(req, 200, l.text, false),
+                    None => text(req, 404, String::new(), false),
+                };
+            }
             if path.starts_with("/c/") {
                 match tags::cover(Path::new(&t.path)).ok().flatten() {
                     Some((mime, data)) => req.respond(

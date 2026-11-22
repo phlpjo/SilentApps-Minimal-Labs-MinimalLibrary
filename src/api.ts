@@ -188,6 +188,10 @@ export const api = {
   syncEject: (path: string) => invoke<void>("sync_eject", { path }),
   /** Handys/Player am USB-Kabel (MTP, nur Windows) */
   syncDevices: () => invoke<{ id: string; name: string }[]>("sync_devices"),
+  lyricsGet: (id: number) => invoke<{ text: string; synced: boolean; source: "lrc" | "tag" } | null>("lyrics_get", { id }),
+  lyricsSave: (id: number, text: string) => invoke<void>("lyrics_save", { id, text }),
+  lyricsFetch: (id: number) => invoke<{ synced: string | null; plain: string | null; instrumental: boolean } | null>("lyrics_fetch", { id }),
+  lyricsFetchMany: (ids: number[]) => invoke<{ found: number; synced: number; missing: number; skipped: number }>("lyrics_fetch_many", { ids }),
   starIds: () => invoke<number[]>("star_ids"),
   starToggle: (ids: number[]) => invoke<boolean>("star_toggle", { ids }),
   remoteInfo: () => invoke<{ code: string; port: number; paired: string[]; name: string }>("remote_info"),

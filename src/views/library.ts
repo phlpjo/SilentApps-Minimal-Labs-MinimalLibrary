@@ -1,3 +1,4 @@
+import { editLyrics, fetchLyricsMany } from "../lyrics";
 import { isStarred, toggleStar } from "../star";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, type Track } from "../api";
@@ -37,6 +38,8 @@ export function trackMenu(ids: number[], extra: MenuItem[] = []): MenuItem[] {
     },
     { label: "", sep: true },
     { label: "Neu analysieren", action: () => analyzeIds(ids) },
+    ...(one ? [{ label: "Songtext …", action: () => editLyrics(one.id) }] : []),
+    { label: "Songtexte holen (LRCLIB)", action: () => fetchLyricsMany(ids) },
     { label: "BPM + Tonart in Datei schreiben", action: async () => { reportErrors(await api.writeAnalysisToTags(ids), "Geschrieben"); store.refreshTracks(ids); } },
     { label: "In Ordner verschieben …", action: () => moveTracksPick(ids) },
     { label: "In Ordner kopieren …", action: () => moveTracksPick(ids, true) },

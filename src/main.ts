@@ -1,3 +1,4 @@
+import { lyricsPanelOpen, toggleLyricsPanel } from "./lyrics";
 import { isStarred, toggleStar } from "./star";
 import "./style.css";
 import { IS_MAC } from "./platform";
@@ -322,13 +323,13 @@ export function newPlaylistFromIds(ids: number[]) {
 }
 
 // ---------- Hintergrund-Aufgaben + Fortschritt ----------
-const TASKS: Record<string, string> = { sync: "Sync", rip: "Ripper", tools: "Werkzeuge laden", scan: "Scannen", analyze: "Analysieren", duplicates: "Duplikate", organize: "Sortieren", export: "Exportieren", pioneer: "Pioneer-Export" };
+const TASKS: Record<string, string> = { sync: "Sync", rip: "Ripper", tools: "Werkzeuge laden", scan: "Scannen", analyze: "Analysieren", duplicates: "Duplikate", organize: "Sortieren", export: "Exportieren", pioneer: "Pioneer-Export", lyrics: "Songtexte holen" };
 let busy = 0;
 let hideTimer = 0;
 function setStatus(task: string, done: number, total: number, msg: string) {
   clearTimeout(hideTimer);
   const pct = total ? Math.round((done / total) * 100) : 0;
-  const cancellable = task === "analyze" || task === "export" || task === "rip" || task === "sync" || task === "pioneer";
+  const cancellable = task === "analyze" || task === "export" || task === "rip" || task === "sync" || task === "pioneer" || task === "lyrics";
   status.replaceChildren(
     h("div", { class: "srow" }, h("span", {}, `${TASKS[task] ?? task}${total ? ` ${done.toLocaleString("de")} / ${total.toLocaleString("de")}` : ""}`),
       cancellable && done < total ? h("span", { class: "act", style: { cursor: "pointer" }, onclick: () => api.cancel() }, "Abbrechen") : null),
@@ -480,6 +481,7 @@ function buildPlayer() {
     vol.value = String(player.volumeLevel);
   }, { passive: false });
   const nowInfo = h("div", { style: { minWidth: "0" } }, t1, t2);
+  const lyrBtn = h("button", { class: "ibtn", title: "Songtext (mitlaufend)", onclick: () => toggleLyricsPanel() }, icon("lyrics"));
   const starBtn = h("button", { class: "ibtn star", title: "Stern (Playlist „Stern“)", onclick: () => player.current && toggleStar([player.current.id]) }, icon("star"));
   // Rechtsklick auf den laufenden Titel: gleiches Menü wie in der Liste
   for (const el of [cover, nowInfo]) {
@@ -511,6 +513,7 @@ function buildPlayer() {
       playBtn,
       h("button", { class: "ibtn", title: "Weiter", onclick: () => player.next() }, icon("next")),
       repeatBtn,
+      lyrBtn,
     ),
     h("div", { class: "bigwave" }, wrap, h("div", { class: "time" }, tCur, tDur)),
     h("div", { class: "vol" }, devBtn, volBox),
@@ -534,6 +537,7 @@ function buildPlayer() {
     drawWave(canvas, t ? store.peaksFor(t.id) : undefined, t ? player.frac() : -1);
     tCur.textContent = fmtTime(player.currentTime);
     shuffleBtn.classList.toggle("on", player.shuffle);
+    lyrBtn.classList.toggle("on", lyricsPanelOpen());
     const st = !!t && isStarred(t.id);
     starBtn.replaceChildren(icon(st ? "starOn" : "star"));
     starBtn.classList.toggle("on", st);

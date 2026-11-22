@@ -71,6 +71,11 @@ fn copy_if_needed(src: &Path, dst: &Path) -> std::io::Result<bool> {
         std::fs::create_dir_all(d)?;
     }
     std::fs::copy(src, dst)?;
+    // Songtext mitnehmen
+    let (ls, ld) = (crate::lyrics::sidecar(src), crate::lyrics::sidecar(dst));
+    if ls.exists() {
+        let _ = std::fs::copy(ls, ld);
+    }
     Ok(true)
 }
 

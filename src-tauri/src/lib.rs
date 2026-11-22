@@ -306,6 +306,107 @@ fn sync_playlists(conn: &Connection) {
     }
 }
 
+// ---------- Songtexte ----------
+
+fn track_path(db: &Db, id: i64) -> anyhow::Result<PathBuf> {
+    db::tracks_by_ids(&db.lock().unwrap(), &[id])?
+        .into_iter()
+        .next()
+        .map(|t| PathBuf::from(t.path))
+        .ok_or_else(|| anyhow::anyhow!("Titel nicht gefunden"))
+}
+
+#[tauri::command]
+async fn lyrics_get(state: Tab, id: i64) -> R<Option<musiccore::lyrics::Lyrics>> {
+    let db = state.db.clone();
+    blocking(move || Ok(musiccore::lyrics::read(&track_path(&db, id)?))).await
+}
+
+#[tauri::command]
+async fn lyrics_save(state: Tab, id: i64, text: String) -> R<()> {
+    let db = state.db.clone();
+    blocking(move || musiccore::lyrics::save(&track_path(&db, id)?, &text)).await
+}
+
+/// Bei LRCLIB nachsehen (speichert nicht – der Editor zeigt das Ergebnis)
+#[tauri::command]
+async fn lyrics_fetch(state: Tab, id: i64) -> R<Option<musiccore::lyrics::Fetched>> {
+    let db = state.db.clone();
+    blocking(move || {
+        let t = db::tracks_by_ids(&db.lock().unwrap(), &[id])?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Titel nicht gefunden"))?;
+        musiccore::lyrics::fetch(
+            t.artist.as_deref().unwrap_or(""),
+            t.title.as_deref().unwrap_or(""),
+            t.album.as_deref().unwrap_or(""),
+            t.duration,
+        )
+    })
+    .await
+}
+
+#[derive(Serialize)]
+struct LyricsReport {
+    found: usize,
+    synced: usize,
+    missing: usize,
+    skipped: usize,
+}
+
+/// Für mehrere Titel holen und speichern (vorhandene .lrc bleiben)
+#[tauri::command]
+async fn lyrics_fetch_many(app: AppHandle, state: Tab, ids: Vec<i64>) -> R<LyricsReport> {
+    let db = state.db.clone();
+    let cancel = state.task();
+    let prog = emitter(&app, &state.label, "lyrics");
+    blocking(move || {
+        let tracks = db::tracks_by_ids(&db.lock().unwrap(), &ids)?;
+        let mut r = LyricsReport {
+            found: 0,
+            synced: 0,
+            missing: 0,
+            skipped: 0,
+        };
+        let n = tracks.len();
+        for (i, t) in tracks.iter().enumerate() {
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            prog(i, n, t.title.as_deref().unwrap_or(""));
+            let p = Path::new(&t.path);
+            if musiccore::lyrics::sidecar(p).exists() {
+                r.skipped += 1;
+                continue;
+            }
+            match musiccore::lyrics::fetch(
+                t.artist.as_deref().unwrap_or(""),
+                t.title.as_deref().unwrap_or(""),
+                t.album.as_deref().unwrap_or(""),
+                t.duration,
+            ) {
+                Ok(Some(f)) if f.synced.is_some() || f.plain.is_some() => {
+                    let synced = f.synced.is_some();
+                    musiccore::lyrics::save(
+                        p,
+                        f.synced.as_deref().or(f.plain.as_deref()).unwrap_or(""),
+                    )?;
+                    r.found += 1;
+                    if synced {
+                        r.synced += 1;
+                    }
+                }
+                _ => r.missing += 1,
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250)); // LRCLIB schonen
+        }
+        prog(n, n, "Fertig");
+        Ok(r)
+    })
+    .await
+}
+
 // ---------- Stern (wie in Minimal Player) ----------
 
 #[tauri::command]
@@ -2314,6 +2415,10 @@ pub fn run() {
             sync_device_folders,
             remote_info,
             star_ids,
+            lyrics_get,
+            lyrics_save,
+            lyrics_fetch,
+            lyrics_fetch_many,
             star_toggle,
             remote_unpair,
             rip_tools,

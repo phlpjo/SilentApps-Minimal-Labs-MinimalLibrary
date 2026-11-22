@@ -809,12 +809,14 @@ pub fn run_with(
         man.files.insert(rel.clone());
         if dest.has(rel, *size) {
             rep.skipped += 1;
+            put_lyrics(dest.as_mut(), src, rel);
             continue;
         }
         match dest.put(src, rel, *size, cancel) {
             Ok(()) => {
                 rep.copied += 1;
                 rep.bytes += size;
+                put_lyrics(dest.as_mut(), src, rel);
             }
             Err(e) => {
                 man.files.remove(rel);
@@ -848,6 +850,7 @@ pub fn run_with(
         for rel in old.files.difference(&man.files) {
             if dest.remove(rel) {
                 rep.removed += 1;
+                let _ = dest.remove(&lrc_rel(rel));
                 dest.tidy(rel);
             }
         }
@@ -900,6 +903,24 @@ impl Drop for Busy {
     fn drop(&mut self) {
         if let Some(b) = mtp::BUSY.lock().unwrap().as_mut() {
             b.remove(&self.0);
+        }
+    }
+}
+
+/// „Ordner/Lied.mp3“ → „Ordner/Lied.lrc“
+fn lrc_rel(rel: &str) -> String {
+    match rel.rsplit_once('.') {
+        Some((stem, _)) if !stem.ends_with('/') => format!("{stem}.lrc"),
+        _ => format!("{rel}.lrc"),
+    }
+}
+
+/// Songtext (.lrc) neben dem Titel mitschicken, wenn er fehlt oder sich geändert hat
+fn put_lyrics(dest: &mut dyn Dest, src: &Path, rel: &str) {
+    if let Ok(b) = std::fs::read(crate::lyrics::sidecar(src)) {
+        let r = lrc_rel(rel);
+        if !dest.has(&r, b.len() as u64) {
+            let _ = dest.write(&r, &b);
         }
     }
 }

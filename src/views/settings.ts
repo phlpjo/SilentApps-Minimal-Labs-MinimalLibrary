@@ -30,10 +30,13 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
     const auto = h("input", { type: "checkbox", checked: s.autoAnalyze });
     auto.addEventListener("change", () => store.saveSettings({ autoAnalyze: auto.checked }));
 
+    const tray = h("input", { type: "checkbox", checked: s.closeToTray !== false });
+    tray.addEventListener("change", () => store.saveSettings({ closeToTray: tray.checked }));
     const theme = h("select", {}, ...([["system", "Wie Windows"], ["dark", "Dunkel"], ["light", "Hell"]] as const).map(([v, l]) => h("option", { value: v, selected: themeMode() === v }, l)));
     theme.addEventListener("change", () => applyTheme(theme.value as ThemeMode));
     body.append(
       h("div", { class: "card" }, h("h3", {}, "Darstellung"), h("div", { class: "setting" }, h("span", {}, "Farbschema"), theme),
+        h("div", { class: "setting" }, h("label", { class: "check" }, tray, "Schließen (X) legt die App in den Infobereich – Musik läuft weiter"), h("button", { class: "btn", onclick: () => api.quit() }, "Jetzt beenden")),
         h("div", { class: "note" }, "Der Schalter oben links wechselt direkt zwischen Hell und Dunkel.")),
       h("div", { class: "card" }, h("h3", {}, "Musikordner"), roots,
         h("div", { class: "line" },

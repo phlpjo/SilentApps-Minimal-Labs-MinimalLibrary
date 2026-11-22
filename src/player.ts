@@ -21,7 +21,7 @@ class Player {
   private token = 0;
   private shuffleBag: number[] = [];
   private history: number[] = [];
-  private remote = { playing: false, pos: 0, at: 0, dur: 0, poll: 0, startedAt: 0 };
+  private remote = { playing: false, pos: 0, at: 0, dur: 0, poll: 0, startedAt: 0, seekUntil: 0 };
   private volume: number;
   private volTimer = 0;
 
@@ -114,13 +114,19 @@ class Player {
     const my = ++this.token;
 
     if (this.isRemote) {
+      // Gleicher Titel läuft schon auf dem Gerät → nur springen (kein Neustart)
+      if (this.current?.id === id && this.remote.dur > 0) {
+        this.seekFrac(frac);
+        if (!this.remote.playing) this.toggle();
+        return;
+      }
       this.current = t;
       store.emit("player");
       try {
         const start = frac * (t.duration || 0);
         await api.castPlay(this.device!.id, id, start);
         if (my !== this.token) return;
-        this.remote = { ...this.remote, playing: true, pos: start, at: performance.now(), dur: t.duration, startedAt: performance.now() };
+        this.remote = { ...this.remote, playing: true, pos: start, at: performance.now(), dur: t.duration, startedAt: performance.now(), seekUntil: 0 };
         this.startPolling();
         this.loop();
       } catch (e) {
@@ -189,6 +195,7 @@ class Player {
       api.castSeek(this.device!.id, t).catch((e) => toast(String(e)));
       this.remote.pos = t;
       this.remote.at = performance.now();
+      this.remote.seekUntil = performance.now() + 2500; // Abfragen kurz ignorieren, bis das Gerät gesprungen ist
     } else this.audio.currentTime = t;
     this.emitPos();
   }
@@ -316,6 +323,7 @@ class Player {
       const r = this.remote;
       // Kurz nach dem Start melden Geräte oft noch STOPPED/TRANSITIONING
       const settling = performance.now() - r.startedAt < 4000;
+      if (performance.now() < r.seekUntil) return;
       if (st.state === "PLAYING") {
         if (!r.playing) {
           r.playing = true;

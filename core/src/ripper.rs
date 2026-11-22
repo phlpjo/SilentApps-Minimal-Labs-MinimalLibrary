@@ -194,10 +194,31 @@ pub fn split_title(raw: &str, uploader: &str) -> (String, String) {
     (up, t.trim_matches('"').to_string())
 }
 
+/// YouTube-Videolink ohne Playlist-/Mix-Anhang ("&list=…", "&index=…") → nur dieser eine Titel.
+/// Reine Playlist-Links (/playlist?list=…) bleiben unverändert.
+pub fn clean_youtube(url: &str) -> String {
+    let u = url.trim();
+    let lower = u.to_lowercase();
+    if !(lower.contains("youtube.com") || lower.contains("youtu.be")) || lower.contains("/playlist") {
+        return u.to_string();
+    }
+    let id = if let Some(i) = lower.find("youtu.be/") {
+        u[i + 9..].split(['?', '&', '/', '#']).next().map(str::to_string)
+    } else if let Some(i) = lower.find("/shorts/") {
+        u[i + 8..].split(['?', '&', '/', '#']).next().map(str::to_string)
+    } else {
+        u.split(['?', '&', '#']).find_map(|p| p.strip_prefix("v=").map(str::to_string))
+    };
+    match id.filter(|i| i.len() >= 6) {
+        Some(id) => format!("https://www.youtube.com/watch?v={id}"),
+        None => u.to_string(),
+    }
+}
+
 fn ytdlp_json(tools: &Path, url: &str, flat: bool) -> Result<Value> {
     let p = find(tools, YTDLP).ok_or_else(|| anyhow!("yt-dlp ist nicht installiert"))?;
     let mut c = cmd(&p);
-    c.args(["-J", "--no-warnings", "--ignore-errors"]);
+    c.args(["-J", "--no-warnings", "--ignore-errors", "--no-playlist"]);
     if flat {
         c.arg("--flat-playlist");
     }
@@ -211,7 +232,7 @@ fn ytdlp_json(tools: &Path, url: &str, flat: bool) -> Result<Value> {
 
 fn entry_from(v: &Value, index: usize, site: &str) -> Option<Entry> {
     let title = v["title"].as_str().unwrap_or("").to_string();
-    let url = v["webpage_url"].as_str().or(v["url"].as_str())?.to_string();
+    let url = clean_youtube(v["webpage_url"].as_str().or(v["url"].as_str())?);
     if title.is_empty() || title == "[Private video]" || title == "[Deleted video]" {
         return None;
     }
@@ -300,6 +321,7 @@ pub fn resolve(tools: &Path, url: &str) -> Result<Resolved> {
     if site == "Spotify" {
         return spotify(url);
     }
+    let url = &clean_youtube(url);
     let v = ytdlp_json(tools, url, true)?;
     if v["_type"] == "playlist" {
         let name = v["title"].as_str().unwrap_or("Playlist").to_string();
@@ -371,7 +393,38 @@ pub struct RipEvent {
 }
 
 /// Lädt einen Eintrag, setzt saubere Tags und nimmt die Datei in die Bibliothek auf.
+/// Wie `rip_once`, aber bei vorübergehender YouTube-Sperre einmal nach kurzer Pause erneut.
 pub fn rip_one(
+    tools: &Path,
+    conn: &Mutex<Connection>,
+    e: &Entry,
+    dir: &Path,
+    format: Format,
+    cancel: &AtomicBool,
+    on: &(dyn Fn(RipEvent) + Sync),
+) -> Result<i64> {
+    match rip_once(tools, conn, e, dir, format, cancel, on) {
+        Err(err) if is_block(&err.to_string()) && !cancel.load(Ordering::Relaxed) => {
+            on(RipEvent { index: e.index, stage: "download".into(), percent: 0.0, message: "YouTube bremst – neuer Versuch in 8 s".into(), track_id: None });
+            std::thread::sleep(Duration::from_secs(8));
+            rip_once(tools, conn, e, dir, format, cancel, on).map_err(|e2| {
+                if is_block(&e2.to_string()) {
+                    anyhow!("YouTube blockt gerade (zu viele Anfragen). Bitte yt-dlp aktualisieren, ein paar Minuten warten und erneut versuchen.")
+                } else {
+                    e2
+                }
+            })
+        }
+        r => r,
+    }
+}
+
+fn is_block(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    m.contains("page needs to be reloaded") || m.contains("not a bot") || m.contains("http error 403") || m.contains("http error 429")
+}
+
+fn rip_once(
     tools: &Path,
     conn: &Mutex<Connection>,
     e: &Entry,
@@ -386,7 +439,7 @@ pub fn rip_one(
     let stem = paths::sanitize(&base);
     let out_tpl = dir.join(format!("{stem}.%(ext)s"));
     let mut c = cmd(&p);
-    c.args(["--no-playlist", "--newline", "--no-warnings", "--progress", "-f", "bestaudio/best", "-x"]);
+    c.args(["--no-playlist", "--newline", "--no-warnings", "--progress", "--sleep-requests", "1", "-f", "bestaudio/best", "-x"]);
     if format == Format::Mp3 {
         c.args(["--audio-format", "mp3", "--audio-quality", "320K"]);
     }
@@ -454,6 +507,10 @@ mod tests {
         assert_eq!(split_title("Daft Punk - One More Time (Official Video)", "DaftPunkVEVO"), ("Daft Punk".into(), "One More Time".into()));
         assert_eq!(split_title("Strobe [Official Audio]", "deadmau5 - Topic"), ("deadmau5".into(), "Strobe".into()));
         assert_eq!(split_title("Artist – Song (Extended Mix)", "x"), ("Artist".into(), "Song (Extended Mix)".into()));
+        assert_eq!(clean_youtube("https://www.youtube.com/watch?v=abcdefgh123&list=RDabc&index=3"), "https://www.youtube.com/watch?v=abcdefgh123");
+        assert_eq!(clean_youtube("https://youtu.be/abcdefgh123?si=x"), "https://www.youtube.com/watch?v=abcdefgh123");
+        assert_eq!(clean_youtube("https://music.youtube.com/watch?v=abcdefgh123&list=OLAK"), "https://www.youtube.com/watch?v=abcdefgh123");
+        assert_eq!(clean_youtube("https://www.youtube.com/playlist?list=PL123"), "https://www.youtube.com/playlist?list=PL123");
     }
     #[test]
     fn known() {

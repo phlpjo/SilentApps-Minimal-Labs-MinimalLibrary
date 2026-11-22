@@ -72,6 +72,7 @@ struct Settings {
     acoustid_key: String,
     rip_dir: Option<String>,
     rip_format: String,
+    close_to_tray: bool,
 }
 
 impl Default for Settings {
@@ -87,6 +88,7 @@ impl Default for Settings {
             acoustid_key: String::new(),
             rip_dir: None,
             rip_format: "mp3".into(),
+            close_to_tray: true,
         }
     }
 }
@@ -836,6 +838,10 @@ async fn rip_download(app: AppHandle, state: State<'_, AppState>, entries: Vec<r
                 break;
             }
             let _ = app.emit("progress", ProgressEvent { task: "rip".into(), done: n, total, message: format!("{} – {}", e.artist, e.title) });
+            if n > 0 {
+                // Schonend: kurze Pause zwischen den Titeln, damit YouTube nicht sperrt
+                std::thread::sleep(std::time::Duration::from_millis(2500));
+            }
             match ripper::rip_one(&tools, &db, e, Path::new(&dir), format, &cancel, &on) {
                 Ok(id) => {
                     rep.ids.push(id);
@@ -916,12 +922,90 @@ fn app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
+/// Beenden: Stream im Heimnetz stoppen, dann App schließen
+fn quit(app: &AppHandle) {
+    if let Some(dev) = cast::active_device() {
+        let _ = cast::stop(&dev);
+    }
+    app.exit(0);
+}
+
+fn show_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    let show = MenuItem::with_id(app, "show", "Minimal Library öffnen", true, None::<&str>)?;
+    let toggle = MenuItem::with_id(app, "toggle", "Abspielen / Pause", true, None::<&str>)?;
+    let next = MenuItem::with_id(app, "next", "Nächster Titel", true, None::<&str>)?;
+    let sep = PredefinedMenuItem::separator(app)?;
+    let quit_i = MenuItem::with_id(app, "quit", "Beenden", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &toggle, &next, &sep, &quit_i])?;
+    let mut tb = TrayIconBuilder::with_id("main")
+        .tooltip("Minimal Library")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, ev| match ev.id.as_ref() {
+            "show" => show_main(app),
+            "toggle" => {
+                let _ = app.emit("tray", "toggle");
+            }
+            "next" => {
+                let _ = app.emit("tray", "next");
+            }
+            "quit" => quit(app),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, ev| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev {
+                show_main(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tb = tb.icon(icon.clone());
+    }
+    tb.build(app)?;
+    Ok(())
+}
+
+/// Titel im Infobereich-Tooltip anzeigen
+#[tauri::command]
+fn set_tray_title(app: AppHandle, text: String) {
+    if let Some(t) = app.tray_by_id("main") {
+        let _ = t.set_tooltip(Some(if text.is_empty() { "Minimal Library".to_string() } else { format!("Minimal Library – {text}") }));
+    }
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    quit(&app);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .on_window_event(|window, event| {
+            // Schließen (X, Alt+F4) → in den Infobereich, Musik läuft weiter
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let to_tray = window.app_handle().try_state::<AppState>().map(|s| load_settings(&s.db.lock().unwrap()).close_to_tray).unwrap_or(true);
+                if to_tray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                } else {
+                    quit(window.app_handle());
+                }
+            }
+        })
         .setup(|app| {
+            setup_tray(app)?;
             let dir = app.path().app_data_dir()?;
             let conn = db::open(&dir.join("library.db"))?;
             musiccore::webcache::purge(&conn); // Online-Zwischenspeicher nach 3 Tagen löschen
@@ -994,6 +1078,8 @@ pub fn run() {
             cast_seek,
             cast_volume,
             cast_status,
+            set_tray_title,
+            quit_app,
             app_version,
         ])
         .run(tauri::generate_context!())

@@ -431,20 +431,92 @@ pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<()> 
         hms(meta.duration),
         xml_escape(&url),
     );
-    // Manche Geräte verweigern neue URLs während der Wiedergabe → vorher stoppen
-    let _ = soap(&d.av_control, AVT, "Stop", &[("InstanceID", "0".into())]);
-    soap(&d.av_control, AVT, "SetAVTransportURI", &[("InstanceID", "0".into()), ("CurrentURI", url), ("CurrentURIMetaData", didl)])?;
-    soap(&d.av_control, AVT, "Play", &[("InstanceID", "0".into()), ("Speed", "1".into())])?;
-    if start > 1.0 {
-        // Gerät braucht kurz, bis gesprungen werden kann
-        for _ in 0..8 {
-            std::thread::sleep(Duration::from_millis(350));
-            if seek(device_id, start).is_ok() {
-                break;
+    // Stumm schalten, bis der Titel wirklich läuft (und ggf. gesprungen ist) → kein Knacksen/Anspielen
+    let was_muted = get_mute(&d).unwrap_or(false);
+    if !was_muted {
+        let _ = set_mute(&d, true);
+    }
+    let result = (|| -> Result<()> {
+        // Manche Geräte verweigern neue URLs während der Wiedergabe → vorher stoppen
+        let _ = soap(&d.av_control, AVT, "Stop", &[("InstanceID", "0".into())]);
+        soap(&d.av_control, AVT, "SetAVTransportURI", &[("InstanceID", "0".into()), ("CurrentURI", url), ("CurrentURIMetaData", didl)])?;
+        soap(&d.av_control, AVT, "Play", &[("InstanceID", "0".into()), ("Speed", "1".into())])?;
+        wait_state(&d, "PLAYING", Duration::from_secs(6));
+        if start > 1.0 {
+            seek_dev(&d, start)?;
+            // kurz warten, bis der Puffer an der neuen Stelle gefüllt ist
+            wait_state(&d, "PLAYING", Duration::from_secs(4));
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        Ok(())
+    })();
+    if !was_muted {
+        let _ = set_mute(&d, false);
+    }
+    result?;
+    *active().lock().unwrap() = Some(device_id.to_string());
+    Ok(())
+}
+
+fn active() -> &'static Mutex<Option<String>> {
+    static A: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    A.get_or_init(|| Mutex::new(None))
+}
+
+/// Gerät, an das gerade gestreamt wird (zum Stoppen beim Beenden)
+pub fn active_device() -> Option<String> {
+    active().lock().unwrap().clone()
+}
+
+fn transport_state(d: &Device) -> Option<String> {
+    soap(&d.av_control, AVT, "GetTransportInfo", &[("InstanceID", "0".into())]).ok().and_then(|x| tag(&x, "CurrentTransportState"))
+}
+
+fn wait_state(d: &Device, want: &str, max: Duration) -> bool {
+    let end = Instant::now() + max;
+    while Instant::now() < end {
+        if transport_state(d).as_deref() == Some(want) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    false
+}
+
+fn get_mute(d: &Device) -> Result<bool> {
+    let rc = d.rc_control.as_ref().ok_or_else(|| anyhow!("keine Lautstärke"))?;
+    let r = if d.group_volume {
+        soap(rc, GRC, "GetGroupMute", &[("InstanceID", "0".into())])?
+    } else {
+        soap(rc, RC, "GetMute", &[("InstanceID", "0".into()), ("Channel", "Master".into())])?
+    };
+    Ok(tag(&r, "CurrentMute").as_deref() == Some("1"))
+}
+
+fn set_mute(d: &Device, mute: bool) -> Result<()> {
+    let rc = d.rc_control.as_ref().ok_or_else(|| anyhow!("keine Lautstärke"))?;
+    let v = if mute { "1" } else { "0" }.to_string();
+    if d.group_volume {
+        soap(rc, GRC, "SetGroupMute", &[("InstanceID", "0".into()), ("DesiredMute", v)])?;
+    } else {
+        soap(rc, RC, "SetMute", &[("InstanceID", "0".into()), ("Channel", "Master".into()), ("DesiredMute", v)])?;
+    }
+    Ok(())
+}
+
+/// Springen – Geräte lehnen Seek ab, solange sie noch puffern ("Transition not available") → mehrfach versuchen
+fn seek_dev(d: &Device, sec: f64) -> Result<()> {
+    let mut last = anyhow!("Springen nicht möglich");
+    for _ in 0..12 {
+        match soap(&d.av_control, AVT, "Seek", &[("InstanceID", "0".into()), ("Unit", "REL_TIME".into()), ("Target", hms(sec))]) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                last = e;
+                std::thread::sleep(Duration::from_millis(300));
             }
         }
     }
-    Ok(())
+    Err(last)
 }
 
 pub fn pause(device_id: &str) -> Result<()> {
@@ -459,12 +531,17 @@ pub fn resume(device_id: &str) -> Result<()> {
 
 pub fn stop(device_id: &str) -> Result<()> {
     let d = device(device_id)?;
+    let mut a = active().lock().unwrap();
+    if a.as_deref() == Some(device_id) {
+        *a = None;
+    }
+    drop(a);
     soap(&d.av_control, AVT, "Stop", &[("InstanceID", "0".into())]).map(|_| ())
 }
 
 pub fn seek(device_id: &str, sec: f64) -> Result<()> {
     let d = device(device_id)?;
-    soap(&d.av_control, AVT, "Seek", &[("InstanceID", "0".into()), ("Unit", "REL_TIME".into()), ("Target", hms(sec))]).map(|_| ())
+    seek_dev(&d, sec)
 }
 
 pub fn set_volume(device_id: &str, vol: u8) -> Result<()> {

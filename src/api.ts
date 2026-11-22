@@ -41,6 +41,8 @@ export interface Settings {
   pioneer: boolean;
   /** Musikordner, deren Titel nicht mit anderen Musikordnern auf Duplikate verglichen werden */
   noCrossDup: string[];
+  /** Bibliothek nicht für Minimal Player Connected freigeben */
+  remoteOff: boolean;
 }
 
 export interface DupCheck {
@@ -189,6 +191,8 @@ export const api = {
   /** Handys im WLAN (Minimal Player Connected, „Von Minimal Library empfangen“ offen) */
   syncPhones: () => invoke<{ id: string; name: string; addr: string; ready: boolean; free: number | null }[]>("sync_phones"),
   syncPair: (addr: string, code: string) => invoke<string>("sync_pair", { addr, code }),
+  remoteInfo: () => invoke<{ code: string; port: number; paired: string[]; name: string }>("remote_info"),
+  remoteUnpair: (name: string) => invoke<void>("remote_unpair", { name }),
   syncDeviceFolders: (device: string, path: string) => invoke<string[]>("sync_device_folders", { device, path }),
   castSound: (device: string) => invoke<CastSound>("cast_sound", { device }),
   castSetSound: (device: string, sound: CastSound) => invoke<void>("cast_set_sound", { device, sound }),

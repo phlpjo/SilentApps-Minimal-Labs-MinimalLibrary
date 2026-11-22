@@ -1,7 +1,7 @@
 use base64::Engine;
 use musiccore::{
     acoustid, analysis, cast, db, dirs, duplicates, export, history, musicbrainz, organize,
-    pioneer, playlists, ripper, scanner, sync, tags, watch,
+    pioneer, playlists, remote, ripper, scanner, sync, tags, watch,
 };
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -234,6 +234,8 @@ struct Settings {
     pioneer: bool,
     /// Musikordner, deren Titel NICHT mit anderen Musikordnern auf Duplikate verglichen werden
     no_cross_dup: Vec<String>,
+    /// Bibliothek NICHT für Minimal Player Connected freigeben (Standard: freigegeben)
+    remote_off: bool,
 }
 
 impl Default for Settings {
@@ -254,6 +256,7 @@ impl Default for Settings {
             close_to_tray: true,
             pioneer: false,
             no_cross_dup: vec![],
+            remote_off: false,
         }
     }
 }
@@ -301,6 +304,71 @@ fn sync_playlists(conn: &Connection) {
     if let Some(dir) = s.playlist_dir.filter(|d| !d.is_empty()) {
         let _ = playlists::sync_folder(conn, Path::new(&dir));
     }
+}
+
+// ---------- Bibliothek fürs Handy (Minimal Player Connected) ----------
+
+fn start_remote(app: &AppHandle, main: &AppState) {
+    let db = main.db.clone();
+    let db_s = main.db.clone();
+    let db_c = main.db.clone();
+    let app = app.clone();
+    remote::start(remote::Host {
+        db,
+        settings: Box::new(move || {
+            let s = load_settings(&db_s.lock().unwrap());
+            remote::HostSettings {
+                roots: s.roots,
+                pattern: s.pattern,
+                organize_target: s.organize_target,
+                enabled: !s.remote_off,
+            }
+        }),
+        changed: Box::new(move |c| match c {
+            remote::Changed::Playlists => {
+                sync_playlists(&db_c.lock().unwrap());
+                let _ = app.emit_to("main", "playlists-changed", ());
+            }
+            remote::Changed::Files(n) => {
+                let _ = app.emit_to(
+                    "main",
+                    "library-changed",
+                    watch::Change {
+                        moved: n,
+                        ..Default::default()
+                    },
+                );
+            }
+        }),
+    });
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteInfo {
+    code: String,
+    port: u16,
+    paired: Vec<String>,
+    name: String,
+}
+
+/// Für die Einstellungen: Kopplungscode, gekoppelte Handys (nur Haupt-Bibliothek)
+#[tauri::command]
+async fn remote_info(app: AppHandle) -> R<RemoteInfo> {
+    let st = tab_state(&app, "main").map_err(err)?;
+    let paired = remote::paired_names(&st.db.lock().unwrap());
+    Ok(RemoteInfo {
+        code: remote::code(),
+        port: remote::port(),
+        paired,
+        name: musiccore::wlan::computer_name(),
+    })
+}
+
+#[tauri::command]
+async fn remote_unpair(app: AppHandle, name: String) -> R<()> {
+    let st = tab_state(&app, "main").map_err(err)?;
+    remote::unpair(&st.db.lock().unwrap(), &name).map_err(err)
 }
 
 // ---------- Bibliothek ----------
@@ -2147,7 +2215,8 @@ pub fn run() {
                 map: Mutex::new(HashMap::new()),
                 active: Mutex::new("main".into()),
             });
-            tab_state(app.handle(), "main")?;
+            let main = tab_state(app.handle(), "main")?;
+            start_remote(app.handle(), &main);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -2218,6 +2287,8 @@ pub fn run() {
             sync_devices,
             sync_device_folders,
             sync_phones,
+            remote_info,
+            remote_unpair,
             sync_pair,
             rip_tools,
             rip_install,

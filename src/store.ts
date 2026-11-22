@@ -6,7 +6,7 @@ class Store {
   tracks = new Map<number, Track>();
   peaks = new Map<number, Uint8Array>();
   playlists: Playlist[] = [];
-  settings: Settings = { roots: [], playlistDir: null, organizeTarget: null, pattern: "", threads: 4, autoAnalyze: true, acoustidKey: "", ripDir: null, ripFormat: "mp3", closeToTray: true, pioneer: false, noCrossDup: [] };
+  settings: Settings = { roots: [], playlistDir: null, organizeTarget: null, pattern: "", threads: 4, autoAnalyze: true, acoustidKey: "", ripDir: null, ripFormat: "mp3", closeToTray: true, pioneer: false, noCrossDup: [], remoteOff: false };
   /** Auswahl in der aktuellen Liste */
   selection = new Set<number>();
   private listeners = new Map<string, Set<Listener>>();

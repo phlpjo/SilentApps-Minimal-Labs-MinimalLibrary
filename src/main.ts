@@ -410,6 +410,9 @@ store.on("player", () => {
 // Änderungen sammeln: bei Cloud-Ordnern kommen sie in schneller Folge – nur einmal neu laden
 let pendingChange: LibraryChange | null = null;
 let changeTimer = 0;
+// Playlisten am Handy geändert (Minimal Player Connected)
+listen("playlists-changed", () => store.loadPlaylists());
+
 listen<LibraryChange>("library-changed", (e) => {
   const c = e.payload;
   if (pendingChange) {

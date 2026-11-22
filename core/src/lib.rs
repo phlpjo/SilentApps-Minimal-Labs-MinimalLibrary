@@ -14,6 +14,7 @@ pub mod organize;
 pub mod paths;
 pub mod pioneer;
 pub mod playlists;
+pub mod remote;
 pub mod ripper;
 pub mod scanner;
 pub mod sync;

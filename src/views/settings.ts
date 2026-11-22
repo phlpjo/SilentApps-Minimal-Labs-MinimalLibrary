@@ -62,6 +62,7 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
         ),
         h("div", { class: "note" }, `Die Musikordner werden laufend überwacht: Was du im ${FILE_MANAGER} hinzufügst, verschiebst, umbenennst oder löschst, übernimmt die App sofort – Analyse und Playlisten bleiben beim Verschieben erhalten.`),
       ),
+      phoneCard(),
       pioneerCard(),
       h("div", { class: "card" }, h("h3", {}, "Analyse"),
         h("div", { class: "setting" }, h("span", {}, "Gleichzeitige Analysen"), threads),
@@ -122,6 +123,32 @@ function updateCard(version: string) {
     u.state === "available" && u.available!.body ? h("div", { class: "note" }, u.available!.body) : null,
     h("label", { class: "check", style: { marginTop: "8px" } }, auto, "Beim Start automatisch installieren (nur wenn gerade keine Musik läuft)"),
     h("div", { class: "note" }, "Updates kommen signiert aus den GitHub-Releases. Die App prüft beim Start und alle 6 Stunden."),
+  );
+}
+
+/** Minimal Player Connected: Bibliothek im WLAN freigeben (wie Spotify aufs Handy) */
+function phoneCard() {
+  const box = h("input", { type: "checkbox", checked: !store.settings.remoteOff }) as HTMLInputElement;
+  const body = h("div", {});
+  const fill = async () => {
+    if (!box.checked) return body.replaceChildren();
+    const i = await api.remoteInfo().catch(() => null);
+    if (!i) return;
+    body.replaceChildren(
+      h("div", { class: "setting" }, h("span", {}, "Kopplungscode"), h("b", { style: { fontSize: "20px", letterSpacing: "3px" } }, i.code.replace(/(\d{3})(\d{3})/, "$1 $2"))),
+      ...i.paired.map((n) => h("div", { class: "setting" }, h("span", {}, "📱 " + n),
+        h("button", { class: "btn", onclick: async () => { await api.remoteUnpair(n); fill(); } }, "Entkoppeln"))),
+      i.port ? "" : h("div", { class: "err" }, "Freigabe konnte nicht starten (Netzwerk blockiert?)."),
+    );
+  };
+  box.addEventListener("change", async () => { await store.saveSettings({ remoteOff: !box.checked }); fill(); });
+  fill();
+  // Code wechselt nach dem Koppeln → beim Offenhalten der Einstellungen nachziehen
+  const t = window.setInterval(() => { if (!document.body.contains(body)) clearInterval(t); else if (box.checked) fill(); }, 5000);
+  return h("div", { class: "card" }, h("h3", {}, "Minimal Player Connected (Handy im WLAN)"),
+    h("div", { class: "setting" }, h("label", { class: "check" }, box, "Bibliothek fürs Handy freigeben, solange Minimal Library läuft"), h("span", {})),
+    body,
+    h("div", { class: "note" }, "In Minimal Player Connected unter „Bibliothek“ diesen Computer wählen und einmal den Code eingeben. Danach siehst du am Handy alle Ordner und Playlisten, spielst direkt ab, bearbeitest Playlisten, sortierst Dateien und machst Ordner oder Playlisten offline verfügbar. Nur im eigenen WLAN; Windows fragt beim ersten Mal evtl. nach der Firewall-Freigabe – bitte „Private Netzwerke“ erlauben."),
   );
 }
 

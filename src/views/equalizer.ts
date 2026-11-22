@@ -6,6 +6,7 @@ import { player } from "../player";
 import { store } from "../store";
 import { clear, h, toast } from "../ui";
 import { OS } from "../platform";
+import { L } from "../i18n";
 
 export function equalizerView(): { el: HTMLElement; destroy: () => void } {
   const outBox = h("div", {});
@@ -23,18 +24,18 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
     clear(outBox);
     const item = (label: string, sub: string, on: boolean, click: () => void, dim = false) =>
       h("div", { class: "out-item" + (on ? " on" : "") + (dim ? " dim" : ""), onclick: click }, h("span", {}, label), h("small", {}, sub));
-    const playing = (local: boolean, id: string) => (local ? !player.device && player.localSink === id : player.device?.id === id) ? " · spielt hier" : "";
+    const playing = (local: boolean, id: string) => (local ? !player.device && player.localSink === id : player.device?.id === id) ? L(" · spielt hier") : "";
     outBox.append(
-      h("div", { class: "out-group" }, h("h3", {}, "Dieser PC"),
-        ...locals.map((o) => item(o.id === "default" ? "Standard-Ausgabe" : o.label, (o.id === "default" ? `wie in ${OS} eingestellt` : "Soundkarte") + playing(true, o.id), !editing.cast && editing.sink === o.id, () => pick({ cast: null, sink: o.id }))),
-        labelsHidden() ? h("div", { class: "note", style: { marginTop: "6px" } }, "Gerätenamen verborgen – ",
-          h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); unlockLabels(); } }, "Namen anzeigen"),
-          ` (${OS} fragt einmalig nach dem Mikrofon, es wird nichts aufgenommen).`) : "",
+      h("div", { class: "out-group" }, h("h3", {}, L("Dieser PC")),
+        ...locals.map((o) => item(o.id === "default" ? L("Standard-Ausgabe") : o.label, (o.id === "default" ? L("wie in {0} eingestellt", OS) : L("Soundkarte")) + playing(true, o.id), !editing.cast && editing.sink === o.id, () => pick({ cast: null, sink: o.id }))),
+        labelsHidden() ? h("div", { class: "note", style: { marginTop: "6px" } }, L("Gerätenamen verborgen – "),
+          h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); unlockLabels(); } }, L("Namen anzeigen")),
+          L(" ({0} fragt einmalig nach dem Mikrofon, es wird nichts aufgenommen).", OS)) : "",
       ),
-      h("div", { class: "out-group" }, h("h3", {}, "Heimnetz", isSearching() ? h("span", { class: "note" }, "  · sucht …") : ""),
+      h("div", { class: "out-group" }, h("h3", {}, L("Heimnetz"), isSearching() ? h("span", { class: "note" }, L("  · sucht …")) : ""),
         ...cachedDevices().map((d) => item(d.name, `${d.kind === "sonos" ? "Sonos" : "DLNA"}${playing(false, d.id)}`, editing.cast?.id === d.id, () => pick({ cast: d, sink: editing.sink }), !isFound(d.id))),
-        cachedDevices().length ? "" : h("div", { class: "note" }, isSearching() ? "Suche Geräte …" : "Keine Geräte gefunden."),
-        h("button", { class: "btn", style: { marginTop: "6px" }, onclick: () => discoverIfStale(true) }, "Neu suchen"),
+        cachedDevices().length ? "" : h("div", { class: "note" }, isSearching() ? L("Suche Geräte …") : L("Keine Geräte gefunden.")),
+        h("button", { class: "btn", style: { marginTop: "6px" }, onclick: () => discoverIfStale(true) }, L("Neu suchen")),
       ),
     );
   };
@@ -44,13 +45,13 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
     clear(eqBox);
     const dev = editing.cast;
     if (dev) {
-      eqBox.append(h("h3", {}, `Klang · ${dev.name}`), h("div", { class: "note" }, "Lädt …"));
+      eqBox.append(h("h3", {}, L("Klang · {0}", dev.name)), h("div", { class: "note" }, L("Lädt …")));
       const sound: CastSound | null = await api.castSound(dev.id).catch(() => null);
       if (editing.cast?.id !== dev.id) return;
       clear(eqBox);
-      eqBox.append(h("h3", {}, `Klang · ${dev.name}`));
+      eqBox.append(h("h3", {}, L("Klang · {0}", dev.name)));
       if (!sound || !sound.supported) {
-        eqBox.append(h("div", { class: "note" }, "Dieses Gerät bietet keine Klangregelung über das Netzwerk."));
+        eqBox.append(h("div", { class: "note" }, L("Dieses Gerät bietet keine Klangregelung über das Netzwerk.")));
         return;
       }
       const send = () => {
@@ -73,10 +74,10 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
         send();
       });
       eqBox.append(
-        slider("Bass", "bass"),
-        slider("Höhen", "treble"),
-        h("div", { class: "setting" }, h("label", { class: "check" }, loud, "Loudness (mehr Bass und Höhen bei leiser Wiedergabe)"), h("span", {})),
-        h("div", { class: "note" }, dev.kind === "sonos" ? "Sonos speichert die Einstellung selbst – sie gilt für alle Lautsprecher dieser Gruppe, auch in der Sonos-App." : ""),
+        slider(L("Bass"), "bass"),
+        slider(L("Höhen"), "treble"),
+        h("div", { class: "setting" }, h("label", { class: "check" }, loud, L("Loudness (mehr Bass und Höhen bei leiser Wiedergabe)")), h("span", {})),
+        h("div", { class: "note" }, dev.kind === "sonos" ? L("Sonos speichert die Einstellung selbst – sie gilt für alle Lautsprecher dieser Gruppe, auch in der Sonos-App.") : ""),
       );
       return;
     }
@@ -85,14 +86,14 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
     const sink = editing.sink;
     const key = "local:" + sink;
     const s: EqSettings = eq.load(key);
-    const label = sink === "default" ? "Standard-Ausgabe" : (await localOutputs()).find((o) => o.id === sink)?.label ?? "Soundkarte";
+    const label = sink === "default" ? L("Standard-Ausgabe") : (await localOutputs()).find((o) => o.id === sink)?.label ?? L("Soundkarte");
     if (!eq.enabled) {
       const on = h("input", { type: "checkbox", checked: false });
       on.addEventListener("change", () => {
         localStorage.setItem("ml.audioGraph", on.checked ? "1" : "0");
-        toast("Wird nach einem Neustart der App aktiv.");
+        toast(L("Wird nach einem Neustart der App aktiv."));
       });
-      eqBox.append(h("h3", {}, `Equalizer · ${label}`), h("div", { class: "line" }, h("label", { class: "check" }, on, "Klangverarbeitung einschalten (Neustart nötig)")));
+      eqBox.append(h("h3", {}, L("Equalizer · {0}", label)), h("div", { class: "line" }, h("label", { class: "check" }, on, L("Klangverarbeitung einschalten (Neustart nötig)"))));
       return;
     }
     const save = () => eq.save(key, s);
@@ -148,15 +149,15 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
             vals[i].textContent = fmt(s.gains[i]);
           });
           save();
-        } }, name)),
+        } }, L(name))),
     );
     eqBox.append(
-      h("h3", {}, `Equalizer · ${label}`),
-      h("div", { class: "line" }, h("label", { class: "check" }, onBox, "Equalizer an"), h("span", { class: "spacer" }), h("span", { class: "note" }, "Doppelklick auf einen Regler = 0")),
+      h("h3", {}, L("Equalizer · {0}", label)),
+      h("div", { class: "line" }, h("label", { class: "check" }, onBox, L("Equalizer an")), h("span", { class: "spacer" }), h("span", { class: "note" }, L("Doppelklick auf einen Regler = 0"))),
       presets,
       bands,
-      h("div", { class: "setting" }, h("span", {}, "Vorverstärkung"), h("div", { style: { display: "flex", gap: "10px", alignItems: "center", width: "60%", flexWrap: "nowrap" } }, pre, preVal)),
-      h("div", { class: "note" }, "Jedes Ausgabegerät hat seine eigene Einstellung – z. B. mehr Bass für kleine Laptop-Lautsprecher, flach für die Anlage."),
+      h("div", { class: "setting" }, h("span", {}, L("Vorverstärkung")), h("div", { style: { display: "flex", gap: "10px", alignItems: "center", width: "60%", flexWrap: "nowrap" } }, pre, preVal)),
+      h("div", { class: "note" }, L("Jedes Ausgabegerät hat seine eigene Einstellung – z. B. mehr Bass für kleine Laptop-Lautsprecher, flach für die Anlage.")),
     );
   };
 
@@ -177,10 +178,10 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
   discoverIfStale();
 
   const el = h("div", { style: { display: "contents" } },
-    h("div", { class: "head" }, h("h1", {}, "Equalizer"), h("span", { class: "sub" }, "Klang je Ausgabegerät – wo du hörst, wählst du unten am Lautstärkeregler")),
+    h("div", { class: "head" }, h("h1", {}, "Equalizer"), h("span", { class: "sub" }, L("Klang je Ausgabegerät – wo du hörst, wählst du unten am Lautstärkeregler"))),
     h("div", { class: "view-scroll" },
       h("div", { class: "eq-layout" },
-        h("div", { class: "card" }, h("h3", {}, "Gerät zum Einstellen"), outBox),
+        h("div", { class: "card" }, h("h3", {}, L("Gerät zum Einstellen")), outBox),
         h("div", { class: "card" }, eqBox),
       ),
     ),

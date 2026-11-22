@@ -9,6 +9,7 @@ import { beginDrag, dragging, dropTarget } from "../dnd";
 import { analyzeIds, recordNav, setViewPath } from "../main";
 import { searchWords, textMatches, trackMenu } from "./library";
 import { SHOW_IN, TRASH, FILE_MANAGER } from "../platform";
+import { L, pl } from "../i18n";
 
 const norm = (p: string) => p.replace(/[\\/]+$/, "").replace(/\//g, "\\").toLowerCase();
 
@@ -31,7 +32,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
   const info = h("span", { class: "sub" });
   const tiles = h("div", { class: "tiles" });
   let query = "";
-  const search = h("input", { type: "search", placeholder: "In diesem Ordner suchen …", style: { width: "210px", flex: "none" } });
+  const search = h("input", { type: "search", placeholder: L("In diesem Ordner suchen …"), style: { width: "210px", flex: "none" } });
   search.addEventListener("input", () => {
     query = search.value;
     showTracks();
@@ -55,7 +56,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     columns: "folders",
     defaultSort: "pos",
     menu: (ids) => trackMenu(ids),
-    emptyText: "Keine Musik in diesem Ordner. Titel aus der Liste auf einen Ordner links ziehen, um sie hierher zu verschieben.",
+    emptyText: L("Keine Musik in diesem Ordner. Titel aus der Liste auf einen Ordner links ziehen, um sie hierher zu verschieben."),
   });
   list.sort = (localStorage.getItem("ml.folderSort") as typeof list.sort) ?? "trackNo";
 
@@ -98,7 +99,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
 
   const renderTree = () => {
     if (!roots().length) {
-      tree.replaceChildren(h("div", { class: "note", style: { padding: "12px" } }, "Noch kein Musikordner – in den Einstellungen hinzufügen."));
+      tree.replaceChildren(h("div", { class: "note", style: { padding: "12px" } }, L("Noch kein Musikordner – in den Einstellungen hinzufügen.")));
       return;
     }
     const nodes: HTMLElement[] = [];
@@ -188,7 +189,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     const added = await api.dirImportUntracked(path).catch(() => [] as number[]);
     if (added.length) {
       await store.loadTracks();
-      toast(`${added.length} neue Datei${added.length === 1 ? "" : "en"} im Ordner aufgenommen`);
+      toast(L("{0} neue Datei{1} im Ordner aufgenommen", added.length, pl(added.length, "en")));
       if (store.settings.autoAnalyze) analyzeIds(added);
     }
   };
@@ -221,7 +222,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     const subs = (children.get(norm(current)) ?? []).filter((d) => !q || q.split(/\s+/).every((w) => d.name.toLowerCase().includes(w)));
     const isRoot = roots().some((r) => norm(r) === norm(current));
     if (!isRoot && current) {
-      const up = h("div", { class: "tile up", title: "Übergeordneter Ordner" }, "‹ Zurück");
+      const up = h("div", { class: "tile up", title: L("Übergeordneter Ordner") }, L("‹ Zurück"));
       up.addEventListener("click", () => openFolder(dirname(current)));
       folderDrop(up, dirname(current));
       tiles.append(up);
@@ -234,7 +235,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
       folderDrop(t, d.path);
       tiles.append(t);
     }
-    const nf = h("div", { class: "tile new" }, "+ Neuer Ordner");
+    const nf = h("div", { class: "tile new" }, L("+ Neuer Ordner"));
     nf.addEventListener("click", () => newFolder(current));
     tiles.append(nf);
   };
@@ -257,41 +258,41 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     }
     list.setIds(ids);
     player.queue = list.visibleIds;
-    info.textContent = words.length ? `${ids.length} von ${total} Titeln · ${fmtDuration(dur)}` : `${ids.length} Titel · ${fmtDuration(dur)}`;
+    info.textContent = words.length ? L("{0} von {1} Titeln · {2}", ids.length, total, fmtDuration(dur)) : L("{0} Titel · {1}", ids.length, fmtDuration(dur));
   };
 
   // ---------- Ordner-Aktionen ----------
   const folderMenu = (path: string, isRoot: boolean): MenuItem[] => [
-    { label: "Öffnen", action: () => openFolder(path) },
-    { label: "Neuer Unterordner …", action: () => newFolder(path) },
-    ...(isRoot ? [] : [{ label: "Umbenennen …", hint: "F2", action: () => renameFolder(path) }]),
+    { label: L("Öffnen"), action: () => openFolder(path) },
+    { label: L("Neuer Unterordner …"), action: () => newFolder(path) },
+    ...(isRoot ? [] : [{ label: L("Umbenennen …"), hint: "F2", action: () => renameFolder(path) }]),
     { label: SHOW_IN, action: () => revealItemInDir(path) },
-    { label: "Alle Titel darin abspielen", action: () => {
+    { label: L("Alle Titel darin abspielen"), action: () => {
       const ids = [...store.tracks.values()].filter((t) => norm(t.path).startsWith(norm(path) + "\\")).map((t) => t.id);
       if (ids.length) player.play(ids[0], 0, ids);
     } },
-    ...(isRoot ? [] : [{ label: "", sep: true }, { label: "In den Papierkorb …", action: () => trashFolder(path) }]),
+    ...(isRoot ? [] : [{ label: "", sep: true }, { label: L("In den Papierkorb …"), action: () => trashFolder(path) }]),
   ];
 
   const newFolder = (parent: string) => {
-    const inp = h("input", { type: "text", value: "Neuer Ordner", style: { width: "100%" } });
+    const inp = h("input", { type: "text", value: L("Neuer Ordner"), style: { width: "100%" } });
     const go = async () => {
       s.close();
       try {
-        const p = await api.dirCreate(parent, inp.value.trim() || "Neuer Ordner");
+        const p = await api.dirCreate(parent, inp.value.trim() || L("Neuer Ordner"));
         expand(parent);
         saveExpanded();
         await load(parent, true);
         renderTree();
         renderTiles();
-        toast(`Ordner „${basename(p)}“ angelegt`);
+        toast(L("Ordner „{0}“ angelegt", basename(p)));
       } catch (e) {
         toast(String(e));
       }
     };
     inp.addEventListener("keydown", (e) => e.key === "Enter" && go());
-    const s = sheet(`Neuer Ordner in „${basename(parent)}“`, h("div", {}, inp,
-      h("div", { class: "foot" }, h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"), h("button", { class: "btn primary", onclick: go }, "Anlegen"))));
+    const s = sheet(L("Neuer Ordner in „{0}“", basename(parent)), h("div", {}, inp,
+      h("div", { class: "foot" }, h("button", { class: "btn", onclick: () => s.close() }, L("Abbrechen")), h("button", { class: "btn primary", onclick: go }, L("Anlegen")))));
     setTimeout(() => inp.select());
   };
 
@@ -321,17 +322,17 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
       }
     };
     inp.addEventListener("keydown", (e) => e.key === "Enter" && go());
-    const s = sheet("Ordner umbenennen", h("div", {}, inp,
-      h("div", { class: "foot" }, h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"), h("button", { class: "btn primary", onclick: go }, "Umbenennen"))));
+    const s = sheet(L("Ordner umbenennen"), h("div", {}, inp,
+      h("div", { class: "foot" }, h("button", { class: "btn", onclick: () => s.close() }, L("Abbrechen")), h("button", { class: "btn primary", onclick: go }, L("Umbenennen")))));
     setTimeout(() => inp.select());
   };
 
   const trashFolder = (path: string) => {
     const n = [...store.tracks.values()].filter((t) => norm(t.path).startsWith(norm(path) + "\\")).length;
-    const s = sheet(`„${basename(path)}“ in den Papierkorb`, h("div", {},
-      h("div", { class: "note" }, `Der Ordner mit allem Inhalt${n ? ` (${n} Titel)` : ""} landet im ${TRASH}.`),
-      h("div", { class: "foot" }, h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"),
-        holdButton("In den Papierkorb", async () => {
+    const s = sheet(L("„{0}“ in den Papierkorb", basename(path)), h("div", {},
+      h("div", { class: "note" }, L("Der Ordner mit allem Inhalt{0} landet im {1}.", n ? L(" ({0} Titel)", n) : "", TRASH)),
+      h("div", { class: "foot" }, h("button", { class: "btn", onclick: () => s.close() }, L("Abbrechen")),
+        holdButton(L("In den Papierkorb"), async () => {
           s.close();
           try {
             await api.dirTrash(path);
@@ -366,9 +367,9 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
   ];
 
   const el = h("div", { style: { display: "contents" } },
-    h("div", { class: "head nowrap" }, h("h1", {}, "Ordner"), crumbs, info,
+    h("div", { class: "head nowrap" }, h("h1", {}, L("Ordner")), crumbs, info,
       search,
-      h("label", { class: "check", title: "Titel aus allen Unterordnern mit anzeigen und durchsuchen" }, recBox, "Unterordner"),
+      h("label", { class: "check", title: L("Titel aus allen Unterordnern mit anzeigen und durchsuchen") }, recBox, L("Unterordner")),
       h("button", { class: "btn", onclick: () => current && revealItemInDir(current) }, FILE_MANAGER),
     ),
     h("div", { class: "folders" },

@@ -9,6 +9,7 @@ import { dropTarget } from "./dnd";
 import { dupGate } from "./fileops";
 import { store } from "./store";
 import { basename, contextMenu, h, holdButton, reportErrors, sheet, toast } from "./ui";
+import { L, shown } from "./i18n";
 
 export const MY_TAB = getCurrentWindow().label;
 const OWNER = "ml.audioOwner";
@@ -84,32 +85,32 @@ function rename(label: string, name: string) {
     s.close();
   };
   inp.addEventListener("keydown", (e) => e.key === "Enter" && go());
-  const s = sheet("Tab umbenennen", h("div", {}, inp,
-    h("div", { class: "foot" }, h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"), h("button", { class: "btn primary", onclick: go }, "Umbenennen"))));
+  const s = sheet(L("Tab umbenennen"), h("div", {}, inp,
+    h("div", { class: "foot" }, h("button", { class: "btn", onclick: () => s.close() }, L("Abbrechen")), h("button", { class: "btn primary", onclick: go }, L("Umbenennen")))));
   setTimeout(() => inp.select());
 }
 
 function close(label: string, name: string) {
-  const s = sheet(`Tab „${name}“ schließen`, h("div", {},
-    h("div", { class: "note" }, "Die Bibliothek dieses Tabs (Musikordner-Liste, Analysen, Playlisten, Einstellungen) wird gelöscht. Deine Musikdateien bleiben unberührt."),
-    h("div", { class: "foot" }, h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"),
-      holdButton("Tab schließen", async () => {
+  const s = sheet(L("Tab „{0}“ schließen", name), h("div", {},
+    h("div", { class: "note" }, L("Die Bibliothek dieses Tabs (Musikordner-Liste, Analysen, Playlisten, Einstellungen) wird gelöscht. Deine Musikdateien bleiben unberührt.")),
+    h("div", { class: "foot" }, h("button", { class: "btn", onclick: () => s.close() }, L("Abbrechen")),
+      holdButton(L("Tab schließen"), async () => {
         s.close();
         try {
           await api.tabClose(label);
         } catch (e) {
           toast(String(e));
         }
-      }, "halten"))));
+      }, L("halten")))));
 }
 
 function render() {
   const owner = audioOwner();
   strip.replaceChildren(
     ...tabs.map((t) => {
-      const el = h("div", { class: "tab" + (t.label === MY_TAB ? " on" : ""), title: t.label === MY_TAB ? "Doppelklick: umbenennen · Rechtsklick: mehr" : `Zu „${t.name}“ wechseln` },
-        t.label === owner && playingNow && tabs.length > 1 ? h("span", { class: "spk", title: "Hier läuft die Musik" }, icon("speaker", 13)) : "",
-        h("span", { class: "tname" }, t.name),
+      const el = h("div", { class: "tab" + (t.label === MY_TAB ? " on" : ""), title: t.label === MY_TAB ? L("Doppelklick: umbenennen · Rechtsklick: mehr") : L("Zu „{0}“ wechseln", shown(t.name)) },
+        t.label === owner && playingNow && tabs.length > 1 ? h("span", { class: "spk", title: L("Hier läuft die Musik") }, icon("speaker", 13)) : "",
+        h("span", { class: "tname" }, shown(t.name)),
       );
       // Titel auf einen anderen Tab ziehen → dorthin kopieren/verschieben (mit Duplikatprüfung)
       if (t.label !== MY_TAB) dropTarget(el, { accepts: (p) => p.kind === "ids", drop: (p) => p.kind === "ids" && transferDialog(t, p.ids) });
@@ -118,13 +119,13 @@ function render() {
       el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         contextMenu(e.clientX, e.clientY, [
-          { label: "Umbenennen …", action: () => rename(t.label, t.name) },
-          ...(t.label !== "main" ? [{ label: "Tab schließen …", action: () => close(t.label, t.name) }] : []),
+          { label: L("Umbenennen …"), action: () => rename(t.label, t.name) },
+          ...(t.label !== "main" ? [{ label: L("Tab schließen …"), action: () => close(t.label, t.name) }] : []),
         ]);
       });
       return el;
     }),
-    h("button", { class: "tab-add", title: "Neuer Tab – eine zweite, leere Bibliothek", onclick: () => api.tabCreate().catch((e) => toast(String(e))) }, "+"),
+    h("button", { class: "tab-add", title: L("Neuer Tab – eine zweite, leere Bibliothek"), onclick: () => api.tabCreate().catch((e) => toast(String(e))) }, "+"),
   );
 }
 
@@ -141,40 +142,40 @@ async function transferDialog(t: { label: string; name: string }, ids: number[])
         rb.addEventListener("change", () => (dir = r));
         return h("div", {}, h("label", { class: "check", style: { padding: "3px 0", fontFamily: "var(--mono)", fontSize: "12px" } }, rb, r));
       }),
-      !roots.includes(dir) && dir ? h("div", { class: "note", style: { fontFamily: "var(--mono)" } }, `→ ${dir} (wird dort Musikordner)`) : "",
+      !roots.includes(dir) && dir ? h("div", { class: "note", style: { fontFamily: "var(--mono)" } }, L("→ {0} (wird dort Musikordner)", dir)) : "",
       h("button", { class: "btn", style: { marginTop: "6px" }, onclick: async () => {
         const d = await open({ directory: true, defaultPath: dir || undefined });
         if (d) {
           dir = d as string;
           renderDirs();
         }
-      } }, roots.length ? "Unterordner oder anderer Ordner …" : "Ordner wählen …"),
+      } }, roots.length ? L("Unterordner oder anderer Ordner …") : L("Ordner wählen …")),
     );
   };
   renderDirs();
   const modeBox = h("div", { class: "line" },
-    ...([[true, "Kopieren"], [false, "Verschieben"]] as const).map(([c, l]) => {
+    ...([[true, L("Kopieren")], [false, L("Verschieben")]] as const).map(([c, l]) => {
       const rb = h("input", { type: "radio", name: "tmode", checked: c === copy }) as HTMLInputElement;
       rb.addEventListener("change", () => (copy = c));
       return h("label", { class: "check" }, rb, l);
     }),
   );
-  const s = sheet(`${ids.length} Titel nach „${t.name}“`, h("div", {},
-    h("div", { class: "card" }, h("h3", {}, "Zielordner"), dirBox),
+  const s = sheet(L("{0} Titel nach „{1}“", ids.length, t.name), h("div", {},
+    h("div", { class: "card" }, h("h3", {}, L("Zielordner")), dirBox),
     modeBox,
-    h("div", { class: "note" }, "Vorher wird geprüft, ob es die Titel in der Bibliothek des anderen Tabs schon gibt."),
+    h("div", { class: "note" }, L("Vorher wird geprüft, ob es die Titel in der Bibliothek des anderen Tabs schon gibt.")),
     h("div", { class: "foot" },
-      h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"),
+      h("button", { class: "btn", onclick: () => s.close() }, L("Abbrechen")),
       h("button", { class: "btn primary", onclick: async () => {
-        if (!dir) return toast("Zielordner wählen");
+        if (!dir) return toast(L("Zielordner wählen"));
         s.close();
         const ok = await dupGate(ids, dir, t.label);
         if (!ok) return;
-        if (!ok.length) return toast("Nichts übertragen – alle Titel gibt es dort schon");
+        if (!ok.length) return toast(L("Nichts übertragen – alle Titel gibt es dort schon"));
         const skip = ids.filter((i) => !ok.includes(i));
         try {
           const r = await api.transferToTab(ids, t.label, dir, copy, skip);
-          reportErrors(r.errors, `${r.moved} Titel ${copy ? "kopiert" : "verschoben"} → „${t.name}“ (${basename(dir)})`);
+          reportErrors(r.errors, L("{0} Titel {1} → „{2}“ ({3})", r.moved, copy ? L("kopiert") : L("verschoben"), t.name, basename(dir)));
           if (!copy) {
             ok.forEach((id) => store.selection.delete(id));
             await store.loadTracks();
@@ -184,13 +185,13 @@ async function transferDialog(t: { label: string; name: string }, ids: number[])
         } catch (e) {
           toast(String(e));
         }
-      } }, "Übertragen"),
+      } }, L("Übertragen")),
     ),
   ));
 }
 
 async function load() {
-  tabs = await api.tabsList().catch(() => [{ label: "main", name: "Bibliothek" }]);
+  tabs = await api.tabsList().catch(() => [{ label: "main", name: L("Bibliothek") }]);
   render();
 }
 

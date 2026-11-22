@@ -4,6 +4,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { player } from "./player";
 import { store } from "./store";
 import { toast } from "./ui";
+import { L } from "./i18n";
 
 export const updater = {
   available: null as Update | null,
@@ -30,12 +31,12 @@ export async function checkUpdate(manual = false): Promise<void> {
     updater.lastCheck = Date.now();
     updater.available = u;
     updater.state = u ? "available" : "none";
-    if (u && !manual) toast(`Update ${u.version} verfügbar – Einstellungen → Updates`);
-    if (manual && !u) toast("Minimal Library ist aktuell");
+    if (u && !manual) toast(L("Update {0} verfügbar – Einstellungen → Updates", u.version));
+    if (manual && !u) toast(L("Minimal Library ist aktuell"));
   } catch (e) {
     updater.state = "error";
     updater.error = String(e);
-    if (manual) toast("Update-Prüfung fehlgeschlagen: " + updater.error);
+    if (manual) toast(L("Update-Prüfung fehlgeschlagen: ") + updater.error);
   }
   emit();
 }
@@ -61,7 +62,7 @@ export async function installUpdate(): Promise<void> {
   } catch (e) {
     updater.state = "error";
     updater.error = String(e);
-    toast("Update fehlgeschlagen: " + updater.error);
+    toast(L("Update fehlgeschlagen: ") + updater.error);
     emit();
   }
 }

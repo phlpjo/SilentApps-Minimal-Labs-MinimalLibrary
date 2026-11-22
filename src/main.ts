@@ -31,24 +31,26 @@ import { organizeView } from "./views/organize";
 import { exportDialog, playlistView, smartEditor } from "./views/playlist";
 import { settingsView } from "./views/settings";
 import logo from "./logo.svg";
+import { L, pl, LOCALE, trMsg, LANG, shown } from "./i18n";
+api.setLang(LANG).catch(() => {});
 
 type ViewName = "library" | "search" | "folders" | "history" | "ripper" | "sync" | "equalizer" | "playlist" | "duplicates" | "organize" | "settings";
 
 const app = document.getElementById("app")!;
 const win = getCurrentWindow();
-const backBtn = h("button", { class: "tb-btn back", title: IS_MAC ? "Zurück (⌘[)" : "Zurück (Alt+←)", onclick: () => goBack() }, "‹");
+const backBtn = h("button", { class: "tb-btn back", title: IS_MAC ? L("Zurück (⌘[)") : L("Zurück (Alt+←)"), onclick: () => goBack() }, "‹");
 function updateBack() {
   backBtn.disabled = backStack.length === 0;
 }
-const maxBtn = h("button", { class: "tb-btn", title: "Maximieren", onclick: () => win.toggleMaximize() }, "▢");
+const maxBtn = h("button", { class: "tb-btn", title: L("Maximieren"), onclick: () => win.toggleMaximize() }, "▢");
 const titlebar = h("header", { id: "titlebar", "data-tauri-drag-region": "" },
   backBtn,
   tabStrip(),
   h("div", { class: "tb-title", "data-tauri-drag-region": "" }),
   IS_MAC ? null : h("div", { class: "tb-ctrls" },
-    h("button", { class: "tb-btn", title: "Minimieren", onclick: () => win.minimize() }, "—"),
+    h("button", { class: "tb-btn", title: L("Minimieren"), onclick: () => win.minimize() }, "—"),
     maxBtn,
-    h("button", { class: "tb-btn close", title: "Schließen", onclick: () => win.close() }, "✕"),
+    h("button", { class: "tb-btn close", title: L("Schließen"), onclick: () => win.close() }, "✕"),
   ),
 );
 titlebar.addEventListener("dblclick", (e) => {
@@ -57,7 +59,7 @@ titlebar.addEventListener("dblclick", (e) => {
 win.onResized(async () => {
   const m = await win.isMaximized();
   maxBtn.textContent = m ? "❐" : "▢";
-  maxBtn.title = m ? "Wiederherstellen" : "Maximieren";
+  maxBtn.title = m ? L("Wiederherstellen") : L("Maximieren");
   document.body.classList.toggle("maximized", m);
 });
 // Fensterrahmen-Farbe an Hell/Dunkel anpassen
@@ -219,7 +221,7 @@ function springLoaded(el: HTMLElement, view: ViewName) {
     drop: () => {
       clearTimeout(springTimer);
       if (current?.name !== view) nav(view);
-      toast("Zum Verschieben auf einen Ordner ziehen");
+      toast(L("Zum Verschieben auf einen Ordner ziehen"));
     },
   });
   return el;
@@ -235,33 +237,33 @@ function renderSide() {
     side.append(
       h("div", { class: "brand" }, h("div", { class: "bl" }, h("img", { src: logo, alt: "" }), h("span", {}, "Minimal Library")), darkSwitch()),
       h("div", { class: "nav", id: "mainnav" }),
-      h("div", { class: "section" }, "Playlisten"),
+      h("div", { class: "section" }, L("Playlisten")),
       h("div", { class: "section", style: { padding: "0 20px 8px", justifyContent: "flex-start", gap: "14px" } },
-        newDrop(h("span", { class: "act", title: "Neue Playlist (Titel hierher ziehen = direkt hinein)", onclick: () => newPlaylistFromIds([]) }, "+ Neu")),
-        h("span", { class: "act", title: "Smarte Playlist aus Regeln", onclick: () => smartEditor() }, "+ Smart"),
+        newDrop(h("span", { class: "act", title: L("Neue Playlist (Titel hierher ziehen = direkt hinein)"), onclick: () => newPlaylistFromIds([]) }, L("+ Neu"))),
+        h("span", { class: "act", title: L("Smarte Playlist aus Regeln"), onclick: () => smartEditor() }, L("+ Smart")),
         h("span", { class: "act", title: "M3U/M3U8 importieren", onclick: importPlaylist }, "Import …"),
       ),
       plList,
-      newDrop(h("div", { class: "pl-new-drop" }, "+ Neue Playlist mit diesen Titeln")),
+      newDrop(h("div", { class: "pl-new-drop" }, L("+ Neue Playlist mit diesen Titeln"))),
       status,
     );
   }
   const mainnav = side.querySelector("#mainnav")!;
   mainnav.replaceChildren(
-    navItem("Bibliothek", n === "library", () => nav("library"), store.tracks.size.toLocaleString("de")),
-    navItem("Erweiterte Suche", n === "search", () => nav("search")),
-    springLoaded(navItem("Ordner", n === "folders", () => nav("folders")), "folders"),
+    navItem(L("Bibliothek"), n === "library", () => nav("library"), store.tracks.size.toLocaleString(LOCALE)),
+    navItem(L("Erweiterte Suche"), n === "search", () => nav("search")),
+    springLoaded(navItem(L("Ordner"), n === "folders", () => nav("folders")), "folders"),
     navItem("Sync", n === "sync", () => nav("sync"), syncBadge()),
     navItem("Equalizer", n === "equalizer", () => nav("equalizer")),
     navItem("Ripper", n === "ripper", () => nav("ripper")),
-    navItem("Sortieren", n === "organize", () => nav("organize", n === "library" ? [...store.selection] : undefined)),
-    navItem("Duplikate", n === "duplicates", () => nav("duplicates")),
-    navItem("Verlauf", n === "history", () => nav("history")),
-    navItem("Einstellungen", n === "settings", () => nav("settings"), updater.state === "available" ? "● Update" : undefined),
+    navItem(L("Sortieren"), n === "organize", () => nav("organize", n === "library" ? [...store.selection] : undefined)),
+    navItem(L("Duplikate"), n === "duplicates", () => nav("duplicates")),
+    navItem(L("Verlauf"), n === "history", () => nav("history")),
+    navItem(L("Einstellungen"), n === "settings", () => nav("settings"), updater.state === "available" ? L("● Update") : undefined),
   );
   plList.replaceChildren(
     ...store.playlists.map((p) => {
-      const it = navItem((p.rules ? "◇ " : "") + p.name, n === "playlist" && current?.arg?.[0] === p.id, () => nav("playlist", [p.id]), String(p.count));
+      const it = navItem((p.rules ? "◇ " : "") + shown(p.name), n === "playlist" && current?.arg?.[0] === p.id, () => nav("playlist", [p.id]), String(p.count));
       // Titel auf die Playlist ziehen → hinzufügen (smarte Playlisten füllen sich selbst)
       dropTarget(it, {
         accepts: (pl) => pl.kind === "ids" && !p.rules,
@@ -269,17 +271,17 @@ function renderSide() {
           if (pl.kind !== "ids") return;
           await api.playlistAddItems(p.id, pl.ids);
           await store.loadPlaylists();
-          toast(`${pl.ids.length} Titel → ${p.name}`);
+          toast(L("{0} Titel → {1}", pl.ids.length, p.name));
           if (current?.name === "playlist" && current.arg?.[0] === p.id) nav("playlist", [p.id]);
         },
       });
       it.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         contextMenu(e.clientX, e.clientY, [
-          { label: "Öffnen", action: () => nav("playlist", [p.id]) },
-          { label: "Exportieren …", action: () => exportDialog([p.id]) },
-          ...(pioneerOn() ? [{ label: "Für Pioneer-Player exportieren …", action: () => pioneerExportDialog([p.id]) }, { label: "rekordbox-XML speichern …", action: () => xmlDialog([p.id]) }] : []),
-          ...(p.rules ? [{ label: "Regeln bearbeiten …", action: () => smartEditor(p) }] : []),
+          { label: L("Öffnen"), action: () => nav("playlist", [p.id]) },
+          { label: L("Exportieren …"), action: () => exportDialog([p.id]) },
+          ...(pioneerOn() ? [{ label: L("Für Pioneer-Player exportieren …"), action: () => pioneerExportDialog([p.id]) }, { label: L("rekordbox-XML speichern …"), action: () => xmlDialog([p.id]) }] : []),
+          ...(p.rules ? [{ label: L("Regeln bearbeiten …"), action: () => smartEditor(p) }] : []),
         ]);
       });
       return it;
@@ -294,7 +296,7 @@ function darkSwitch() {
   const moon = icon("moon", 11);
   moon.classList.add("moon");
   // Symbol sitzt im Schalterknopf: Sonne = hell, Mond = dunkel
-  const sw = h("div", { class: "switch theme-toggle", title: "Hell / Dunkel" }, h("span", { class: "track" }, h("span", { class: "knob" }, sun, moon)));
+  const sw = h("div", { class: "switch theme-toggle", title: L("Hell / Dunkel") }, h("span", { class: "track" }, h("span", { class: "knob" }, sun, moon)));
   const upd = () => sw.classList.toggle("on", !isLight());
   sw.addEventListener("click", () => applyTheme(isLight() ? "dark" : "light"));
   document.addEventListener("themechange", upd);
@@ -308,27 +310,27 @@ async function importPlaylist() {
   const [id, n] = await api.playlistImport(f as string);
   await store.loadTracks();
   await store.loadPlaylists();
-  toast(`${n} Titel importiert`);
+  toast(L("{0} Titel importiert", n));
   nav("playlist", [id]);
 }
 
 export function newPlaylistFromIds(ids: number[]) {
   const name = h("input", { type: "text", value: "Neue Playlist", style: { width: "100%" } });
   const go = async () => {
-    const id = await api.playlistCreate(name.value.trim() || "Neue Playlist", null, ids.length ? ids : null);
+    const id = await api.playlistCreate(name.value.trim() || L("Neue Playlist"), null, ids.length ? ids : null);
     await store.loadPlaylists();
     s.close();
     void id;
-    toast(ids.length ? `${ids.length} Titel → ${name.value}` : `Playlist „${name.value}“ angelegt`);
+    toast(ids.length ? L("{0} Titel → {1}", ids.length, name.value) : L("Playlist „{0}“ angelegt", name.value));
   };
   name.addEventListener("keydown", (e) => e.key === "Enter" && go());
-  const s = sheet(ids.length ? `Neue Playlist mit ${ids.length} Titel${ids.length === 1 ? "" : "n"}` : "Neue Playlist",
-    h("div", {}, name, h("div", { class: "foot" }, h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"), h("button", { class: "btn primary", onclick: go }, "Anlegen"))));
+  const s = sheet(ids.length ? L("Neue Playlist mit {0} Titel{1}", ids.length, pl(ids.length, "n")) : L("Neue Playlist"),
+    h("div", {}, name, h("div", { class: "foot" }, h("button", { class: "btn", onclick: () => s.close() }, L("Abbrechen")), h("button", { class: "btn primary", onclick: go }, L("Anlegen")))));
   setTimeout(() => name.select());
 }
 
 // ---------- Hintergrund-Aufgaben + Fortschritt ----------
-const TASKS: Record<string, string> = { sync: "Sync", rip: "Ripper", tools: "Werkzeuge laden", scan: "Scannen", analyze: "Analysieren", duplicates: "Duplikate", organize: "Sortieren", export: "Exportieren", pioneer: "Pioneer-Export", lyrics: "Songtexte holen" };
+const TASKS: Record<string, string> = { sync: "Sync", rip: "Ripper", tools: L("Werkzeuge laden"), scan: L("Scannen"), analyze: L("Analysieren"), duplicates: L("Duplikate"), organize: L("Sortieren"), export: L("Exportieren"), pioneer: L("Pioneer-Export"), lyrics: L("Songtexte holen") };
 let busy = 0;
 let hideTimer = 0;
 function setStatus(task: string, done: number, total: number, msg: string) {
@@ -336,10 +338,10 @@ function setStatus(task: string, done: number, total: number, msg: string) {
   const pct = total ? Math.round((done / total) * 100) : 0;
   const cancellable = task === "analyze" || task === "export" || task === "rip" || task === "sync" || task === "pioneer" || task === "lyrics";
   status.replaceChildren(
-    h("div", { class: "srow" }, h("span", {}, `${TASKS[task] ?? task}${total ? ` ${done.toLocaleString("de")} / ${total.toLocaleString("de")}` : ""}`),
-      cancellable && done < total ? h("span", { class: "act", style: { cursor: "pointer" }, onclick: () => api.cancel() }, "Abbrechen") : null),
+    h("div", { class: "srow" }, h("span", {}, `${TASKS[task] ?? task}${total ? ` ${done.toLocaleString(LOCALE)} / ${total.toLocaleString(LOCALE)}` : ""}`),
+      cancellable && done < total ? h("span", { class: "act", style: { cursor: "pointer" }, onclick: () => api.cancel() }, L("Abbrechen")) : null),
     h("div", { class: "bar" }, h("i", { style: { width: (total ? pct : 100) + "%", opacity: total ? "1" : "0.4" } })),
-    h("div", { class: "msg" }, msg),
+    h("div", { class: "msg" }, trMsg(msg)),
   );
   if ((total && done >= total) || msg === "Fertig") hideTimer = window.setTimeout(() => status.replaceChildren(), 4000);
 }
@@ -349,7 +351,7 @@ export async function analyzeIds(ids: number[] | null, explicit = false) {
   busy++;
   try {
     const n = await api.analyze(ids, explicit);
-    if (n) toast(`${n} Titel analysiert`);
+    if (n) toast(L("{0} Titel analysiert", n));
   } catch (e) {
     toast(String(e));
   } finally {
@@ -359,7 +361,7 @@ export async function analyzeIds(ids: number[] | null, explicit = false) {
 
 // Musikordner entfernt: Analyse wurde gestoppt → für die übrigen Titel neu anstoßen
 store.on("pruned", () => {
-  toast("Musikordner entfernt – seine Titel sind nicht mehr in der Bibliothek.");
+  toast(L("Musikordner entfernt – seine Titel sind nicht mehr in der Bibliothek."));
   setTimeout(() => {
     if (store.settings.autoAnalyze && [...store.tracks.values()].some((t) => !t.analyzed || (t.cutoff == null && !t.analysisError)) && !busy) analyzeIds(null);
   }, 1200);
@@ -371,8 +373,8 @@ export async function scanNow() {
     const r = await api.scan();
     await store.loadTracks();
     await store.loadPlaylists();
-    if (r.added || r.removed || r.updated) toast(`Scan: ${r.added} neu, ${r.updated} geändert, ${r.removed} entfernt`);
-    if (r.errors.length) toast(`${r.errors.length} Dateien konnten nicht gelesen werden`);
+    if (r.added || r.removed || r.updated) toast(L("Scan: {0} neu, {1} geändert, {2} entfernt", r.added, r.updated, r.removed));
+    if (r.errors.length) toast(L("{0} Dateien konnten nicht gelesen werden", r.errors.length));
     if (store.settings.autoAnalyze && [...store.tracks.values()].some((t) => !t.analyzed || (t.cutoff == null && !t.analysisError)) && !busy) analyzeIds(null);
   } catch (e) {
     toast(String(e));
@@ -444,11 +446,11 @@ async function applyLibraryChange(c: LibraryChange) {
   store.emit("dirs");
   if (c.moved || c.removed || c.added.length) store.loadPlaylists();
   const parts = [
-    c.added.length ? `${c.added.length} neu` : "",
-    c.moved ? `${c.moved} verschoben` : "",
-    c.removed ? `${c.removed} entfernt` : "",
+    c.added.length ? L("{0} neu", c.added.length) : "",
+    c.moved ? L("{0} verschoben", c.moved) : "",
+    c.removed ? L("{0} entfernt", c.removed) : "",
   ].filter(Boolean);
-  if (parts.length) toast(`Musikordner: ${parts.join(", ")}`);
+  if (parts.length) toast(L("Musikordner: {0}", parts.join(", ")));
   if (c.added.length && store.settings.autoAnalyze) analyzeIds(c.added);
 }
 
@@ -458,7 +460,7 @@ getCurrentWebview().onDragDropEvent(async (e) => {
   const r = await api.addPaths(e.payload.paths);
   if (r.newRoots.length) store.settings = await api.getSettings();
   await store.loadTracks();
-  toast(`${r.ids.length} Titel hinzugefügt${r.newRoots.length ? ` · neuer Musikordner: ${r.newRoots.join(", ")}` : ""}${r.skipped ? ` · ${r.skipped} Datei${r.skipped === 1 ? "" : "en"} außerhalb der Musikordner nicht aufgenommen` : ""}`, 7000);
+  toast(L("{0} Titel hinzugefügt{1}{2}", r.ids.length, r.newRoots.length ? L(" · neuer Musikordner: {0}", r.newRoots.join(", ")) : "", r.skipped ? L(" · {0} Datei{1} außerhalb der Musikordner nicht aufgenommen", r.skipped, pl(r.skipped, "en")) : ""), 7000);
   if (r.ids.length) analyzeIds(r.ids);
 });
 
@@ -467,7 +469,7 @@ function buildPlayer() {
   const cover = h("div", { class: "pcover" });
   const t1 = h("div", { class: "t1" }, "–");
   const t2 = h("div", { class: "t2" }, "");
-  const playBtn = h("button", { class: "ibtn play", title: "Abspielen / Pause (Leertaste)", onclick: () => player.toggle() }, icon("play"));
+  const playBtn = h("button", { class: "ibtn play", title: L("Abspielen / Pause (Leertaste)"), onclick: () => player.toggle() }, icon("play"));
   const { wrap, canvas } = waveElement({ duration: () => player.duration, onSeek: (f) => player.current && player.seekFrac(f), cls: "big" });
   wrap.style.height = "56px";
   canvas.style.height = "56px";
@@ -476,12 +478,12 @@ function buildPlayer() {
   const tDur = h("span", {}, "0:00");
   const vol = h("input", { type: "range", min: "0", max: "1", step: "0.01", value: String(player.volumeLevel) });
   vol.addEventListener("input", () => player.setVolume(Number(vol.value)));
-  const shuffleBtn = h("button", { class: "ibtn", title: "Zufallswiedergabe", onclick: () => player.setShuffle(!player.shuffle) }, icon("shuffle"));
+  const shuffleBtn = h("button", { class: "ibtn", title: L("Zufallswiedergabe"), onclick: () => player.setShuffle(!player.shuffle) }, icon("shuffle"));
   const repeatBtn = h("button", { class: "ibtn", onclick: () => player.cycleRepeat() }, icon("repeat"));
-  const devBtn = h("button", { class: "btn dev", title: "Ausgabegerät: dieser PC oder Lautsprecher im Heimnetz" }, "Dieser PC");
+  const devBtn = h("button", { class: "btn dev", title: L("Ausgabegerät: dieser PC oder Lautsprecher im Heimnetz") }, L("Dieser PC"));
   devBtn.addEventListener("click", () => outputPopup(devBtn));
   // Lautstärke: größere Fläche, Mausrad = ±5 %
-  const volBox = h("div", { class: "vol-box", title: "Lautstärke (Mausrad)" }, vol);
+  const volBox = h("div", { class: "vol-box", title: L("Lautstärke (Mausrad)") }, vol);
   volBox.addEventListener("wheel", (e) => {
     e.preventDefault();
     const v = Math.max(0, Math.min(1, player.volumeLevel + (e.deltaY < 0 ? 0.05 : -0.05)));
@@ -489,8 +491,8 @@ function buildPlayer() {
     vol.value = String(player.volumeLevel);
   }, { passive: false });
   const nowInfo = h("div", { style: { minWidth: "0" } }, t1, t2);
-  const lyrBtn = h("button", { class: "ibtn", title: "Songtext (mitlaufend)", onclick: () => toggleLyricsPanel() }, icon("lyrics"));
-  const starBtn = h("button", { class: "ibtn star", title: "Stern (Playlist „Stern“)", onclick: () => player.current && toggleStar([player.current.id]) }, icon("star"));
+  const lyrBtn = h("button", { class: "ibtn", title: L("Songtext (mitlaufend)"), onclick: () => toggleLyricsPanel() }, icon("lyrics"));
+  const starBtn = h("button", { class: "ibtn star", title: L("Stern (Playlist „Stern“)"), onclick: () => player.current && toggleStar([player.current.id]) }, icon("star"));
   // Rechtsklick auf den laufenden Titel: gleiches Menü wie in der Liste
   for (const el of [cover, nowInfo]) {
     // Laufenden Titel ziehen: auf Ordner (verschieben) oder Playlist (hinzufügen)
@@ -510,16 +512,16 @@ function buildPlayer() {
   // Klick auf Cover oder Titel: zum Speicherort des laufenden Titels
   for (const el of [cover, t1]) {
     el.addEventListener("click", showPlaying);
-    el.title = "Klicken: Speicherort zeigen";
+    el.title = L("Klicken: Speicherort zeigen");
   }
   playerBar.append(
     cover,
     h("div", { style: { display: "flex", alignItems: "center", gap: "6px", minWidth: "0" } }, nowInfo, starBtn),
     h("div", { class: "ctrls" },
       shuffleBtn,
-      h("button", { class: "ibtn", title: "Zurück", onclick: () => player.prev() }, icon("prev")),
+      h("button", { class: "ibtn", title: L("Zurück"), onclick: () => player.prev() }, icon("prev")),
       playBtn,
-      h("button", { class: "ibtn", title: "Weiter", onclick: () => player.next() }, icon("next")),
+      h("button", { class: "ibtn", title: L("Weiter"), onclick: () => player.next() }, icon("next")),
       repeatBtn,
       lyrBtn,
     ),
@@ -532,10 +534,10 @@ function buildPlayer() {
     playBtn.replaceChildren(icon(player.playing ? "pause" : "play"));
     repeatBtn.replaceChildren(icon(player.repeat === "one" ? "repeat1" : "repeat"));
     repeatBtn.classList.toggle("on", player.repeat !== "off");
-    repeatBtn.title = player.repeat === "off" ? "Wiederholen: aus" : player.repeat === "all" ? "Wiederholen: alle" : "Wiederholen: dieser Titel";
+    repeatBtn.title = player.repeat === "off" ? L("Wiederholen: aus") : player.repeat === "all" ? L("Wiederholen: alle") : L("Wiederholen: dieser Titel");
     t1.textContent = t ? store.label(t) : "–";
-    if (t) t2.replaceChildren(artistLinks(t.artist, "Unbekannter Künstler"), t.album ? " · " : "", albumLink(t.album));
-    else t2.textContent = "Doppelklick oder Klick in eine Wellenform";
+    if (t) t2.replaceChildren(artistLinks(t.artist, L("Unbekannter Künstler")), t.album ? " · " : "", albumLink(t.album));
+    else t2.textContent = L("Doppelklick oder Klick in eine Wellenform");
     tDur.textContent = fmtTime(player.duration);
     if (t && coverFor !== t.id) {
       coverFor = t.id;
@@ -602,7 +604,7 @@ async function start() {
   await store.loadPlaylists();
   if (!store.settings.roots.length && store.tracks.size === 0) {
     nav("settings");
-    toast("Willkommen! Füge zuerst deinen Musikordner hinzu.", 6000);
+    toast(L("Willkommen! Füge zuerst deinen Musikordner hinzu."), 6000);
   } else {
     nav("library");
     scanNow();

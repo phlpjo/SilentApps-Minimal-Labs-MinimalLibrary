@@ -2236,14 +2236,8 @@ fn show_main(app: &AppHandle) {
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
-    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-    let show = MenuItem::with_id(app, "show", "Minimal Library öffnen", true, None::<&str>)?;
-    let toggle = MenuItem::with_id(app, "toggle", "Abspielen / Pause", true, None::<&str>)?;
-    let next = MenuItem::with_id(app, "next", "Nächster Titel", true, None::<&str>)?;
-    let sep = PredefinedMenuItem::separator(app)?;
-    let quit_i = MenuItem::with_id(app, "quit", "Beenden", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &toggle, &next, &sep, &quit_i])?;
+    let menu = tray_menu(app.handle(), false)?;
     let mut tb = TrayIconBuilder::with_id("main")
         .tooltip("Minimal Library")
         .menu(&menu)
@@ -2424,6 +2418,46 @@ async fn tab_close(app: AppHandle, window: tauri::WebviewWindow, label: String) 
     Ok(())
 }
 
+/// Menü des Infobereich-Symbols in der Sprache der Oberfläche
+fn tray_menu(app: &AppHandle, en: bool) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    let l = |de: &'static str, e: &'static str| if en { e } else { de };
+    let show = MenuItem::with_id(
+        app,
+        "show",
+        l("Minimal Library öffnen", "Open Minimal Library"),
+        true,
+        None::<&str>,
+    )?;
+    let toggle = MenuItem::with_id(
+        app,
+        "toggle",
+        l("Abspielen / Pause", "Play / Pause"),
+        true,
+        None::<&str>,
+    )?;
+    let next = MenuItem::with_id(
+        app,
+        "next",
+        l("Nächster Titel", "Next track"),
+        true,
+        None::<&str>,
+    )?;
+    let sep = PredefinedMenuItem::separator(app)?;
+    let quit_i = MenuItem::with_id(app, "quit", l("Beenden", "Quit"), true, None::<&str>)?;
+    Menu::with_items(app, &[&show, &toggle, &next, &sep, &quit_i])
+}
+
+/// Sprache der Oberfläche (vom Fenster beim Start gemeldet): Infobereich-Menü und Texte des Kerns
+#[tauri::command]
+fn set_lang(app: AppHandle, lang: String) {
+    let en = lang == "en";
+    musiccore::ENGLISH.store(en, Ordering::Relaxed);
+    if let (Some(t), Ok(m)) = (app.tray_by_id("main"), tray_menu(&app, en)) {
+        let _ = t.set_menu(Some(m));
+    }
+}
+
 /// Titel im Infobereich-Tooltip anzeigen
 #[tauri::command]
 fn set_tray_title(app: AppHandle, text: String) {
@@ -2485,6 +2519,7 @@ pub fn run() {
             allow_play,
             analyze,
             analyze_quiet,
+            set_lang,
             on_demand_roots,
             cancel_task,
             remove_from_library,

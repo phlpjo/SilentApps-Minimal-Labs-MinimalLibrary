@@ -9,6 +9,7 @@ import { fmtDuration, searchNorm, h, holdButton, reportErrors, sheet, toast, typ
 import { analyzeIds, newPlaylistFromIds, nav } from "../main";
 import { moveTracksPick, renameFileDialog } from "../fileops";
 import { SHOW_IN, TRASH } from "../platform";
+import { L, pl, LOCALE, LANG } from "../i18n";
 
 type Filter = "all" | "artist" | "title" | "album" | "genre" | "unanalyzed" | "notags" | "nocover" | "errors";
 
@@ -17,12 +18,12 @@ export function trackMenu(ids: number[], extra: MenuItem[] = []): MenuItem[] {
   const one = ids.length === 1 ? store.tracks.get(ids[0]) : undefined;
   const allStarred = ids.every((id) => isStarred(id));
   return [
-    { label: "Abspielen", action: () => player.play(ids[0], 0, ids) },
-    { label: allStarred ? "Stern entfernen" : "★ Stern setzen", action: () => toggleStar(ids) },
+    { label: L("Abspielen"), action: () => player.play(ids[0], 0, ids) },
+    { label: allStarred ? L("Stern entfernen") : L("★ Stern setzen"), action: () => toggleStar(ids) },
     {
-      label: "Zu Playlist hinzufügen",
+      label: L("Zu Playlist hinzufügen"),
       sub: [
-        { label: "Neue Playlist …", action: () => newPlaylistFromIds(ids) },
+        { label: L("Neue Playlist …"), action: () => newPlaylistFromIds(ids) },
         ...(store.playlists.filter((p) => !p.rules).length ? [{ label: "", sep: true }] : []),
         ...store.playlists
           .filter((p) => !p.rules)
@@ -31,48 +32,48 @@ export function trackMenu(ids: number[], extra: MenuItem[] = []): MenuItem[] {
             action: async () => {
               await api.playlistAddItems(p.id, ids);
               await store.loadPlaylists();
-              toast(`${ids.length} Titel → ${p.name}`);
+              toast(L("{0} Titel → {1}", ids.length, p.name));
             },
           })),
       ],
     },
     { label: "", sep: true },
-    { label: "Neu analysieren", action: () => analyzeIds(ids, true) },
-    ...(one ? [{ label: "Songtext …", action: () => editLyrics(one.id) }] : []),
-    { label: "Songtexte holen (LRCLIB)", action: () => fetchLyricsMany(ids) },
-    { label: "BPM + Tonart in Datei schreiben", action: async () => { reportErrors(await api.writeAnalysisToTags(ids), "Geschrieben"); store.refreshTracks(ids); } },
-    { label: "In Ordner verschieben …", action: () => moveTracksPick(ids) },
-    { label: "In Ordner kopieren …", action: () => moveTracksPick(ids, true) },
-    ...(one ? [{ label: "Datei umbenennen …", hint: "F2", action: () => renameFileDialog(one.id) }] : []),
-    { label: "Nach Muster sortieren …", action: () => nav("organize", ids) },
-    ...(one ? [{ label: "Ordner in der Ordneransicht", action: () => nav("folders", undefined, one.path) }] : []),
+    { label: L("Neu analysieren"), action: () => analyzeIds(ids, true) },
+    ...(one ? [{ label: L("Songtext …"), action: () => editLyrics(one.id) }] : []),
+    { label: L("Songtexte holen (LRCLIB)"), action: () => fetchLyricsMany(ids) },
+    { label: L("BPM + Tonart in Datei schreiben"), action: async () => { reportErrors(await api.writeAnalysisToTags(ids), L("Geschrieben")); store.refreshTracks(ids); } },
+    { label: L("In Ordner verschieben …"), action: () => moveTracksPick(ids) },
+    { label: L("In Ordner kopieren …"), action: () => moveTracksPick(ids, true) },
+    ...(one ? [{ label: L("Datei umbenennen …"), hint: "F2", action: () => renameFileDialog(one.id) }] : []),
+    { label: L("Nach Muster sortieren …"), action: () => nav("organize", ids) },
+    ...(one ? [{ label: L("Ordner in der Ordneransicht"), action: () => nav("folders", undefined, one.path) }] : []),
     ...(one ? [{ label: SHOW_IN, action: () => revealItemInDir(one.path) }] : []),
     ...extra,
     { label: "", sep: true },
     {
-      label: "Aus Bibliothek entfernen",
-      hint: "Datei bleibt",
+      label: L("Aus Bibliothek entfernen"),
+      hint: L("Datei bleibt"),
       action: async () => {
         await api.removeFromLibrary(ids);
         await store.loadTracks();
         store.loadPlaylists();
-        toast(`${ids.length} Titel entfernt (Dateien unverändert)`);
+        toast(L("{0} Titel entfernt (Dateien unverändert)", ids.length));
       },
     },
     {
-      label: "In den Papierkorb …",
-      hint: "Datei",
+      label: L("In den Papierkorb …"),
+      hint: LANG === "en" ? "incl. file" : "Datei",
       action: () => {
         const s = sheet(
-          `${ids.length} Datei${ids.length === 1 ? "" : "en"} in den Papierkorb`,
+          L("{0} Datei{1} in den Papierkorb", ids.length, pl(ids.length, "en")),
           h("div", {},
-            h("div", { class: "note" }, `Die Dateien landen im ${TRASH} und können von dort wiederhergestellt werden.`),
+            h("div", { class: "note" }, L("Die Dateien landen im {0} und können von dort wiederhergestellt werden.", TRASH)),
             h("div", { class: "foot" },
-              h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"),
-              holdButton("In den Papierkorb", async () => {
+              h("button", { class: "btn", onclick: () => s.close() }, L("Abbrechen")),
+              holdButton(L("In den Papierkorb"), async () => {
                 s.close();
                 player.release(ids);
-                reportErrors(await api.trash(ids), `${ids.length} Datei${ids.length === 1 ? "" : "en"} im Papierkorb`);
+                reportErrors(await api.trash(ids), L("{0} Datei{1} im Papierkorb", ids.length, pl(ids.length, "en")));
                 await store.loadTracks();
                 store.loadPlaylists();
               }),
@@ -107,9 +108,9 @@ export function libraryView(): { el: HTMLElement; destroy: () => void } {
   const list = new TrackList({ defaultSort: "artist", menu: (ids) => trackMenu(ids), emptyText: emptyText() });
   list.sort = (sessionStorage.getItem("ml.sort") as typeof list.sort) ?? "artist";
   const info = h("span", { class: "sub" });
-  const search = h("input", { type: "search", placeholder: "Suchen …  (Strg+F)", value: query, style: { width: "260px" } });
+  const search = h("input", { type: "search", placeholder: L("Suchen …  (Strg+F)"), value: query, style: { width: "260px" } });
   const sel = h("select", {},
-    ...([["all", "Alle Titel"], ["artist", "Interpret"], ["title", "Titel"], ["album", "Album"], ["genre", "Genre"], ["unanalyzed", "Nicht analysiert"], ["notags", "Fehlende Tags"], ["nocover", "Ohne Cover"], ["errors", "Analysefehler"]] as const).map(
+    ...([["all", L("Alle Titel")], ["artist", L("Interpret")], ["title", L("Titel")], ["album", "Album"], ["genre", "Genre"], ["unanalyzed", L("Nicht analysiert")], ["notags", L("Fehlende Tags")], ["nocover", L("Ohne Cover")], ["errors", L("Analysefehler")]] as const).map(
       ([v, l]) => h("option", { value: v, selected: v === filter }, l),
     ),
   );
@@ -135,7 +136,7 @@ export function libraryView(): { el: HTMLElement; destroy: () => void } {
     list.setIds(ids);
     player.queue = list.visibleIds;
     const pending = [...store.tracks.values()].filter((t) => !t.analyzed).length;
-    info.textContent = `${ids.length.toLocaleString("de")} Titel · ${fmtDuration(dur)}${pending ? ` · ${pending} nicht analysiert` : ""}`;
+    info.textContent = L("{0} Titel · {1}{2}", ids.length.toLocaleString(LOCALE), fmtDuration(dur), pending ? L(" · {0} nicht analysiert", pending) : "");
   };
   search.addEventListener("input", () => {
     query = search.value;
@@ -157,7 +158,7 @@ export function libraryView(): { el: HTMLElement; destroy: () => void } {
   document.addEventListener("keydown", onKey);
   const unsub = store.on("tracks", refresh);
   const el = h("div", { style: { display: "contents" } },
-    h("div", { class: "head" }, h("h1", {}, "Bibliothek"), info, h("div", { class: "spacer" }), sel, search),
+    h("div", { class: "head" }, h("h1", {}, L("Bibliothek")), info, h("div", { class: "spacer" }), sel, search),
     list.el,
   );
   refresh();
@@ -174,8 +175,8 @@ export function libraryView(): { el: HTMLElement; destroy: () => void } {
 
 function emptyText() {
   return h("div", {},
-    h("b", {}, "Noch keine Musik"), h("br"),
-    "Musikordner in den ", h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); nav("settings"); } }, "Einstellungen"),
-    " hinzufügen – oder Dateien und Ordner einfach ins Fenster ziehen.",
+    h("b", {}, L("Noch keine Musik")), h("br"),
+    L("Musikordner in den "), h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); nav("settings"); } }, L("Einstellungen")),
+    L(" hinzufügen – oder Dateien und Ordner einfach ins Fenster ziehen."),
   );
 }

@@ -3,6 +3,7 @@ import { api } from "./api";
 import { player } from "./player";
 import { store } from "./store";
 import { fmtTime, h, holdButton, sheet, toast } from "./ui";
+import { L } from "./i18n";
 
 export interface Line { t: number | null; text: string }
 
@@ -144,7 +145,7 @@ export async function editLyrics(id: number) {
         if (e.key === "ArrowUp") { e.preventDefault(); focusRow(i - 1); }
         if (e.key === "ArrowDown") { e.preventDefault(); focusRow(i + 1); }
       });
-      const del = h("button", { class: "lyr-del", title: "Zeile löschen", onclick: () => { if (rows.length > 1) { rows.splice(i, 1); renderRows(Math.min(i, rows.length - 1)); draw(); } } }, "✕");
+      const del = h("button", { class: "lyr-del", title: L("Zeile löschen"), onclick: () => { if (rows.length > 1) { rows.splice(i, 1); renderRows(Math.min(i, rows.length - 1)); draw(); } } }, "✕");
       const el = h("div", { class: "lyr-row" + (i === sel ? " sel" : "") + (i === nowIdx ? " now" : "") }, time, text, del);
       rowEls.push(el);
       return el;
@@ -177,7 +178,7 @@ export async function editLyrics(id: number) {
     else player.play(id, f);
   };
   const tap = () => {
-    if (!playing()) return toast("Erst den Titel abspielen (▶)");
+    if (!playing()) return toast(L("Erst den Titel abspielen (▶)"));
     setRowTime(sel, player.currentTime);
     let j = sel + 1;
     while (j < rows.length && !rows[j].text.trim()) j++;
@@ -314,80 +315,80 @@ export async function editLyrics(id: number) {
   const unsub2 = store.on("player", onTick);
 
   // ---- Holen ----
-  const fetchBtn = h("button", { class: "btn" }, "Von LRCLIB holen") as HTMLButtonElement;
+  const fetchBtn = h("button", { class: "btn" }, L("Von LRCLIB holen")) as HTMLButtonElement;
   let armed = 0;
   fetchBtn.addEventListener("click", async () => {
     const hasText = rows.some((r) => r.text.trim());
     if (hasText && Date.now() - armed > 4000) {
       armed = Date.now();
-      return toast("Vorhandenen Text ersetzen? Nochmal klicken.", 4000);
+      return toast(L("Vorhandenen Text ersetzen? Nochmal klicken."), 4000);
     }
-    fetchBtn.textContent = "suche …";
+    fetchBtn.textContent = L("suche …");
     try {
       const f = await api.lyricsFetch(id);
-      if (!f || (!f.synced && !f.plain)) toast(f?.instrumental ? "LRCLIB: Instrumental – kein Text" : "Bei LRCLIB nichts gefunden", 5000);
+      if (!f || (!f.synced && !f.plain)) toast(f?.instrumental ? L("LRCLIB: Instrumental – kein Text") : L("Bei LRCLIB nichts gefunden"), 5000);
       else {
         ({ head, rows } = toRows(f.synced ?? f.plain ?? ""));
         renderRows(0);
         draw();
-        toast(f.synced ? "Mit Zeitmarken gefunden" : "Nur Text gefunden – Zeiten mit „Zeit setzen“ ergänzen", 5000);
+        toast(f.synced ? L("Mit Zeitmarken gefunden") : L("Nur Text gefunden – Zeiten mit „Zeit setzen“ ergänzen"), 5000);
       }
     } catch (e) { toast(String(e), 6000); }
-    fetchBtn.textContent = "Von LRCLIB holen";
+    fetchBtn.textContent = L("Von LRCLIB holen");
   });
 
   // ---- Als Text bearbeiten ----
   const raw = h("textarea", { spellcheck: false, rows: 14, style: { width: "100%", fontFamily: "var(--mono)", fontSize: "13px", display: "none" } }) as HTMLTextAreaElement;
-  const rawBtn = h("button", { class: "btn" }, "Als Text") as HTMLButtonElement;
+  const rawBtn = h("button", { class: "btn" }, L("Als Text")) as HTMLButtonElement;
   rawBtn.addEventListener("click", () => {
     const on = raw.style.display === "none";
-    if (on) { raw.value = fromRows(head, rows); raw.style.display = ""; list.style.display = "none"; rawBtn.textContent = "Als Zeilen"; }
-    else { ({ head, rows } = toRows(raw.value)); raw.style.display = "none"; list.style.display = ""; rawBtn.textContent = "Als Text"; renderRows(); draw(); }
+    if (on) { raw.value = fromRows(head, rows); raw.style.display = ""; list.style.display = "none"; rawBtn.textContent = L("Als Zeilen"); }
+    else { ({ head, rows } = toRows(raw.value)); raw.style.display = "none"; list.style.display = ""; rawBtn.textContent = L("Als Text"); renderRows(); draw(); }
   });
 
   const tool = (label: string, title: string, fn: () => void) => h("button", { class: "btn", title, onclick: fn }, label);
-  const s = sheet(`Songtext · ${store.label(t)}`, h("div", {},
+  const s = sheet(L("Songtext · {0}", store.label(t)), h("div", {},
     h("div", { class: "line", style: { flexWrap: "wrap", gap: "6px" } },
-      tool("▶ Ab Anfang", "Titel von vorn abspielen", () => { player.play(id, 0); focusRow(0); }),
+      tool(L("▶ Ab Anfang"), L("Titel von vorn abspielen"), () => { player.play(id, 0); focusRow(0); }),
       tool("⏯", "Abspielen/Pause", () => (playing() ? player.toggle() : player.play(id, 0))),
-      tool("−3 s", "3 Sekunden zurück", () => playing() && player.seekBy(-3)),
-      h("button", { class: "btn primary", title: "Zeit des Players in die gewählte Zeile, dann nächste Zeile (Strg+Enter)", onclick: tap }, "Zeit setzen ⏎"),
+      tool("−3 s", L("3 Sekunden zurück"), () => playing() && player.seekBy(-3)),
+      h("button", { class: "btn primary", title: L("Zeit des Players in die gewählte Zeile, dann nächste Zeile (Strg+Enter)"), onclick: tap }, L("Zeit setzen ⏎")),
       h("span", { class: "spacer" }),
-      tool("−", "Zeitachse verkleinern (Strg+Mausrad)", () => { pps = Math.max(8, pps * 0.8); draw(); }),
-      tool("+", "Zeitachse vergrößern (Strg+Mausrad)", () => { pps = Math.min(300, pps * 1.25); draw(); }),
+      tool("−", L("Zeitachse verkleinern (Strg+Mausrad)"), () => { pps = Math.max(8, pps * 0.8); draw(); }),
+      tool("+", L("Zeitachse vergrößern (Strg+Mausrad)"), () => { pps = Math.min(300, pps * 1.25); draw(); }),
       fetchBtn,
       rawBtn,
     ),
     scroller,
     live,
     h("div", { class: "line", style: { flexWrap: "wrap", gap: "6px", margin: "6px 0" } },
-      h("span", { class: "note" }, "Gewählte Zeile:"),
-      tool("−0,1 s", "früher", () => rows[sel].t != null && setRowTime(sel, rows[sel].t! - 0.1)),
-      tool("+0,1 s", "später", () => rows[sel].t != null && setRowTime(sel, rows[sel].t! + 0.1)),
-      tool("Abspielen ab hier", "", () => rows[sel].t != null && seekTo(rows[sel].t!)),
-      tool("Zeit löschen", "", () => setRowTime(sel, null)),
-      h("span", { class: "note", style: { marginLeft: "10px" } }, "Alle:"),
-      tool("−0,5 s", "alle früher", () => { rows.forEach((r, i) => r.t != null && setRowTime(i, r.t - 0.5)); }),
-      tool("+0,5 s", "alle später", () => { rows.forEach((r, i) => r.t != null && setRowTime(i, r.t + 0.5)); }),
-      tool("Nach Zeit sortieren", "", () => { rows.sort((a, b) => (a.t ?? 1e9) - (b.t ?? 1e9)); renderRows(); draw(); }),
+      h("span", { class: "note" }, L("Gewählte Zeile:")),
+      tool("−0,1 s", L("früher"), () => rows[sel].t != null && setRowTime(sel, rows[sel].t! - 0.1)),
+      tool("+0,1 s", L("später"), () => rows[sel].t != null && setRowTime(sel, rows[sel].t! + 0.1)),
+      tool(L("Abspielen ab hier"), "", () => rows[sel].t != null && seekTo(rows[sel].t!)),
+      tool(L("Zeit löschen"), "", () => setRowTime(sel, null)),
+      h("span", { class: "note", style: { marginLeft: "10px" } }, L("Alle:")),
+      tool("−0,5 s", L("alle früher"), () => { rows.forEach((r, i) => r.t != null && setRowTime(i, r.t - 0.5)); }),
+      tool("+0,5 s", L("alle später"), () => { rows.forEach((r, i) => r.t != null && setRowTime(i, r.t + 0.5)); }),
+      tool(L("Nach Zeit sortieren"), "", () => { rows.sort((a, b) => (a.t ?? 1e9) - (b.t ?? 1e9)); renderRows(); draw(); }),
     ),
     list,
     raw,
-    h("div", { class: "note" }, "Zeitachse: klicken/ziehen = spulen, Marken ziehen = Zeit verschieben, Mausrad = scrollen, Strg+Mausrad = zoomen. Zeilen: Enter = neue Zeile, Strg+Enter = Zeit setzen, Doppelklick auf die Zeit = dorthin springen. Gespeichert wird als .lrc neben der Datei.",
-      cur?.source === "tag" ? " Der bisherige Text stammt aus dem Tag; Speichern legt eine .lrc an." : ""),
+    h("div", { class: "note" }, L("Zeitachse: klicken/ziehen = spulen, Marken ziehen = Zeit verschieben, Mausrad = scrollen, Strg+Mausrad = zoomen. Zeilen: Enter = neue Zeile, Strg+Enter = Zeit setzen, Doppelklick auf die Zeit = dorthin springen. Gespeichert wird als .lrc neben der Datei."),
+      cur?.source === "tag" ? L(" Der bisherige Text stammt aus dem Tag; Speichern legt eine .lrc an.") : ""),
     h("div", { class: "foot" },
-      cur?.source === "lrc" ? holdButton("Songtext löschen", async () => { await api.lyricsSave(id, ""); s.close(); store.emit("lyrics"); }, "halten") : "",
+      cur?.source === "lrc" ? holdButton(L("Songtext löschen"), async () => { await api.lyricsSave(id, ""); s.close(); store.emit("lyrics"); }, L("halten")) : "",
       h("span", { class: "spacer" }),
-      h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"),
+      h("button", { class: "btn", onclick: () => s.close() }, L("Abbrechen")),
       h("button", { class: "btn primary", onclick: async () => {
         try {
           if (raw.style.display !== "none") ({ head, rows } = toRows(raw.value));
           await api.lyricsSave(id, rows.some((r) => r.text.trim() || r.t != null) ? fromRows(head, rows) : "");
-          toast("Songtext gespeichert");
+          toast(L("Songtext gespeichert"));
           s.close();
           store.emit("lyrics");
         } catch (e) { toast(String(e)); }
-      } }, "Speichern"),
+      } }, L("Speichern")),
     ),
   ), { wide: true, onClose: () => { unsub(); typeof unsub2 === "function" && unsub2(); } });
   renderRows();
@@ -398,7 +399,7 @@ export async function editLyrics(id: number) {
 export async function fetchLyricsMany(ids: number[]) {
   try {
     const r = await api.lyricsFetchMany(ids);
-    toast(`Songtexte: ${r.found} gefunden (${r.synced} mit Zeitmarken)${r.missing ? `, ${r.missing} nicht gefunden` : ""}${r.skipped ? `, ${r.skipped} hatten schon einen` : ""}`, 7000);
+    toast(L("Songtexte: {0} gefunden ({1} mit Zeitmarken){2}{3}", r.found, r.synced, r.missing ? L(", {0} nicht gefunden", r.missing) : "", r.skipped ? L(", {0} hatten schon einen", r.skipped) : ""), 7000);
     store.emit("lyrics");
   } catch (e) { toast(String(e)); }
 }
@@ -406,16 +407,16 @@ export async function fetchLyricsMany(ids: number[]) {
 // ---------- Anzeige im Inspektor ----------
 
 export function lyricsPanel(id: number): HTMLElement {
-  const box = h("div", {}, h("div", { class: "section", style: { padding: "18px 0 6px" } }, "Songtext"), h("div", { class: "note" }, "…"));
+  const box = h("div", {}, h("div", { class: "section", style: { padding: "18px 0 6px" } }, L("Songtext")), h("div", { class: "note" }, "…"));
   api.lyricsGet(id).then((l) => {
     const lines = l ? parseLrc(l.text) : [];
     box.replaceChildren(
-      h("div", { class: "section", style: { padding: "18px 0 6px" } }, "Songtext"),
-      h("div", { class: "note" }, l ? `${l.synced ? "mit Zeitmarken" : "ohne Zeitmarken"} · ${l.source === "lrc" ? ".lrc-Datei" : "im Tag"}` : "Keiner"),
+      h("div", { class: "section", style: { padding: "18px 0 6px" } }, L("Songtext")),
+      h("div", { class: "note" }, l ? `${l.synced ? L("mit Zeitmarken") : L("ohne Zeitmarken")} · ${l.source === "lrc" ? L(".lrc-Datei") : L("im Tag")}` : L("Keiner")),
       l ? h("div", { class: "lyr-preview" }, lines.slice(0, 6).map((x) => x.text).join("\n") + (lines.length > 6 ? "\n…" : "")) : "",
       h("div", { class: "acts" },
-        h("button", { class: "btn", onclick: () => editLyrics(id) }, l ? "Bearbeiten …" : "Hinzufügen / holen …"),
-        !l ? h("button", { class: "btn", onclick: () => fetchLyricsMany([id]) }, "Von LRCLIB holen") : "",
+        h("button", { class: "btn", onclick: () => editLyrics(id) }, l ? L("Bearbeiten …") : L("Hinzufügen / holen …")),
+        !l ? h("button", { class: "btn", onclick: () => fetchLyricsMany([id]) }, L("Von LRCLIB holen")) : "",
       ),
     );
   }).catch(() => {});
@@ -440,9 +441,9 @@ export function toggleLyricsPanel() {
     forId = t?.id ?? -1;
     shown = -2;
     head.replaceChildren(
-      h("span", { class: "lyr-title" }, t ? store.label(t) : "Nichts läuft"),
+      h("span", { class: "lyr-title" }, t ? store.label(t) : L("Nichts läuft")),
       h("span", { class: "spacer" }),
-      t ? h("button", { class: "btn", onclick: () => editLyrics(t.id) }, "Bearbeiten") : "",
+      t ? h("button", { class: "btn", onclick: () => editLyrics(t.id) }, L("Bearbeiten")) : "",
       h("button", { class: "btn", onclick: () => toggleLyricsPanel() }, "✕"),
     );
     list.replaceChildren(h("div", { class: "note" }, "…"));
@@ -452,7 +453,7 @@ export function toggleLyricsPanel() {
     list.replaceChildren(
       ...(lines.length
         ? lines.map((x) => h("div", { class: "lyr-line" + (x.t == null ? " plain" : ""), onclick: () => x.t != null && player.seekFrac(x.t / (player.duration || 1)) }, x.text || "♪"))
-        : [h("div", { class: "note" }, "Kein Songtext. ", t ? h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); editLyrics(t.id); } }, "Holen oder einfügen …") : "")]),
+        : [h("div", { class: "note" }, L("Kein Songtext. "), t ? h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); editLyrics(t.id); } }, L("Holen oder einfügen …")) : "")]),
     );
   };
   const tick = () => {

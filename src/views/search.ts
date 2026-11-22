@@ -5,6 +5,7 @@ import { TrackList } from "../tracklist";
 import { fmtDuration, h } from "../ui";
 import { trackMenu } from "./library";
 import { renderRuleRows } from "./playlist";
+import { L, LOCALE } from "../i18n";
 
 const KEY = "ml.adv";
 const fresh = (): SmartRules => ({ all: true, rules: [{ field: "artist", op: "contains", value: "", value2: "" }], sort: "artist", desc: false, limit: null });
@@ -18,10 +19,10 @@ export function searchView(): { el: HTMLElement; destroy: () => void } {
   } catch {
     rules = fresh();
   }
-  const list = new TrackList({ defaultSort: "artist", menu: (ids) => trackMenu(ids), columns: "library", emptyText: "Keine Titel passen zu den Regeln." });
+  const list = new TrackList({ defaultSort: "artist", menu: (ids) => trackMenu(ids), columns: "library", emptyText: L("Keine Titel passen zu den Regeln.") });
   const info = h("span", { class: "sub" });
   const box = h("div", {});
-  const allSel = h("select", {}, h("option", { value: "1", selected: rules.all }, "alle Regeln"), h("option", { value: "0", selected: !rules.all }, "mindestens eine Regel"));
+  const allSel = h("select", {}, h("option", { value: "1", selected: rules.all }, L("alle Regeln")), h("option", { value: "0", selected: !rules.all }, L("mindestens eine Regel")));
 
   /** Leere Textregeln ignorieren, damit „enthält ''“ nicht alles bzw. nichts findet */
   const active = (): Rule[] => rules.rules.filter((r) => r.value.trim() !== "" || r.value2.trim() !== "");
@@ -38,7 +39,7 @@ export function searchView(): { el: HTMLElement; destroy: () => void } {
       list.setIds(ids);
       player.queue = list.visibleIds;
       const dur = ids.reduce((a, id) => a + (store.tracks.get(id)?.duration ?? 0), 0);
-      info.textContent = `${ids.length.toLocaleString("de")} Titel · ${fmtDuration(dur)}`;
+      info.textContent = L("{0} Titel · {1}", ids.length.toLocaleString(LOCALE), fmtDuration(dur));
     }, 180);
   };
   allSel.addEventListener("change", () => { rules.all = allSel.value === "1"; refresh(); });
@@ -47,12 +48,12 @@ export function searchView(): { el: HTMLElement; destroy: () => void } {
 
   const unsub = store.on("tracks", refresh);
   const el = h("div", { style: { display: "contents" } },
-    h("div", { class: "head" }, h("h1", {}, "Erweiterte Suche"), info, h("div", { class: "spacer" }),
-      h("button", { class: "btn", onclick: () => { rules.rules.push({ field: "genre", op: "contains", value: "", value2: "" }); render(); } }, "+ Regel"),
-      h("button", { class: "btn", onclick: () => { rules = fresh(); allSel.value = "1"; render(); refresh(); } }, "Zurücksetzen"),
+    h("div", { class: "head" }, h("h1", {}, L("Erweiterte Suche")), info, h("div", { class: "spacer" }),
+      h("button", { class: "btn", onclick: () => { rules.rules.push({ field: "genre", op: "contains", value: "", value2: "" }); render(); } }, L("+ Regel")),
+      h("button", { class: "btn", onclick: () => { rules = fresh(); allSel.value = "1"; render(); refresh(); } }, L("Zurücksetzen")),
     ),
-    h("div", { class: "adv-rules" }, h("div", { class: "line", style: { marginTop: "0" } }, "Titel, die", allSel, "erfüllen:"), box,
-      h("div", { class: "note" }, "Wie bei smarten Playlisten – aber nur zum Anzeigen. Es wird keine Playlist angelegt.")),
+    h("div", { class: "adv-rules" }, h("div", { class: "line", style: { marginTop: "0" } }, L("Titel, die"), allSel, L("erfüllen:")), box,
+      h("div", { class: "note" }, L("Wie bei smarten Playlisten – aber nur zum Anzeigen. Es wird keine Playlist angelegt."))),
     list.el,
   );
   refresh();

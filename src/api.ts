@@ -129,6 +129,7 @@ export const api = {
   allowPlay: (path: string) => invoke<void>("allow_play", { path }),
   analyze: (ids: number[] | null, explicit = false) => invoke<number>("analyze", { ids, explicit }),
   analyzeQuiet: (ids: number[]) => invoke<number>("analyze_quiet", { ids }),
+  setLang: (lang: string) => invoke<void>("set_lang", { lang }),
   onDemandRoots: () => invoke<string[]>("on_demand_roots"),
   cancel: () => invoke<void>("cancel_task"),
   removeFromLibrary: (ids: number[]) => invoke<void>("remove_from_library", { ids }),

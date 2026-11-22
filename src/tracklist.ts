@@ -5,6 +5,7 @@ import { drawWave, waveElement } from "./waveform";
 import { albumLink, artistLinks, camelot, fmtTime, h, keyLabel, keyOrder, ext, type MenuItem, contextMenu, qualityText } from "./ui";
 import { renameFileDialog } from "./fileops";
 import { beginDrag, dropTarget } from "./dnd";
+import { L, LOCALE } from "./i18n";
 
 export type SortKey =
   | "pos" | "trackNo" | "title" | "artist" | "album" | "albumartist" | "genre" | "year" | "bpm" | "key" | "duration"
@@ -19,32 +20,32 @@ const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 /** Alle wählbaren Spalten (Reihenfolge = Reihenfolge im Menü) */
 const COLUMNS: Col[] = [
   { key: "pos", label: "#", width: "34px", num: true, render: (_t, p) => String(p + 1) },
-  { key: "trackNo", label: "Nr.", width: "44px", num: true, render: (t) => (t.trackNo ? (t.discNo && t.discNo > 1 ? `${t.discNo}-` : "") + t.trackNo : "") },
+  { key: "trackNo", label: L("Nr."), width: "44px", num: true, render: (t) => (t.trackNo ? (t.discNo && t.discNo > 1 ? `${t.discNo}-` : "") + t.trackNo : "") },
   {
-    key: "title", label: "Titel", width: "minmax(150px, 2fr)",
-    render: (t) => h("div", { style: { minWidth: "0" } }, h("div", { class: "t1" }, store.label(t)), h("div", { class: "t2" }, artistLinks(t.artist, "Unbekannter Künstler"))),
+    key: "title", label: L("Titel"), width: "minmax(150px, 2fr)",
+    render: (t) => h("div", { style: { minWidth: "0" } }, h("div", { class: "t1" }, store.label(t)), h("div", { class: "t2" }, artistLinks(t.artist, L("Unbekannter Künstler")))),
   },
-  { key: "artist", label: "Künstler", width: "minmax(100px, 1fr)", render: (t) => artistLinks(t.artist) },
+  { key: "artist", label: L("Künstler"), width: "minmax(100px, 1fr)", render: (t) => artistLinks(t.artist) },
   { key: "album", label: "Album", width: "minmax(100px, 1.2fr)", hideBelow: 700, render: (t) => albumLink(t.album) },
-  { key: "albumartist", label: "Albumkünstler", width: "minmax(100px, 1fr)", render: (t) => artistLinks(t.albumArtist) },
+  { key: "albumartist", label: L("Albumkünstler"), width: "minmax(100px, 1fr)", render: (t) => artistLinks(t.albumArtist) },
   { key: "genre", label: "Genre", width: "minmax(70px, 0.7fr)", hideBelow: 860, render: (t) => t.genre ?? "" },
-  { key: "year", label: "Jahr", width: "52px", num: true, render: (t) => t.year?.slice(0, 4) ?? "" },
+  { key: "year", label: L("Jahr"), width: "52px", num: true, render: (t) => t.year?.slice(0, 4) ?? "" },
   { key: "bpm", label: "BPM", width: "52px", num: true, render: (t) => (t.bpm ? t.bpm.toFixed(t.bpm % 1 ? 1 : 0) : "") },
-  { key: "key", label: "Tonart", width: "74px", render: (t) => h("span", { title: keyLabel(t.key) }, t.key ? `${camelot(t.key) || ""} ${t.key}`.trim() : "") },
-  { key: "duration", label: "Zeit", width: "50px", num: true, render: (t) => fmtTime(t.duration) },
-  { key: "bitrate", label: "Bitrate", width: "62px", num: true, render: (t) => (t.bitrate ? String(t.bitrate) : "") },
+  { key: "key", label: L("Tonart"), width: "74px", render: (t) => h("span", { title: keyLabel(t.key) }, t.key ? `${camelot(t.key) || ""} ${t.key}`.trim() : "") },
+  { key: "duration", label: L("Zeit"), width: "50px", num: true, render: (t) => fmtTime(t.duration) },
+  { key: "bitrate", label: L("Bitrate"), width: "62px", num: true, render: (t) => (t.bitrate ? String(t.bitrate) : "") },
   {
-    key: "quality", label: "Echt", width: "86px", num: true,
+    key: "quality", label: L("Echt"), width: "86px", num: true,
     render: (t) => h("span", { class: t.upscaled ? "q-up" : "", title: qualityText(t) }, qualityText(t, true)),
   },
   { key: "format", label: "Format", width: "58px", render: (t) => ext(t.path) },
-  { key: "samplerate", label: "kHz", width: "52px", num: true, render: (t) => (t.sampleRate ? (t.sampleRate / 1000).toLocaleString("de") : "") },
-  { key: "size", label: "Größe", width: "70px", num: true, render: (t) => fmtSizeShort(t.size) },
-  { key: "added", label: "Hinzugefügt", width: "92px", render: (t) => (t.added ? new Date(t.added * 1000).toLocaleDateString("de") : "") },
-  { key: "comment", label: "Kommentar", width: "minmax(80px, 1fr)", render: (t) => t.comment ?? "" },
-  { key: "filename", label: "Dateiname", width: "minmax(120px, 1.4fr)", render: (t) => fileName(t.path) },
-  { key: "path", label: "Pfad", width: "minmax(160px, 2fr)", render: (t) => h("span", { style: { fontFamily: "var(--mono)", fontSize: "11px" } }, t.path) },
-  { key: "wave", label: "Wellenform", width: "minmax(140px, 2.4fr)", render: () => "" },
+  { key: "samplerate", label: "kHz", width: "52px", num: true, render: (t) => (t.sampleRate ? (t.sampleRate / 1000).toLocaleString(LOCALE) : "") },
+  { key: "size", label: L("Größe"), width: "70px", num: true, render: (t) => fmtSizeShort(t.size) },
+  { key: "added", label: L("Hinzugefügt"), width: "92px", render: (t) => (t.added ? new Date(t.added * 1000).toLocaleDateString(LOCALE) : "") },
+  { key: "comment", label: L("Kommentar"), width: "minmax(80px, 1fr)", render: (t) => t.comment ?? "" },
+  { key: "filename", label: L("Dateiname"), width: "minmax(120px, 1.4fr)", render: (t) => fileName(t.path) },
+  { key: "path", label: L("Pfad"), width: "minmax(160px, 2fr)", render: (t) => h("span", { style: { fontFamily: "var(--mono)", fontSize: "11px" } }, t.path) },
+  { key: "wave", label: L("Wellenform"), width: "minmax(140px, 2.4fr)", render: () => "" },
 ];
 
 const DEFAULTS: Record<string, ColKey[]> = {
@@ -184,10 +185,10 @@ export class TrackList {
       };
     });
     items.push({ label: "", sep: true }, {
-      label: "Spaltenbreiten zurücksetzen",
+      label: L("Spaltenbreiten zurücksetzen"),
       action: () => { this.config.widths = {}; this.saveConfig(); this.updateCols(true); },
     }, {
-      label: "Standardspalten",
+      label: L("Standardspalten"),
       action: () => { this.config = { visible: [...(DEFAULTS[this.storageKey] ?? DEFAULTS.library)], widths: {} }; this.saveConfig(); this.updateCols(true); },
     });
     contextMenu(x, y, items);
@@ -305,7 +306,7 @@ export class TrackList {
               this.applySort();
             },
           },
-          h("span", { class: "hlabel" }, (c.key === "title" && titleShowsArtist ? "Künstler" : c.label) + (sorted ? (this.desc ? " ↓" : " ↑") : "")),
+          h("span", { class: "hlabel" }, (c.key === "title" && titleShowsArtist ? L("Künstler") : c.label) + (sorted ? (this.desc ? " ↓" : " ↑") : "")),
         );
         if (c.key !== "wave") {
           const rz = h("div", { class: "rz" });
@@ -348,8 +349,8 @@ export class TrackList {
         duration: () => t.duration,
         onSeek: (f) => player.play(id, f, this.view),
       });
-      if (!t.analyzed) wrap.appendChild(h("div", { class: "pending" }, "WIRD ANALYSIERT …"));
-      else if (t.analysisError) wrap.appendChild(h("div", { class: "pending", title: t.analysisError }, `KEINE WELLENFORM (${ext(t.path)})`));
+      if (!t.analyzed) wrap.appendChild(h("div", { class: "pending" }, L("WIRD ANALYSIERT …")));
+      else if (t.analysisError) wrap.appendChild(h("div", { class: "pending", title: t.analysisError }, L("KEINE WELLENFORM ({0})", ext(t.path))));
       const cells = this.cols.map((c) =>
         c.key === "wave" ? wrap : h("div", { class: "cell" + (c.num ? " num" : "") }, c.render(t, this.opts.reorderable ? this.ids.indexOf(id) : i)),
       );

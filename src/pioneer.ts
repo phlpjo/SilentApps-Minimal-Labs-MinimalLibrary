@@ -6,12 +6,13 @@ import { player } from "./player";
 import { store } from "./store";
 import { clear, fmtSize, h, holdButton, reportErrors, sheet, toast } from "./ui";
 import { analyzeIds } from "./main";
+import { L, pl, trMsg } from "./i18n";
 
 export const pioneerOn = () => !!store.settings.pioneer;
 
 /** Farben der Hot Cues (Index 1–8, 0 = keine) – gleiche Tabelle wie im Export */
 export const CUE_COLORS = ["", "#e62828", "#ff8c00", "#ffdc00", "#28e214", "#10b176", "#305aff", "#8832ff", "#ff34b5"];
-const COLOR_NAMES = ["keine", "Rot", "Orange", "Gelb", "Grün", "Türkis", "Blau", "Violett", "Pink"];
+const COLOR_NAMES = [L("keine"), L("Rot"), "Orange", L("Gelb"), L("Grün"), L("Türkis"), L("Blau"), L("Violett"), "Pink"];
 const letter = (k: number) => String.fromCharCode(64 + k);
 const fmtMs = (ms: number) => {
   const s = Math.max(0, ms) / 1000;
@@ -35,7 +36,7 @@ export function pioneerPanel(trackId: number): HTMLElement {
   let frames: Uint8Array = new Uint8Array();
   let cursor = 0; // ms
   let raf = 0;
-  const canvas = h("canvas", { class: "pio-wave", title: "Klicken: Position setzen · Mausrad: verschieben" }) as HTMLCanvasElement;
+  const canvas = h("canvas", { class: "pio-wave", title: L("Klicken: Position setzen · Mausrad: verschieben") }) as HTMLCanvasElement;
   const info = h("div", { class: "note" });
   const cueBox = h("div", {});
   const t = () => store.tracks.get(trackId);
@@ -146,18 +147,18 @@ export function pioneerPanel(trackId: number): HTMLElement {
   bpmInput.addEventListener("change", () => {
     const g = data?.grid;
     const v = Number(bpmInput.value);
-    if (g && v > 0) setGrid(v, g.downbeatMs, `Tempo ${v.toFixed(2)} BPM`);
+    if (g && v > 0) setGrid(v, g.downbeatMs, L("Tempo {0} BPM", v.toFixed(2)));
   });
 
   const gridButtons = h("div", { class: "pio-row" },
-    h("button", { class: "btn", title: "Taktanfang (Schlag 1) an die aktuelle Position legen", onclick: () => {
+    h("button", { class: "btn", title: L("Taktanfang (Schlag 1) an die aktuelle Position legen"), onclick: () => {
       const g = data?.grid;
-      setGrid(g?.bpm || t()?.bpm || 120, Math.round(pos() * 10) / 10, "Downbeat gesetzt");
-    } }, "Downbeat hier"),
-    h("button", { class: "btn", title: "Halbes Tempo", onclick: () => data?.grid && setGrid(data.grid.bpm / 2, data.grid.downbeatMs, "Halbes Tempo") }, "½"),
-    h("button", { class: "btn", title: "Doppeltes Tempo", onclick: () => data?.grid && setGrid(data.grid.bpm * 2, data.grid.downbeatMs, "Doppeltes Tempo") }, "×2"),
-    h("button", { class: "btn", title: "Grid 10 ms nach links", onclick: () => data?.grid && setGrid(data.grid.bpm, data.grid.downbeatMs - 10, "Grid verschoben") }, "◀"),
-    h("button", { class: "btn", title: "Grid 10 ms nach rechts", onclick: () => data?.grid && setGrid(data.grid.bpm, data.grid.downbeatMs + 10, "Grid verschoben") }, "▶"),
+      setGrid(g?.bpm || t()?.bpm || 120, Math.round(pos() * 10) / 10, L("Downbeat gesetzt"));
+    } }, L("Downbeat hier")),
+    h("button", { class: "btn", title: L("Halbes Tempo"), onclick: () => data?.grid && setGrid(data.grid.bpm / 2, data.grid.downbeatMs, L("Halbes Tempo")) }, "½"),
+    h("button", { class: "btn", title: L("Doppeltes Tempo"), onclick: () => data?.grid && setGrid(data.grid.bpm * 2, data.grid.downbeatMs, L("Doppeltes Tempo")) }, "×2"),
+    h("button", { class: "btn", title: L("Grid 10 ms nach links"), onclick: () => data?.grid && setGrid(data.grid.bpm, data.grid.downbeatMs - 10, L("Grid verschoben")) }, "◀"),
+    h("button", { class: "btn", title: L("Grid 10 ms nach rechts"), onclick: () => data?.grid && setGrid(data.grid.bpm, data.grid.downbeatMs + 10, L("Grid verschoben")) }, "▶"),
   );
 
   const renderCues = () => {
@@ -166,7 +167,7 @@ export function pioneerPanel(trackId: number): HTMLElement {
     const hot = h("div", { class: "pio-hot" },
       ...[1, 2, 3, 4, 5, 6, 7, 8].map((k) => {
         const q = cues.find((c) => c.kind === k);
-        const b = h("button", { class: "pio-cue" + (q ? " set" : ""), title: q ? `Hot Cue ${letter(k)} bei ${fmtMs(q.startMs)} – klicken: hinspringen` : `Hot Cue ${letter(k)} an der aktuellen Position setzen` }, letter(k));
+        const b = h("button", { class: "pio-cue" + (q ? " set" : ""), title: q ? L("Hot Cue {0} bei {1} – klicken: hinspringen", letter(k), fmtMs(q.startMs)) : L("Hot Cue {0} an der aktuellen Position setzen", letter(k)) }, letter(k));
         if (q?.color) b.style.borderColor = CUE_COLORS[q.color];
         b.addEventListener("click", () => {
           if (q) {
@@ -180,23 +181,23 @@ export function pioneerPanel(trackId: number): HTMLElement {
       }),
     );
     const rows = cues.map((q) => {
-      const comment = h("input", { type: "text", value: q.comment ?? "", placeholder: "Kommentar", style: { flex: "1", minWidth: "0" } }) as HTMLInputElement;
+      const comment = h("input", { type: "text", value: q.comment ?? "", placeholder: L("Kommentar"), style: { flex: "1", minWidth: "0" } }) as HTMLInputElement;
       comment.addEventListener("change", () => setCue({ ...q, comment: comment.value.trim() || null }));
-      const color = h("select", { title: "Farbe" }, ...COLOR_NAMES.map((n, i) => h("option", { value: String(i), selected: (q.color ?? 0) === i }, n))) as HTMLSelectElement;
+      const color = h("select", { title: L("Farbe") }, ...COLOR_NAMES.map((n, i) => h("option", { value: String(i), selected: (q.color ?? 0) === i }, n))) as HTMLSelectElement;
       color.addEventListener("change", () => setCue({ ...q, color: Number(color.value) || null }));
       return h("div", { class: "pio-cue-row" },
         h("span", { class: "pio-tag", style: { color: q.kind ? CUE_COLORS[q.color ?? 0] || "inherit" : "inherit" } }, q.kind ? letter(q.kind) : "M"),
         h("span", { class: "mono", style: { cursor: "pointer" }, onclick: () => { cursor = q.startMs; if (playingThis()) player.seekFrac(q.startMs / 1000 / (player.duration || 1)); } }, fmtMs(q.startMs) + (q.endMs ? ` → ${fmtMs(q.endMs)}` : "")),
         comment,
         q.kind ? color : "",
-        h("button", { class: "btn", title: "Löschen (Strg+Z macht es rückgängig)", onclick: async () => { await api.pioneerDeleteCue(trackId, q.id); store.emit("history"); load(); } }, "×"),
+        h("button", { class: "btn", title: L("Löschen (Strg+Z macht es rückgängig)"), onclick: async () => { await api.pioneerDeleteCue(trackId, q.id); store.emit("history"); load(); } }, "×"),
       );
     });
     cueBox.append(
       hot,
       h("div", { class: "pio-row" },
-        h("button", { class: "btn", onclick: () => setCue({ id: 0, kind: 0, startMs: Math.round(pos()), endMs: null, color: null, comment: null }) }, "Memory Cue hier"),
-        h("span", { class: "note" }, "Hot Cue: freie Taste setzt, belegte springt"),
+        h("button", { class: "btn", onclick: () => setCue({ id: 0, kind: 0, startMs: Math.round(pos()), endMs: null, color: null, comment: null }) }, L("Memory Cue hier")),
+        h("span", { class: "note" }, L("Hot Cue: freie Taste setzt, belegte springt")),
       ),
       ...rows,
     );
@@ -207,7 +208,7 @@ export function pioneerPanel(trackId: number): HTMLElement {
       data = await api.pioneerTrack(trackId);
     } catch (e) {
       clear(box);
-      box.append(h("div", { class: "note" }, String(e)));
+      box.append(h("div", { class: "note" }, trMsg(String(e))));
       return;
     }
     frames = decode(data.frames);
@@ -215,24 +216,24 @@ export function pioneerPanel(trackId: number): HTMLElement {
     if (!playingThis() && cursor === 0 && g) cursor = g.downbeatMs;
     bpmInput.value = g ? g.bpm.toFixed(2) : "";
     info.textContent = g
-      ? `${g.bpm.toFixed(2)} BPM · erster Downbeat ${fmtMs(g.downbeatMs)}${g.edited ? " · von Hand korrigiert" : ""}`
-      : "Noch kein Beatgrid.";
+      ? L("{0} BPM · erster Downbeat {1}{2}", g.bpm.toFixed(2), fmtMs(g.downbeatMs), g.edited ? L(" · von Hand korrigiert") : "")
+      : L("Noch kein Beatgrid.");
     renderCues();
     if (!data.frames) {
       box.replaceChildren(
-        h("div", { class: "section", style: { padding: "18px 0 6px" } }, "Pioneer: Beatgrid & Cues"),
-        h("div", { class: "note" }, "Für diesen Titel fehlt noch die Pioneer-Analyse (Beatgrid, Wellenform)."),
-        h("button", { class: "btn", onclick: () => analyzeIds([trackId], true) }, "Jetzt analysieren"),
+        h("div", { class: "section", style: { padding: "18px 0 6px" } }, L("Pioneer: Beatgrid & Cues")),
+        h("div", { class: "note" }, L("Für diesen Titel fehlt noch die Pioneer-Analyse (Beatgrid, Wellenform).")),
+        h("button", { class: "btn", onclick: () => analyzeIds([trackId], true) }, L("Jetzt analysieren")),
         cueBox,
       );
     }
   };
 
   box.append(
-    h("div", { class: "section", style: { padding: "18px 0 6px" } }, "Pioneer: Beatgrid & Cues"),
+    h("div", { class: "section", style: { padding: "18px 0 6px" } }, L("Pioneer: Beatgrid & Cues")),
     canvas,
     info,
-    h("div", { class: "pio-row" }, h("label", { class: "note" }, "Tempo"), bpmInput, h("span", { class: "note" }, "BPM")),
+    h("div", { class: "pio-row" }, h("label", { class: "note" }, L("Tempo")), bpmInput, h("span", { class: "note" }, "BPM")),
     gridButtons,
     cueBox,
   );
@@ -248,13 +249,13 @@ export function pioneerPanel(trackId: number): HTMLElement {
 /** Playlisten auf einen Stick für Pioneer DJ / AlphaTheta-Player exportieren */
 export async function pioneerExportDialog(preselect: number[]) {
   if (!pioneerOn()) {
-    toast("Pioneer-Export zuerst in den Einstellungen einschalten");
+    toast(L("Pioneer-Export zuerst in den Einstellungen einschalten"));
     return;
   }
   const checks = new Map<number, HTMLInputElement>();
-  const dest = h("input", { type: "text", value: localStorage.getItem("ml.pioneerDest") ?? "", placeholder: "Laufwerk, z. B. E:\\ oder /Volumes/USB", style: { width: "100%" } }) as HTMLInputElement;
+  const dest = h("input", { type: "text", value: localStorage.getItem("ml.pioneerDest") ?? "", placeholder: L("Laufwerk, z. B. E:\\ oder /Volumes/USB"), style: { width: "100%" } }) as HTMLInputElement;
   const conv = h("input", { type: "checkbox", checked: localStorage.getItem("ml.pioneerConvert") === "1" }) as HTMLInputElement;
-  const pv = h("div", { class: "note", style: { lineHeight: "1.6" } }, "Laufwerk und Playlisten wählen …");
+  const pv = h("div", { class: "note", style: { lineHeight: "1.6" } }, L("Laufwerk und Playlisten wählen …"));
   const opts = (): PioneerOptions => ({
     dest: dest.value.trim(),
     playlists: [...checks].filter(([, c]) => c.checked).map(([i]) => i),
@@ -264,7 +265,7 @@ export async function pioneerExportDialog(preselect: number[]) {
   const preview = async () => {
     const o = opts();
     if (!o.dest || !o.playlists.length) {
-      pv.textContent = "Laufwerk und Playlisten wählen …";
+      pv.textContent = L("Laufwerk und Playlisten wählen …");
       return;
     }
     const my = ++seq;
@@ -274,17 +275,17 @@ export async function pioneerExportDialog(preselect: number[]) {
       clear(pv);
       const line = (s: string, strong = false) => h("div", { style: strong ? { color: "var(--ink)" } : {} }, s);
       pv.append(
-        line(`${p.tracks} Titel · ${fmtSize(p.bytes)} · neu zu kopieren: ${p.toCopy} (${fmtSize(p.copyBytes)})`, true),
-        line(p.free !== null ? `Frei auf dem Laufwerk: ${fmtSize(p.free)}${p.copyBytes > p.free ? " – reicht nicht!" : ""}` : "Laufwerk nicht erreichbar"),
-        line(p.missingAnalysis.length ? `${p.missingAnalysis.length} Titel ohne Beatgrid/Wellenform – werden vor dem Export analysiert` : "Alle Titel analysiert"),
+        line(L("{0} Titel · {1} · neu zu kopieren: {2} ({3})", p.tracks, fmtSize(p.bytes), p.toCopy, fmtSize(p.copyBytes)), true),
+        line(p.free !== null ? L("Frei auf dem Laufwerk: {0}{1}", fmtSize(p.free), p.copyBytes > p.free ? L(" – reicht nicht!") : "") : L("Laufwerk nicht erreichbar")),
+        line(p.missingAnalysis.length ? L("{0} Titel ohne Beatgrid/Wellenform – werden vor dem Export analysiert", p.missingAnalysis.length) : L("Alle Titel analysiert")),
         p.unsupported.length
-          ? line(`${p.unsupported.length} Titel in Formaten, die die Player nicht abspielen (${[...new Set(p.unsupported.map((u) => u[2].toUpperCase()))].join(", ")}) – ${conv.checked ? (p.ffmpeg ? "werden nach MP3 umgewandelt" : "Umwandeln braucht ffmpeg (im Ripper laden) – werden übersprungen") : "werden übersprungen"}`, true)
+          ? line(L("{0} Titel in Formaten, die die Player nicht abspielen ({1}) – {2}", p.unsupported.length, [...new Set(p.unsupported.map((u) => u[2].toUpperCase()))].join(", "), conv.checked ? (p.ffmpeg ? L("werden nach MP3 umgewandelt") : L("Umwandeln braucht ffmpeg (im Ripper laden) – werden übersprungen")) : L("werden übersprungen")), true)
           : "",
-        p.duplicatesInPlaylists ? line(`${p.duplicatesInPlaylists}× kommt ein Titel in einer Playlist doppelt vor – die Player-Bibliothek speichert ihn dort nur einmal`) : "",
-        line(p.existingLibrary ? "Auf dem Laufwerk liegt schon eine Bibliothek (z. B. von rekordbox) – sie wird ergänzt, vorhandene Einträge bleiben unverändert." : "Auf dem Laufwerk wird eine neue Bibliothek angelegt."),
+        p.duplicatesInPlaylists ? line(L("{0}× kommt ein Titel in einer Playlist doppelt vor – die Player-Bibliothek speichert ihn dort nur einmal", p.duplicatesInPlaylists)) : "",
+        line(p.existingLibrary ? L("Auf dem Laufwerk liegt schon eine Bibliothek (z. B. von rekordbox) – sie wird ergänzt, vorhandene Einträge bleiben unverändert.") : L("Auf dem Laufwerk wird eine neue Bibliothek angelegt.")),
       );
     } catch (e) {
-      pv.textContent = String(e);
+      pv.textContent = trMsg(String(e));
     }
   };
   const plBox = h("div", { style: { maxHeight: "200px", overflowY: "auto" } },
@@ -292,36 +293,36 @@ export async function pioneerExportDialog(preselect: number[]) {
       const c = h("input", { type: "checkbox", checked: preselect.includes(p.id) }) as HTMLInputElement;
       c.addEventListener("change", preview);
       checks.set(p.id, c);
-      return h("div", {}, h("label", { class: "check", style: { padding: "4px 0" } }, c, (p.rules ? "◇ " : "") + p.name, h("span", { class: "sub" }, ` · ${p.count} Titel`)));
+      return h("div", {}, h("label", { class: "check", style: { padding: "4px 0" } }, c, (p.rules ? "◇ " : "") + p.name, h("span", { class: "sub" }, L(" · {0} Titel", p.count))));
     }),
   );
   dest.addEventListener("change", preview);
   conv.addEventListener("change", () => { localStorage.setItem("ml.pioneerConvert", conv.checked ? "1" : "0"); preview(); });
-  const s = sheet("Export für Pioneer DJ / AlphaTheta-Player (OneLibrary)", h("div", {},
-    h("div", { class: "note" }, "Für CDJ-3000, CDJ-3000X, XDJ-AZ, OPUS-QUAD, OMNIS-DUO und weitere OneLibrary-Geräte. Kopiert Musik, Beatgrids, Wellenformen, Cues und Playlisten auf den Stick. Ältere Player, die nur das klassische Format lesen, werden nicht unterstützt."),
-    h("div", { class: "card", style: { marginTop: "12px" } }, h("h3", {}, "Playlisten"), plBox),
-    h("div", { class: "card" }, h("h3", {}, "Laufwerk"),
+  const s = sheet(L("Export für Pioneer DJ / AlphaTheta-Player (OneLibrary)"), h("div", {},
+    h("div", { class: "note" }, L("Für CDJ-3000, CDJ-3000X, XDJ-AZ, OPUS-QUAD, OMNIS-DUO und weitere OneLibrary-Geräte. Kopiert Musik, Beatgrids, Wellenformen, Cues und Playlisten auf den Stick. Ältere Player, die nur das klassische Format lesen, werden nicht unterstützt.")),
+    h("div", { class: "card", style: { marginTop: "12px" } }, h("h3", {}, L("Playlisten")), plBox),
+    h("div", { class: "card" }, h("h3", {}, L("Laufwerk")),
       h("div", { class: "line" }, h("div", { class: "grow" }, dest),
-        h("button", { class: "btn", onclick: async () => { const d = await open({ directory: true }); if (d) { dest.value = d as string; preview(); } } }, "Wählen …"))),
-    h("div", { class: "line" }, h("label", { class: "check" }, conv, "Nicht abspielbare Formate mit ffmpeg nach MP3 (320 kbit/s) umwandeln statt überspringen")),
-    h("div", { class: "card" }, h("h3", {}, "Vorschau"), pv),
+        h("button", { class: "btn", onclick: async () => { const d = await open({ directory: true }); if (d) { dest.value = d as string; preview(); } } }, L("Wählen …")))),
+    h("div", { class: "line" }, h("label", { class: "check" }, conv, L("Nicht abspielbare Formate mit ffmpeg nach MP3 (320 kbit/s) umwandeln statt überspringen"))),
+    h("div", { class: "card" }, h("h3", {}, L("Vorschau")), pv),
     h("div", { class: "foot" },
-      h("button", { class: "btn", onclick: () => xmlDialog(opts().playlists) }, "rekordbox-XML speichern …"),
+      h("button", { class: "btn", onclick: () => xmlDialog(opts().playlists) }, L("rekordbox-XML speichern …")),
       h("span", { class: "spacer" }),
-      h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"),
-      holdButton("Exportieren", async () => {
+      h("button", { class: "btn", onclick: () => s.close() }, L("Abbrechen")),
+      holdButton(L("Exportieren"), async () => {
         const o = opts();
-        if (!o.dest || !o.playlists.length) return toast("Laufwerk und Playlisten wählen");
+        if (!o.dest || !o.playlists.length) return toast(L("Laufwerk und Playlisten wählen"));
         localStorage.setItem("ml.pioneerDest", o.dest);
         s.close();
         try {
           const r = await api.pioneerExport(o);
-          reportErrors(r.errors, `Export fertig: ${r.tracks} Titel, ${r.playlists} Playlist${r.playlists === 1 ? "" : "en"}` +
-            `${r.copied ? `, ${r.copied} kopiert` : ""}${r.converted ? `, ${r.converted} umgewandelt` : ""}${r.skipped ? `, ${r.skipped} übersprungen` : ""}`);
+          reportErrors(r.errors, L("Export fertig: {0} Titel, {1} Playlist{2}", r.tracks, r.playlists, pl(r.playlists, "en")) +
+            `${r.copied ? L(", {0} kopiert", r.copied) : ""}${r.converted ? L(", {0} umgewandelt", r.converted) : ""}${r.skipped ? L(", {0} übersprungen", r.skipped) : ""}`);
         } catch (e) {
           toast(String(e), 9000);
         }
-      }, "halten"),
+      }, L("halten")),
     ),
   ), { wide: true });
   preview();
@@ -329,12 +330,12 @@ export async function pioneerExportDialog(preselect: number[]) {
 
 /** rekordbox-XML (Rückfallebene) */
 export async function xmlDialog(playlists: number[]) {
-  if (!playlists.length) return toast("Mindestens eine Playlist wählen");
+  if (!playlists.length) return toast(L("Mindestens eine Playlist wählen"));
   const file = await save({ defaultPath: "rekordbox.xml", filters: [{ name: "rekordbox xml", extensions: ["xml"] }] });
   if (!file) return;
   try {
     await api.pioneerXml(playlists, file);
-    toast("rekordbox-XML gespeichert. In rekordbox unter Einstellungen → Erweitert → rekordbox xml einbinden.", 9000);
+    toast(L("rekordbox-XML gespeichert. In rekordbox unter Einstellungen → Erweitert → rekordbox xml einbinden."), 9000);
   } catch (e) {
     toast(String(e));
   }

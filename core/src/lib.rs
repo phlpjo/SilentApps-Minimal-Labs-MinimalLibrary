@@ -43,3 +43,10 @@ pub fn now() -> i64 {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
+
+/// Sprache der Oberfläche (für Texte, die der Kern selbst erzeugt, z. B. Ordnernamen beim Sortieren)
+pub static ENGLISH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn english() -> bool {
+    ENGLISH.load(std::sync::atomic::Ordering::Relaxed)
+}

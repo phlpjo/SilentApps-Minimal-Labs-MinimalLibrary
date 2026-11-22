@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { api, type DupCheck } from "./api";
 import { store } from "./store";
 import { basename, h, reportErrors, sheet, toast } from "./ui";
+import { L, pl } from "./i18n";
 
 const normPath = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 
@@ -14,7 +15,7 @@ export function rootOf(path: string, roots = store.settings.roots): string | nul
   return best;
 }
 
-const REASON: Record<string, string> = { metadata: "gleiche Tags", filename: "ähnlicher Dateiname", audio: "gleicher Klang" };
+const REASON: Record<string, string> = { metadata: L("gleiche Tags"), filename: L("ähnlicher Dateiname"), audio: L("gleicher Klang") };
 
 /**
  * Vor dem Kopieren/Verschieben in einen anderen Musikordner (oder Tab): gibt es die Titel dort schon?
@@ -42,18 +43,18 @@ export async function dupGate(ids: number[], dir: string, tab?: string): Promise
       const t = store.tracks.get(x.trackId);
       const why = x.reasons.map((r) => REASON[r] ?? r).join(", ") + (x.audioSimilarity ? ` (${Math.round(x.audioSimilarity * 100)} %)` : "");
       return h("div", { class: "dup-hit" },
-        h("div", {}, t ? `${t.artist ?? "?"} – ${store.label(t)}` : `Titel ${x.trackId}`),
-        ...x.matches.map((m) => h("div", { class: "note", style: { fontFamily: "var(--mono)", fontSize: "11px" } }, `schon da: ${m.path}`)),
+        h("div", {}, t ? `${t.artist ?? "?"} – ${store.label(t)}` : L("Titel {0}", x.trackId)),
+        ...x.matches.map((m) => h("div", { class: "note", style: { fontFamily: "var(--mono)", fontSize: "11px" } }, L("schon da: {0}", m.path))),
         h("div", { class: "note" }, why),
       );
     });
-    const s = sheet(`${dupIds.size} von ${ids.length} Titel${ids.length === 1 ? "" : "n"} gibt es am Ziel schon`, h("div", {},
-      h("div", { style: { maxHeight: "46vh", overflowY: "auto" } }, ...rows, hits.length > 50 ? h("div", { class: "note" }, `… und ${hits.length - 50} weitere`) : ""),
+    const s = sheet(L("{0} von {1} Titel{2} gibt es am Ziel schon", dupIds.size, ids.length, pl(ids.length, "n")), h("div", {},
+      h("div", { style: { maxHeight: "46vh", overflowY: "auto" } }, ...rows, hits.length > 50 ? h("div", { class: "note" }, L("… und {0} weitere", hits.length - 50)) : ""),
       h("div", { class: "foot" },
-        h("button", { class: "btn", onclick: () => finish(null) }, "Abbrechen"),
+        h("button", { class: "btn", onclick: () => finish(null) }, L("Abbrechen")),
         h("span", { class: "spacer" }),
-        h("button", { class: "btn", onclick: () => finish(ids) }, "Trotzdem alle"),
-        h("button", { class: "btn primary", onclick: () => finish(ids.filter((i) => !dupIds.has(i))) }, "Doppelte überspringen"),
+        h("button", { class: "btn", onclick: () => finish(ids) }, L("Trotzdem alle")),
+        h("button", { class: "btn primary", onclick: () => finish(ids.filter((i) => !dupIds.has(i))) }, L("Doppelte überspringen")),
       ),
     ), { onClose: () => finish(null) });
   });
@@ -71,11 +72,11 @@ export async function moveTracksTo(ids: number[], dir: string, copy = false) {
   if (crossing) {
     const ok = await dupGate(ids, dir);
     if (!ok) return;
-    if (!ok.length) return toast("Nichts übertragen – alle Titel gibt es am Ziel schon");
+    if (!ok.length) return toast(L("Nichts übertragen – alle Titel gibt es am Ziel schon"));
     ids = ok;
   }
   const r = await api.moveTracksTo(ids, dir, copy).catch((e) => ({ moved: 0, errors: [String(e)], batchId: 0 }));
-  reportErrors(r.errors, `${r.moved} Datei${r.moved === 1 ? "" : "en"} ${copy ? "kopiert" : "verschoben"} → ${basename(dir)}`);
+  reportErrors(r.errors, L("{0} Datei{1} {2} → {3}", r.moved, pl(r.moved, "en"), copy ? L("kopiert") : L("verschoben"), basename(dir)));
   // Ziel außerhalb der Musikordner → als Musikordner aufnehmen
   if (!store.settings.roots.some((root) => dir.toLowerCase().startsWith(root.toLowerCase()))) {
     await store.saveSettings({ roots: [...store.settings.roots, dir] });
@@ -107,14 +108,14 @@ export function renameFileDialog(id: number) {
     s.close();
     if (!name || name === stem) return;
     const r = await api.renameTrack(id, name).catch((e) => ({ moved: 0, errors: [String(e)], batchId: 0 }));
-    reportErrors(r.errors, "Umbenannt");
+    reportErrors(r.errors, L("Umbenannt"));
     await store.refreshTracks([id]);
     store.emit("dirs");
   };
   inp.addEventListener("keydown", (e) => e.key === "Enter" && go());
-  const s = sheet("Datei umbenennen", h("div", {},
+  const s = sheet(L("Datei umbenennen"), h("div", {},
     h("div", { class: "line" }, h("div", { class: "grow" }, inp), h("span", { class: "sub" }, extn)),
-    h("div", { class: "foot" }, h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"), h("button", { class: "btn primary", onclick: go }, "Umbenennen")),
+    h("div", { class: "foot" }, h("button", { class: "btn", onclick: () => s.close() }, L("Abbrechen")), h("button", { class: "btn primary", onclick: go }, L("Umbenennen"))),
   ));
   setTimeout(() => inp.select());
 }

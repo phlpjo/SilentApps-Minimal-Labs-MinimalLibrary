@@ -23,7 +23,12 @@ pub struct PlannedMove {
 }
 
 fn field(t: &Track, name: &str) -> String {
-    let unknown_artist = "Unbekannter Künstler";
+    let en = crate::english();
+    let unknown_artist = if en {
+        "Unknown Artist"
+    } else {
+        "Unbekannter Künstler"
+    };
     let v = match name {
         "artist" => t.artist.clone().unwrap_or_else(|| unknown_artist.into()),
         "albumartist" => t
@@ -31,20 +36,28 @@ fn field(t: &Track, name: &str) -> String {
             .clone()
             .or_else(|| t.artist.clone())
             .unwrap_or_else(|| unknown_artist.into()),
-        "album" => t
-            .album
-            .clone()
-            .unwrap_or_else(|| "Unbekanntes Album".into()),
+        "album" => t.album.clone().unwrap_or_else(|| {
+            if en {
+                "Unknown Album"
+            } else {
+                "Unbekanntes Album"
+            }
+            .into()
+        }),
         "title" => t.title.clone().unwrap_or_else(|| {
             Path::new(&t.path)
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default()
         }),
-        "genre" => t
-            .genre
-            .clone()
-            .unwrap_or_else(|| "Unbekanntes Genre".into()),
+        "genre" => t.genre.clone().unwrap_or_else(|| {
+            if en {
+                "Unknown Genre"
+            } else {
+                "Unbekanntes Genre"
+            }
+            .into()
+        }),
         "year" => t
             .year
             .as_deref()

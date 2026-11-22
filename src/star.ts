@@ -2,6 +2,7 @@
 import { api } from "./api";
 import { store } from "./store";
 import { toast } from "./ui";
+import { L } from "./i18n";
 
 let starred = new Set<number>();
 
@@ -18,7 +19,7 @@ export async function toggleStar(ids: number[]) {
     const on = await api.starToggle(ids);
     await loadStars();
     await store.loadPlaylists();
-    toast(on ? (ids.length > 1 ? `★ ${ids.length} Titel markiert` : "★ markiert") : "Stern entfernt", 1800);
+    toast(on ? (ids.length > 1 ? L("★ {0} Titel markiert", ids.length) : L("★ markiert")) : L("Stern entfernt"), 1800);
   } catch (e) {
     toast(String(e));
   }

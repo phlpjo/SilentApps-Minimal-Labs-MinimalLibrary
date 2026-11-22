@@ -5,6 +5,7 @@ import { player } from "../player";
 import { store } from "../store";
 import { clear, fmtTime, h, reportErrors, toast } from "../ui";
 import { analyzeIds, nav } from "../main";
+import { L, trMsg } from "../i18n";
 
 // Bleibt beim Wechseln der Ansicht erhalten
 let lastName = "";
@@ -47,17 +48,17 @@ listen<RipEvent>("rip", (e) => {
 export const ripRunning = () => running;
 
 export function ripperView(): { el: HTMLElement; destroy: () => void } {
-  const url = h("textarea", { placeholder: "Link einfügen: YouTube, SoundCloud, Spotify – Titel, Album oder Playlist. Mehrere Links: einer pro Zeile.", rows: 2, spellcheck: false, style: { width: "100%", resize: "vertical" } }) as HTMLTextAreaElement;
+  const url = h("textarea", { placeholder: L("Link einfügen: YouTube, SoundCloud, Spotify – Titel, Album oder Playlist. Mehrere Links: einer pro Zeile."), rows: 2, spellcheck: false, style: { width: "100%", resize: "vertical" } }) as HTMLTextAreaElement;
   url.value = urlText;
   url.addEventListener("input", () => { urlText = url.value; saveList(); });
   const toolsBox = h("div", {});
   const listBox = h("div", {});
   const info = h("span", { class: "sub" });
   const s = store.settings;
-  const defaultDir = s.ripDir || (s.roots[0] ? s.roots[0].replace(/[\\/]+$/, "") + (s.roots[0].includes("\\") ? "\\" : "/") + "Downloads" : "");
-  const dir = h("input", { type: "text", value: defaultDir, placeholder: "Zielordner", style: { width: "100%" } });
+  const defaultDir = s.ripDir || (s.roots[0] ? s.roots[0].replace(/[\\/]+$/, "") + (s.roots[0].includes("\\") ? "\\" : "/") + L("Downloads") : "");
+  const dir = h("input", { type: "text", value: defaultDir, placeholder: L("Zielordner"), style: { width: "100%" } });
   dir.addEventListener("change", () => store.saveSettings({ ripDir: dir.value.trim() || null }));
-  const fmt = h("select", {}, h("option", { value: "mp3", selected: s.ripFormat !== "original" }, "MP3 320 kbit/s"), h("option", { value: "original", selected: s.ripFormat === "original" }, "Original (ohne Umwandlung)"));
+  const fmt = h("select", {}, h("option", { value: "mp3", selected: s.ripFormat !== "original" }, L("MP3 320 kbit/s")), h("option", { value: "original", selected: s.ripFormat === "original" }, L("Original (ohne Umwandlung)")));
   fmt.addEventListener("change", () => store.saveSettings({ ripFormat: fmt.value as "mp3" | "original" }));
   const subfolder = h("input", { type: "checkbox", checked: localStorage.getItem("ml.ripSub") !== "0" });
   subfolder.addEventListener("change", () => localStorage.setItem("ml.ripSub", subfolder.checked ? "1" : "0"));
@@ -74,25 +75,25 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
       }
       toolsBox.append(
         h("div", { class: "line" },
-          h("span", { class: "note" }, `yt-dlp ${t.ytdlp} · ffmpeg bereit`),
-          h("button", { class: "btn", onclick: async () => { toast("Aktualisiere yt-dlp …"); toast(await api.ripUpdate().catch((e) => String(e))); renderTools(); } }, "yt-dlp aktualisieren"),
+          h("span", { class: "note" }, L("yt-dlp {0} · ffmpeg bereit", t.ytdlp)),
+          h("button", { class: "btn", onclick: async () => { toast(L("Aktualisiere yt-dlp …")); toast(await api.ripUpdate().catch((e) => String(e))); renderTools(); } }, L("yt-dlp aktualisieren")),
         ),
       );
     } else {
       toolsBox.append(
-        h("div", { class: "note" }, "Für den Ripper braucht die App zwei freie Werkzeuge: yt-dlp (lädt die Audiospur) und ffmpeg (wandelt um). Einmalig ca. 90 MB."),
+        h("div", { class: "note" }, L("Für den Ripper braucht die App zwei freie Werkzeuge: yt-dlp (lädt die Audiospur) und ffmpeg (wandelt um). Einmalig ca. 90 MB.")),
         h("div", { class: "line" }, h("button", {
           class: "btn primary",
           onclick: async () => {
             try {
               await api.ripInstall();
-              toast("Werkzeuge installiert");
+              toast(L("Werkzeuge installiert"));
             } catch (e) {
               toast(String(e), 8000);
             }
             renderTools();
           },
-        }, "Werkzeuge installieren")),
+        }, L("Werkzeuge installieren"))),
       );
     }
   };
@@ -100,12 +101,12 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
   const renderList = () => {
     clear(listBox);
     if (!lastEntries.length) {
-      listBox.append(h("div", { class: "empty" }, "Link einfügen und ", h("b", {}, "Laden"), " klicken. Titel, die schon in deiner Bibliothek sind, werden markiert und nicht angehakt."));
+      listBox.append(h("div", { class: "empty" }, L("Link einfügen und "), h("b", {}, L("Laden")), L(" klicken. Titel, die schon in deiner Bibliothek sind, werden markiert und nicht angehakt.")));
       info.textContent = "";
       return;
     }
     const known = lastEntries.filter((e) => e.inLibrary).length;
-    info.textContent = `${lastName} · ${lastEntries.length} Titel${known ? ` · ${known} schon in der Bibliothek` : ""} · ${checked.size} ausgewählt`;
+    info.textContent = L("{0} · {1} Titel{2} · {3} ausgewählt", lastName, lastEntries.length, known ? L(" · {0} schon in der Bibliothek", known) : "", checked.size);
     const all = h("input", { type: "checkbox", checked: checked.size === lastEntries.length });
     all.addEventListener("change", () => {
       checked.clear();
@@ -119,20 +120,20 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
         if (box.checked) checked.add(e.index);
         else checked.delete(e.index);
         saveList();
-        info.textContent = info.textContent!.replace(/\d+ ausgewählt$/, `${checked.size} ausgewählt`);
+        info.textContent = info.textContent!.replace(new RegExp("\\d+ " + L("ausgewählt") + "$"), checked.size + " " + L("ausgewählt"));
       });
       const st = states.get(e.index);
       const status = st
         ? st.stage === "done"
-          ? h("span", { style: { color: "var(--ink)" } }, "✓ in der Bibliothek")
+          ? h("span", { style: { color: "var(--ink)" } }, L("✓ in der Bibliothek"))
           : st.stage === "error"
-            ? h("span", { class: "err", style: { margin: "0", display: "inline" }, title: st.message }, "Fehler: " + st.message.slice(0, 60))
-            : h("span", {}, st.stage === "convert" ? "wandelt um …" : `${Math.round(st.percent)} %`)
+            ? h("span", { class: "err", style: { margin: "0", display: "inline" }, title: trMsg(st.message) }, L("Fehler: ") + trMsg(st.message).slice(0, 60))
+            : h("span", {}, st.stage === "convert" ? L("wandelt um …") : `${Math.round(st.percent)} %`)
         : e.inLibrary
           ? h("span", {
-              class: "known", title: "Klick: in der Bibliothek anspielen",
+              class: "known", title: L("Klick: in der Bibliothek anspielen"),
               onclick: () => player.play(e.inLibrary![0], 0.3),
-            }, "schon da: " + e.inLibrary[1])
+            }, L("schon da: ") + e.inLibrary[1])
           : "";
       return h("tr", { class: e.inLibrary && !st ? "is-known" : "" },
         h("td", {}, box),
@@ -145,7 +146,7 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
     listBox.append(
       h("table", { class: "grid fixed rip" },
         h("colgroup", {}, h("col", { style: { width: "34px" } }), h("col", {}), h("col", { style: { width: "90px" } }), h("col", { style: { width: "56px" } }), h("col", { style: { width: "34%" } })),
-        h("thead", {}, h("tr", {}, h("th", {}, all), h("th", {}, "Titel"), h("th", {}, "Quelle"), h("th", {}, "Zeit"), h("th", {}, "Status"))),
+        h("thead", {}, h("tr", {}, h("th", {}, all), h("th", {}, L("Titel")), h("th", {}, L("Quelle")), h("th", {}, L("Zeit")), h("th", {}, L("Status")))),
         h("tbody", {}, ...rows),
       ),
     );
@@ -153,9 +154,9 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
 
   const load = async () => {
     const links = url.value.split(/\s+/).map((x) => x.trim()).filter((x) => x.startsWith("http"));
-    if (!links.length) return toast("Bitte einen Link einfügen");
-    if (running) return toast("Erst den laufenden Download abwarten oder abbrechen");
-    info.textContent = "lese Link …";
+    if (!links.length) return toast(L("Bitte einen Link einfügen"));
+    if (running) return toast(L("Erst den laufenden Download abwarten oder abbrechen"));
+    info.textContent = L("lese Link …");
     const names: string[] = lastName ? [lastName] : [];
     const entries: RipEntry[] = [...lastEntries];
     let next = entries.reduce((m, e) => Math.max(m, e.index + 1), 0);
@@ -170,7 +171,7 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
           entries.push({ ...e, index: next });
           fresh.push(next++);
         }
-        if (l.includes("spotify") && r.entries.length >= 100) toast("Spotify zeigt ohne Konto höchstens 100 Titel einer Playlist an.", 7000);
+        if (l.includes("spotify") && r.entries.length >= 100) toast(L("Spotify zeigt ohne Konto höchstens 100 Titel einer Playlist an."), 7000);
       } catch (e) {
         toast(`${l}\n${e}`, 8000);
       }
@@ -184,9 +185,9 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
 
   const download = async () => {
     const list = lastEntries.filter((e) => checked.has(e.index));
-    if (running) return toast("Download läuft schon");
-    if (!list.length) return toast("Nichts ausgewählt");
-    if (!dir.value.trim()) return toast("Zielordner wählen");
+    if (running) return toast(L("Download läuft schon"));
+    if (!list.length) return toast(L("Nichts ausgewählt"));
+    if (!dir.value.trim()) return toast(L("Zielordner wählen"));
     let target = dir.value.trim();
     if (subfolder.checked && lastEntries.length > 1 && lastName) {
       const safe = lastName.replace(/[<>:"/\\|?*]/g, "_").slice(0, 80).trim();
@@ -194,10 +195,10 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
     }
     running = true;
     renderList();
-    toast(`${list.length} Titel werden geladen – du kannst den Ripper verlassen, es läuft im Hintergrund weiter.`, 5000);
+    toast(L("{0} Titel werden geladen – du kannst den Ripper verlassen, es läuft im Hintergrund weiter.", list.length), 5000);
     try {
       const r = await api.ripDownload(list, target, fmt.value as "mp3" | "original");
-      reportErrors(r.errors, `${r.ids.length} Titel heruntergeladen`);
+      reportErrors(r.errors, L("{0} Titel heruntergeladen", r.ids.length));
       if (!store.settings.roots.some((root) => target.toLowerCase().startsWith(root.toLowerCase()))) {
         await store.saveSettings({ roots: [...store.settings.roots, dir.value.trim()] });
       }
@@ -228,33 +229,33 @@ export function ripperView(): { el: HTMLElement; destroy: () => void } {
   const el = h("div", { style: { display: "contents" } },
     h("div", { class: "head" }, h("h1", {}, "Ripper"), info),
     h("div", { class: "view-scroll" },
-      h("div", { class: "card" }, h("h3", {}, "Link"),
+      h("div", { class: "card" }, h("h3", {}, L("Link")),
         url,
         h("div", { class: "line" },
-          h("button", { class: "btn primary", onclick: load }, "Laden"),
+          h("button", { class: "btn primary", onclick: load }, L("Laden")),
           h("button", { class: "btn", onclick: () => {
-            if (running) return toast("Download läuft noch");
+            if (running) return toast(L("Download läuft noch"));
             lastName = ""; lastEntries = []; checked.clear(); states.clear(); urlText = ""; url.value = "";
             saveList();
             renderList();
-          } }, "Liste leeren"),
+          } }, L("Liste leeren")),
           h("span", { class: "spacer" }),
-          h("span", { class: "note" }, "YouTube · YouTube Music · SoundCloud · Spotify · Bandcamp · Mixcloud u. v. m."),
+          h("span", { class: "note" }, L("YouTube · YouTube Music · SoundCloud · Spotify · Bandcamp · Mixcloud u. v. m.")),
         ),
       ),
       h("div", { class: "card" }, listBox),
-      h("div", { class: "card" }, h("h3", {}, "Speichern"),
-        h("div", { class: "line" }, h("div", { class: "grow" }, dir), h("button", { class: "btn", onclick: async () => { const d = await open({ directory: true }); if (d) { dir.value = d as string; store.saveSettings({ ripDir: dir.value }); } } }, "Wählen …")),
-        h("div", { class: "line" }, fmt, h("label", { class: "check" }, subfolder, "Playlists in eigenen Unterordner"),
+      h("div", { class: "card" }, h("h3", {}, L("Speichern")),
+        h("div", { class: "line" }, h("div", { class: "grow" }, dir), h("button", { class: "btn", onclick: async () => { const d = await open({ directory: true }); if (d) { dir.value = d as string; store.saveSettings({ ripDir: dir.value }); } } }, L("Wählen …"))),
+        h("div", { class: "line" }, fmt, h("label", { class: "check" }, subfolder, L("Playlists in eigenen Unterordner")),
           h("span", { class: "spacer" }),
-          h("button", { class: "btn", onclick: () => api.cancel() }, "Abbrechen"),
-          h("button", { class: "btn primary", onclick: download }, "Ausgewählte herunterladen"),
+          h("button", { class: "btn", onclick: () => api.cancel() }, L("Abbrechen")),
+          h("button", { class: "btn primary", onclick: download }, L("Ausgewählte herunterladen")),
         ),
-        h("div", { class: "note" }, "Titel bekommen saubere Tags (Künstler, Titel, bei Spotify auch Album) und das Vorschaubild als Cover, werden in die Bibliothek aufgenommen und analysiert. Spotify-Titel werden über die YouTube-Suche geladen – bitte kurz reinhören, ob die richtige Version erwischt wurde. ",
-          h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); nav("duplicates"); } }, "Duplikate prüfen"), "."),
+        h("div", { class: "note" }, L("Titel bekommen saubere Tags (Künstler, Titel, bei Spotify auch Album) und das Vorschaubild als Cover, werden in die Bibliothek aufgenommen und analysiert. Spotify-Titel werden über die YouTube-Suche geladen – bitte kurz reinhören, ob die richtige Version erwischt wurde. "),
+          h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); nav("duplicates"); } }, L("Duplikate prüfen")), "."),
       ),
-      h("div", { class: "card" }, h("h3", {}, "Werkzeuge"), toolsBox,
-        h("div", { class: "note", style: { marginTop: "8px" } }, "Lade nur Inhalte herunter, für die du die Rechte hast – z. B. eigene Uploads, freie Lizenzen oder Titel, die der Künstler zum Download anbietet."),
+      h("div", { class: "card" }, h("h3", {}, L("Werkzeuge")), toolsBox,
+        h("div", { class: "note", style: { marginTop: "8px" } }, L("Lade nur Inhalte herunter, für die du die Rechte hast – z. B. eigene Uploads, freie Lizenzen oder Titel, die der Künstler zum Download anbietet.")),
       ),
     ),
   );

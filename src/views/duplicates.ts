@@ -6,8 +6,9 @@ import { clear, contextMenu, ext, fmtSize, fmtTime, h, holdButton, reportErrors,
 import { analyzeIds, nav } from "../main";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { SHOW_IN } from "../platform";
+import { L, pl, trMsg } from "../i18n";
 
-const REASON: Record<string, string> = { metadata: "Metadaten", filename: "Dateiname", audio: "Audio" };
+const REASON: Record<string, string> = { metadata: L("Metadaten"), filename: L("Dateiname"), audio: L("Audio") };
 
 // Ergebnis bleibt beim Wechseln der Ansicht erhalten
 let lastGroups: DupGroup[] | null = null;
@@ -31,13 +32,13 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
     const pending = open.length - cloud.length;
     clear(hint);
     if (modes.audio.checked && pending) {
-      hint.append(`${pending} Titel sind noch nicht analysiert – für sie gibt es noch keinen Audio-Fingerabdruck. `,
-        h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); analyzeIds(null); } }, "Jetzt analysieren"));
+      hint.append(L("{0} Titel sind noch nicht analysiert – für sie gibt es noch keinen Audio-Fingerabdruck. ", pending),
+        h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); analyzeIds(null); } }, L("Jetzt analysieren")));
     }
     if (modes.audio.checked && cloud.length) {
       if (pending) hint.append(h("br"));
-      hint.append(`${cloud.length} Titel aus Cloud-Ordnern (nur bei Bedarf) haben noch keinen Fingerabdruck. `,
-        h("a", { href: "#", style: { color: "inherit" }, title: "Lädt diese Titel vom Cloud-Laufwerk herunter", onclick: (e: Event) => { e.preventDefault(); analyzeIds(cloud.map((t) => t.id), true); } }, "Trotzdem analysieren (lädt herunter)"));
+      hint.append(L("{0} Titel aus Cloud-Ordnern (nur bei Bedarf) haben noch keinen Fingerabdruck. ", cloud.length),
+        h("a", { href: "#", style: { color: "inherit" }, title: L("Lädt diese Titel vom Cloud-Laufwerk herunter"), onclick: (e: Event) => { e.preventDefault(); analyzeIds(cloud.map((t) => t.id), true); } }, L("Trotzdem analysieren (lädt herunter)")));
     }
   };
 
@@ -45,14 +46,14 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
     localStorage.setItem("ml.dup.m", modes.metadata.checked ? "1" : "0");
     localStorage.setItem("ml.dup.f", modes.filename.checked ? "1" : "0");
     localStorage.setItem("ml.dup.a", modes.audio.checked ? "1" : "0");
-    out.replaceChildren(h("div", { class: "empty" }, "Suche Duplikate …"));
+    out.replaceChildren(h("div", { class: "empty" }, L("Suche Duplikate …")));
     try {
       lastGroups = await api.findDuplicates({ metadata: modes.metadata.checked, filename: modes.filename.checked, audio: modes.audio.checked });
       keep.clear();
       lastGroups.forEach((g, i) => keep.set(i, new Set([g.keep])));
       render();
     } catch (e) {
-      out.replaceChildren(h("div", { class: "err" }, String(e)));
+      out.replaceChildren(h("div", { class: "err" }, trMsg(String(e))));
     }
   };
 
@@ -74,12 +75,12 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
     clear(footer);
     if (!lastGroups?.length) return;
     footer.append(
-      h("span", { class: "sub" }, `${ids.length} Datei${ids.length === 1 ? "" : "en"} abgewählt · ${fmtSize(bytes)}`),
+      h("span", { class: "sub" }, L("{0} Datei{1} abgewählt · {2}", ids.length, pl(ids.length, "en"), fmtSize(bytes))),
       h("span", { class: "spacer" }),
       ids.length
-        ? holdButton("Abgewählte in den Papierkorb", async () => {
+        ? holdButton(L("Abgewählte in den Papierkorb"), async () => {
             player.release(ids);
-            reportErrors(await api.trash(ids, replace), `${ids.length} Dateien im Papierkorb – Playlisten zeigen jetzt auf die behaltene Version`);
+            reportErrors(await api.trash(ids, replace), L("{0} Dateien im Papierkorb – Playlisten zeigen jetzt auf die behaltene Version", ids.length));
             await store.loadTracks();
             store.loadPlaylists();
             run();
@@ -96,7 +97,7 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
     if (!against || g.trackIds.length < 2) g.trackIds = [];
     keep.get(gi)?.forEach((x) => !g.trackIds.includes(x) && keep.get(gi)!.delete(x));
     if (g.trackIds.length && !keep.get(gi)?.size) keep.set(gi, new Set([g.trackIds[0]]));
-    toast("Wird nicht mehr als Duplikat angezeigt");
+    toast(L("Wird nicht mehr als Duplikat angezeigt"));
     render();
     updateIgnored();
   };
@@ -105,37 +106,37 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
   const updateIgnored = async () => {
     const n = await api.dupIgnoreCount().catch(() => 0);
     clear(ignoredInfo);
-    if (n) ignoredInfo.append(`${n} Paar${n === 1 ? "" : "e"} als „kein Duplikat“ markiert · `,
-      h("a", { href: "#", style: { color: "inherit" }, onclick: async (e: Event) => { e.preventDefault(); await api.dupIgnoreClear(); toast("Markierungen zurückgesetzt"); updateIgnored(); } }, "zurücksetzen"));
+    if (n) ignoredInfo.append(L("{0} Paar{1} als „kein Duplikat“ markiert · ", n, pl(n, "e")),
+      h("a", { href: "#", style: { color: "inherit" }, onclick: async (e: Event) => { e.preventDefault(); await api.dupIgnoreClear(); toast(L("Markierungen zurückgesetzt")); updateIgnored(); } }, L("zurücksetzen")));
   };
   updateIgnored();
 
   const render = () => {
     canvases.length = 0;
     const groups = (lastGroups ?? []).map((g, i) => [g, i] as const).filter(([g]) => g.trackIds.filter((id) => store.tracks.has(id)).length > 1);
-    summary.textContent = lastGroups ? `${groups.length} Gruppen · ${groups.reduce((s, [g]) => s + g.trackIds.length - 1, 0)} mögliche Duplikate` : "";
+    summary.textContent = lastGroups ? L("{0} Gruppen · {1} mögliche Duplikate", groups.length, groups.reduce((s, [g]) => s + g.trackIds.length - 1, 0)) : "";
     if (!lastGroups) {
-      out.replaceChildren(h("div", { class: "empty" }, "Suchart wählen und ", h("b", {}, "Suchen"), " klicken."));
+      out.replaceChildren(h("div", { class: "empty" }, L("Suchart wählen und "), h("b", {}, L("Suchen")), L(" klicken.")));
       return;
     }
     if (!groups.length) {
-      out.replaceChildren(h("div", { class: "empty" }, "Keine Duplikate gefunden."));
+      out.replaceChildren(h("div", { class: "empty" }, L("Keine Duplikate gefunden.")));
       renderFooter();
       return;
     }
     out.replaceChildren(
       ...groups.slice(0, 400).map(([g, gi]) => {
         const k = keep.get(gi)!;
-        const reasons = g.reasons.map((r) => (r === "audio" && g.audioSimilarity ? `Audio ${Math.round(g.audioSimilarity * 100)} %` : REASON[r] ?? r)).join(" · ");
+        const reasons = g.reasons.map((r) => (r === "audio" && g.audioSimilarity ? L("Audio {0} %", Math.round(g.audioSimilarity * 100)) : REASON[r] ?? r)).join(" · ");
         const rows = g.trackIds.filter((id) => store.tracks.has(id)).map((id) => {
           const t = store.tracks.get(id)!;
-          const box = h("input", { type: "checkbox", checked: k.has(id), title: "Behalten" });
+          const box = h("input", { type: "checkbox", checked: k.has(id), title: L("Behalten") });
           const { wrap, canvas } = waveElement({ duration: () => t.duration, onSeek: (f) => player.play(id, f, g.trackIds) });
           canvases.push({ id, c: canvas });
           const tr = h("tr", { class: k.has(id) ? "keep" : "drop" },
             h("td", {}, box),
-            h("td", {}, h("div", { class: "t1" }, `${t.artist ?? "?"} – ${store.label(t)}`), h("div", { class: "path", style: { margin: "3px 0 0" }, title: `Rechtsklick: ${SHOW_IN}` }, t.path)),
-            h("td", { class: t.upscaled ? "q-up" : "", title: t.upscaled ? `wahrscheinlich hochgerechnet – echte Qualität ≈ ${t.realKbps} kbps` : "" }, `${ext(t.path)}${t.bitrate ? " " + t.bitrate : ""}${t.upscaled ? ` (≈ ${t.realKbps})` : ""}`),
+            h("td", {}, h("div", { class: "t1" }, `${t.artist ?? "?"} – ${store.label(t)}`), h("div", { class: "path", style: { margin: "3px 0 0" }, title: L("Rechtsklick: {0}", SHOW_IN) }, t.path)),
+            h("td", { class: t.upscaled ? "q-up" : "", title: t.upscaled ? L("wahrscheinlich hochgerechnet – echte Qualität ≈ {0} kbps", t.realKbps) : "" }, `${ext(t.path)}${t.bitrate ? " " + t.bitrate : ""}${t.upscaled ? ` (≈ ${t.realKbps})` : ""}`),
             h("td", {}, fmtTime(t.duration)),
             h("td", {}, fmtSize(t.size)),
             h("td", {}, wrap),
@@ -150,10 +151,10 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
           tr.addEventListener("contextmenu", (e) => {
             e.preventDefault();
             contextMenu(e.clientX, e.clientY, [
-              { label: "Abspielen", action: () => player.play(id, 0, g.trackIds) },
-              { label: "Gehört nicht dazu (kein Duplikat)", action: () => notDuplicate(gi, [id], g.trackIds.filter((x) => x !== id)) },
+              { label: L("Abspielen"), action: () => player.play(id, 0, g.trackIds) },
+              { label: L("Gehört nicht dazu (kein Duplikat)"), action: () => notDuplicate(gi, [id], g.trackIds.filter((x) => x !== id)) },
               { label: SHOW_IN, action: () => revealItemInDir(t.path) },
-              { label: "Ordner in der Ordneransicht", action: () => nav("folders", undefined, t.path) },
+              { label: L("Ordner in der Ordneransicht"), action: () => nav("folders", undefined, t.path) },
             ]);
           });
           return tr;
@@ -161,8 +162,8 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
         return h("div", { class: "group" },
           h("div", { class: "gh" }, h("span", {}, reasons),
             h("span", { style: { display: "flex", gap: "14px", alignItems: "center" } },
-              h("span", {}, "Haken = behalten"),
-              h("button", { class: "btn", title: "Diese Titel nie wieder als Duplikat anzeigen", onclick: () => notDuplicate(gi, g.trackIds, null) }, "Kein Duplikat"),
+              h("span", {}, L("Haken = behalten")),
+              h("button", { class: "btn", title: L("Diese Titel nie wieder als Duplikat anzeigen"), onclick: () => notDuplicate(gi, g.trackIds, null) }, L("Kein Duplikat")),
             ),
           ),
           h("table", { class: "grid fixed" },
@@ -170,7 +171,7 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
             h("tbody", {}, ...rows)),
         );
       }),
-      groups.length > 400 ? h("div", { class: "note" }, `… und ${groups.length - 400} weitere Gruppen. Erst diese bereinigen, dann erneut suchen.`) : "",
+      groups.length > 400 ? h("div", { class: "note" }, L("… und {0} weitere Gruppen. Erst diese bereinigen, dann erneut suchen.", groups.length - 400)) : "",
     );
     requestAnimationFrame(() => canvases.forEach(({ id, c }) => drawWave(c, store.peaksFor(id), player.current?.id === id ? player.frac() : -1)));
     renderFooter();
@@ -186,16 +187,16 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
   render();
 
   const el = h("div", { style: { display: "contents" } },
-    h("div", { class: "head" }, h("h1", {}, "Duplikate"), summary, h("div", { class: "spacer" }),
-      h("label", { class: "check" }, modes.metadata, "Metadaten"),
-      h("label", { class: "check" }, modes.filename, "Dateiname"),
-      h("label", { class: "check" }, modes.audio, "Audio-Inhalt"),
-      h("button", { class: "btn primary", onclick: run }, "Suchen"),
+    h("div", { class: "head" }, h("h1", {}, L("Duplikate")), summary, h("div", { class: "spacer" }),
+      h("label", { class: "check" }, modes.metadata, L("Metadaten")),
+      h("label", { class: "check" }, modes.filename, L("Dateiname")),
+      h("label", { class: "check" }, modes.audio, L("Audio-Inhalt")),
+      h("button", { class: "btn primary", onclick: run }, L("Suchen")),
     ),
     h("div", { class: "view-scroll" },
       h("div", { class: "note", style: { marginBottom: "10px" } },
-        "Metadaten: gleicher Künstler + Titel (ohne Zusätze wie „Remastered“). Dateiname: gleicher Name ohne Nummern und „(1)“/„Kopie“. ",
-        "Audio-Inhalt: akustischer Fingerabdruck – findet dieselbe Aufnahme auch in anderem Format oder mit falschen Tags. Vorschlag zum Behalten: verlustfrei > höhere Bitrate > vollständigere Tags.",
+        L("Metadaten: gleicher Künstler + Titel (ohne Zusätze wie „Remastered“). Dateiname: gleicher Name ohne Nummern und „(1)“/„Kopie“. "),
+        L("Audio-Inhalt: akustischer Fingerabdruck – findet dieselbe Aufnahme auch in anderem Format oder mit falschen Tags. Vorschlag zum Behalten: verlustfrei > höhere Bitrate > vollständigere Tags."),
       ),
       hint, ignoredInfo, out,
     ),

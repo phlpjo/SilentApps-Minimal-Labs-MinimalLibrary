@@ -1,3 +1,4 @@
+import { L, trMsg } from "./i18n";
 // Kleine DOM-Helfer im Minimal-Stil
 
 type Attrs = Record<string, unknown>;
@@ -54,7 +55,7 @@ export function fmtSize(bytes: number): string {
 export function fmtDuration(sec: number): string {
   const hr = Math.floor(sec / 3600);
   const m = Math.round((sec % 3600) / 60);
-  return hr > 0 ? `${hr} Std. ${m} Min.` : `${m} Min.`;
+  return hr > 0 ? L("{0} Std. {1} Min.", hr, m) : L("{0} Min.", m);
 }
 
 export function basename(p: string): string {
@@ -79,13 +80,14 @@ export function toast(msg: string, ms = 3500) {
     toastBox = h("div", { class: "toasts" });
     document.body.appendChild(toastBox);
   }
-  const t = h("div", { class: "toast" }, msg);
+  // Meldungen vom Programmkern sind deutsch – hier übersetzen (Zeile für Zeile)
+  const t = h("div", { class: "toast" }, msg.split("\n").map(trMsg).join("\n"));
   toastBox.appendChild(t);
   setTimeout(() => t.remove(), ms);
 }
 
 export function reportErrors(errors: string[], okMsg?: string) {
-  if (errors.length) toast(`${errors.length} Fehler:\n` + errors.slice(0, 4).join("\n") + (errors.length > 4 ? "\n…" : ""), 8000);
+  if (errors.length) toast(L("{0} Fehler:\n", errors.length) + errors.slice(0, 4).join("\n") + (errors.length > 4 ? "\n…" : ""), 8000);
   else if (okMsg) toast(okMsg);
 }
 
@@ -142,7 +144,7 @@ export function contextMenu(x: number, y: number, items: MenuItem[]) {
       }
       m.appendChild(o);
     }
-    if (level && !list.length) m.appendChild(h("div", { class: "option", style: { opacity: "0.6" } }, "– keine –"));
+    if (level && !list.length) m.appendChild(h("div", { class: "option", style: { opacity: "0.6" } }, L("– keine –")));
     document.body.appendChild(m);
     const r = m.getBoundingClientRect();
     let left = px;
@@ -176,7 +178,7 @@ export function contextMenu(x: number, y: number, items: MenuItem[]) {
 }
 
 // ---------- Gedrückt halten (statt Rückfrage) ----------
-export function holdButton(label: string, action: () => void, hint = "gedrückt halten", ms = 1200): HTMLElement {
+export function holdButton(label: string, action: () => void, hint = L("gedrückt halten"), ms = 1200): HTMLElement {
   const fg = document.createElementNS("http://www.w3.org/2000/svg", "circle");
   fg.setAttribute("class", "fg");
   const bgc = document.createElementNS("http://www.w3.org/2000/svg", "circle");
@@ -288,7 +290,7 @@ export function artistLinks(text: string | null, fallback = ""): HTMLElement {
     }
     const name = part.trim();
     if (!name) return;
-    const a = h("span", { class: "artist-link", title: `Nach „${name}“ suchen` }, part);
+    const a = h("span", { class: "artist-link", title: L("Nach „{0}“ suchen", name) }, part);
     a.addEventListener("pointerdown", (e) => e.stopPropagation());
     a.addEventListener("dblclick", (e) => e.stopPropagation());
     a.addEventListener("click", (e) => {
@@ -308,7 +310,7 @@ export function onAlbumClick(fn: (name: string) => void) {
 
 export function albumLink(text: string | null): HTMLElement | string {
   if (!text) return "";
-  const a = h("span", { class: "artist-link", title: `Nach Album „${text}“ suchen` }, text);
+  const a = h("span", { class: "artist-link", title: L("Nach Album „{0}“ suchen", text) }, text);
   a.addEventListener("pointerdown", (e) => e.stopPropagation());
   a.addEventListener("dblclick", (e) => e.stopPropagation());
   a.addEventListener("click", (e) => {
@@ -323,10 +325,10 @@ export const searchNorm = (s: string) => s.toLowerCase().replace(/\s*&\s*/g, " &
 
 /** Echte Qualität als kurzer Text, z. B. „≈ 128 · hochgerechnet“ */
 export function qualityText(t: { realKbps: number | null; upscaled: boolean; lossless: boolean; cutoff: number | null; analyzed: boolean }, short = false): string {
-  if (t.cutoff == null) return short ? "" : t.analyzed ? "wird bei der nächsten Analyse gemessen" : "nach der Analyse";
-  if (t.upscaled && t.lossless) return short ? `≈ ${t.realKbps} (MP3)` : `wahrscheinlich aus MP3 hochgerechnet · echte Qualität ≈ ${t.realKbps} kbps`;
-  if (t.upscaled) return short ? `≈ ${t.realKbps} ↑` : `wahrscheinlich hochgerechnet · echte Qualität ≈ ${t.realKbps} kbps`;
-  if (t.lossless) return short ? "verlustfrei" : "verlustfrei (voller Frequenzgang)";
-  if (t.realKbps) return short ? `≈ ${t.realKbps}` : `≈ ${t.realKbps} kbps`;
-  return short ? "" : "nicht messbar";
+  if (t.cutoff == null) return short ? "" : t.analyzed ? L("wird bei der nächsten Analyse gemessen") : L("nach der Analyse");
+  if (t.upscaled && t.lossless) return short ? L("≈ {0} (MP3)", t.realKbps) : L("wahrscheinlich aus MP3 hochgerechnet · echte Qualität ≈ {0} kbps", t.realKbps);
+  if (t.upscaled) return short ? `≈ ${t.realKbps} ↑` : L("wahrscheinlich hochgerechnet · echte Qualität ≈ {0} kbps", t.realKbps);
+  if (t.lossless) return short ? L("verlustfrei") : L("verlustfrei (voller Frequenzgang)");
+  if (t.realKbps) return short ? `≈ ${t.realKbps}` : L("≈ {0} kbps", t.realKbps);
+  return short ? "" : L("nicht messbar");
 }

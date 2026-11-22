@@ -5,6 +5,7 @@ import { api, type CastDevice } from "./api";
 import { player } from "./player";
 import { store } from "./store";
 import { h, toast } from "./ui";
+import { L } from "./i18n";
 
 export interface LocalOut { id: string; label: string }
 
@@ -58,14 +59,14 @@ export function discoverIfStale(force = false) {
 let localCache: LocalOut[] | null = null;
 export async function localOutputs(refresh = false): Promise<LocalOut[]> {
   if (localCache && !refresh) return localCache;
-  const out: LocalOut[] = [{ id: "default", label: "Dieser PC (Standard)" }];
+  const out: LocalOut[] = [{ id: "default", label: L("Dieser PC (Standard)") }];
   try {
     const devs = await navigator.mediaDevices.enumerateDevices();
     let n = 0;
     for (const d of devs) {
       if (d.kind !== "audiooutput" || d.deviceId === "default" || d.deviceId === "communications") continue;
       n++;
-      out.push({ id: d.deviceId, label: d.label || `Ausgang ${n}` });
+      out.push({ id: d.deviceId, label: d.label || L("Ausgang {0}", n) });
     }
   } catch {
     /* keine Geräteliste */
@@ -80,7 +81,7 @@ export async function unlockLabels() {
     const s = await navigator.mediaDevices.getUserMedia({ audio: true });
     s.getTracks().forEach((t) => t.stop());
   } catch {
-    toast("Ohne Freigabe bleiben die Gerätenamen verborgen – die Auswahl funktioniert trotzdem.");
+    toast(L("Ohne Freigabe bleiben die Gerätenamen verborgen – die Auswahl funktioniert trotzdem."));
   }
   await localOutputs(true);
   store.emit("outputs");
@@ -93,10 +94,10 @@ export function labelsHidden() {
 /** Netzwerkgerät wählen – falls es diese Sitzung noch nicht gefunden wurde, erst suchen */
 export async function selectCast(d: CastDevice) {
   if (!found.has(d.id)) {
-    toast(`Suche „${d.name}“ …`);
+    toast(L("Suche „{0}“ …", d.name));
     await discover();
     if (!found.has(d.id)) {
-      toast(`„${d.name}“ ist gerade nicht erreichbar.`);
+      toast(L("„{0}“ ist gerade nicht erreichbar.", d.name));
       return;
     }
   }
@@ -122,8 +123,8 @@ export async function restoreOutput() {
 
 export function currentOutputLabel(): string {
   if (player.device) return player.device.name;
-  if (player.localSink === "default") return "Dieser PC";
-  return localCache?.find((o) => o.id === player.localSink)?.label ?? "Dieser PC";
+  if (player.localSink === "default") return L("Dieser PC");
+  return localCache?.find((o) => o.id === player.localSink)?.label ?? L("Dieser PC");
 }
 
 /** Auswahl-Fenster am Player: lokale Ausgänge sofort, Heimnetz aus dem Gedächtnis + Live-Suche */
@@ -143,15 +144,15 @@ export function outputPopup(anchor: HTMLElement) {
   const render = async () => {
     const locals = await localOutputs();
     box.replaceChildren(
-      h("div", { class: "pop-title" }, "Dieser PC"),
-      ...locals.map((o) => row(o.id === "default" ? "Dieser PC" : o.label, !player.device && player.localSink === o.id, o.id === "default" ? "Standard" : "", () => selectLocal(o.id))),
+      h("div", { class: "pop-title" }, L("Dieser PC")),
+      ...locals.map((o) => row(o.id === "default" ? L("Dieser PC") : o.label, !player.device && player.localSink === o.id, o.id === "default" ? "Standard" : "", () => selectLocal(o.id))),
       h("hr"),
-      h("div", { class: "pop-title" }, "Heimnetz", isSearching() ? h("span", { class: "searching" }, "  sucht …") : ""),
+      h("div", { class: "pop-title" }, L("Heimnetz"), isSearching() ? h("span", { class: "searching" }, L("  sucht …")) : ""),
       ...cache.map((d) =>
-        row(d.name, player.device?.id === d.id, (player.device?.id === d.id ? "streamt · " : "") + (d.kind === "sonos" ? "Sonos" : "DLNA"), () => selectCast(d), !isFound(d.id) && isSearching()),
+        row(d.name, player.device?.id === d.id, (player.device?.id === d.id ? L("streamt · ") : "") + (d.kind === "sonos" ? "Sonos" : "DLNA"), () => selectCast(d), !isFound(d.id) && isSearching()),
       ),
-      cache.length ? "" : h("div", { class: "option dim" }, isSearching() ? "Suche Geräte …" : "Keine Geräte gefunden"),
-      h("div", { class: "option small", onclick: () => discoverIfStale(true) }, h("span", {}, "  Neu suchen")),
+      cache.length ? "" : h("div", { class: "option dim" }, isSearching() ? L("Suche Geräte …") : L("Keine Geräte gefunden")),
+      h("div", { class: "option small", onclick: () => discoverIfStale(true) }, h("span", {}, L("  Neu suchen"))),
     );
     place();
   };

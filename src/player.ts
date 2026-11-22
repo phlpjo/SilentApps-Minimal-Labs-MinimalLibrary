@@ -4,6 +4,7 @@ import { store } from "./store";
 import { toast } from "./ui";
 import { eq } from "./eq";
 import { claimAudio, onOtherTabPlays } from "./tabs";
+import { L } from "./i18n";
 
 type PosListener = (id: number, frac: number) => void;
 
@@ -65,7 +66,7 @@ class Player {
         a.removeAttribute("crossorigin");
         a.addEventListener("loadedmetadata", () => {
           try { localStorage.setItem("ml.audioGraph", "0"); } catch {}
-          toast("Equalizer ist auf diesem System nicht verfügbar – Wiedergabe läuft ohne.");
+          toast(L("Equalizer ist auf diesem System nicht verfügbar – Wiedergabe läuft ohne."));
         }, { once: true });
         a.addEventListener("error", () => { eq.enabled = true; this.applyVolume(a); }, { once: true });
         a.src = src;
@@ -73,7 +74,7 @@ class Player {
         return;
       }
       const ext = this.current.path.split(".").pop()?.toUpperCase();
-      toast(`${ext}-Datei kann nicht abgespielt werden${ext === "AIFF" || ext === "AIF" ? " (AIFF unterstützt die Windows-WebView nicht)" : ""}.`);
+      toast(L("{0}-Datei kann nicht abgespielt werden{1}.", ext, ext === "AIFF" || ext === "AIF" ? L(" (AIFF unterstützt die Windows-WebView nicht)") : ""));
       store.emit("player");
     });
     return a;

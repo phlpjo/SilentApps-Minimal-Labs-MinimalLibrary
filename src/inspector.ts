@@ -6,20 +6,21 @@ import { store } from "./store";
 import { basename, clear, ext, fmtSize, fmtTime, h, holdButton, keyLabel, qualityText, reportErrors, sheet, toast } from "./ui";
 import { SHOW_IN } from "./platform";
 import { pioneerOn, pioneerPanel } from "./pioneer";
+import { L, pl, LOCALE, trMsg } from "./i18n";
 
 type FieldKey = keyof TagUpdate;
 const FIELDS: { key: FieldKey; label: string; get: (t: Track) => string }[] = [
-  { key: "title", label: "Titel", get: (t) => t.title ?? "" },
-  { key: "artist", label: "Künstler", get: (t) => t.artist ?? "" },
+  { key: "title", label: L("Titel"), get: (t) => t.title ?? "" },
+  { key: "artist", label: L("Künstler"), get: (t) => t.artist ?? "" },
   { key: "album", label: "Album", get: (t) => t.album ?? "" },
-  { key: "albumArtist", label: "Albumkünstler", get: (t) => t.albumArtist ?? "" },
+  { key: "albumArtist", label: L("Albumkünstler"), get: (t) => t.albumArtist ?? "" },
   { key: "genre", label: "Genre", get: (t) => t.genre ?? "" },
-  { key: "year", label: "Jahr", get: (t) => t.year ?? "" },
+  { key: "year", label: L("Jahr"), get: (t) => t.year ?? "" },
   { key: "trackNo", label: "Track", get: (t) => (t.trackNo != null ? String(t.trackNo) : "") },
   { key: "discNo", label: "Disc", get: (t) => (t.discNo != null ? String(t.discNo) : "") },
   { key: "bpm", label: "BPM", get: (t) => (t.bpm != null ? String(Math.round(t.bpm)) : "") },
-  { key: "key", label: "Tonart", get: (t) => t.key ?? "" },
-  { key: "comment", label: "Kommentar", get: (t) => t.comment ?? "" },
+  { key: "key", label: L("Tonart"), get: (t) => t.key ?? "" },
+  { key: "comment", label: L("Kommentar"), get: (t) => t.comment ?? "" },
 ];
 
 export class Inspector {
@@ -66,25 +67,25 @@ export class Inspector {
     this.original.clear();
     const tracks = ids.map((id) => store.tracks.get(id)!).filter(Boolean);
     if (!tracks.length) {
-      this.el.appendChild(h("div", { class: "empty", style: { padding: "40px 6px" } }, "Titel auswählen, um Tags zu bearbeiten.", h("br"), h("br"), "Mehrfachauswahl bearbeitet alle auf einmal."));
+      this.el.appendChild(h("div", { class: "empty", style: { padding: "40px 6px" } }, L("Titel auswählen, um Tags zu bearbeiten."), h("br"), h("br"), L("Mehrfachauswahl bearbeitet alle auf einmal.")));
       return;
     }
     const one = tracks.length === 1 ? tracks[0] : null;
 
     // Cover
-    const cov = h("div", { class: "cover" }, tracks[0].hasCover ? "…" : "Kein Cover");
+    const cov = h("div", { class: "cover" }, tracks[0].hasCover ? "…" : L("Kein Cover"));
     if (tracks[0].hasCover) {
       api.getCover(tracks[0].id).then((url) => {
         if (this.ids !== ids) return;
-        cov.replaceChildren(url ? h("img", { src: url }) : "Kein Cover");
+        cov.replaceChildren(url ? h("img", { src: url }) : L("Kein Cover"));
       });
     }
     this.el.append(
-      h("div", { class: "insp-title" }, one ? store.label(one) : `${tracks.length} Titel`),
+      h("div", { class: "insp-title" }, one ? store.label(one) : L("{0} Titel", tracks.length)),
       cov,
       h("div", { class: "cover-acts" },
-        h("button", { class: "btn", onclick: () => this.pickCover() }, "Cover wählen …"),
-        tracks.some((t) => t.hasCover) ? holdButton("Entfernen", () => this.removeCover(), "halten") : null,
+        h("button", { class: "btn", onclick: () => this.pickCover() }, L("Cover wählen …")),
+        tracks.some((t) => t.hasCover) ? holdButton(L("Entfernen"), () => this.removeCover(), L("halten")) : null,
       ),
     );
 
@@ -94,7 +95,7 @@ export class Inspector {
       const same = vals.size === 1;
       const v = same ? [...vals][0] : null;
       this.original.set(f.key, v);
-      const inp = h("input", { type: "text", value: v ?? "", placeholder: same ? "" : "‹verschieden›", spellcheck: false });
+      const inp = h("input", { type: "text", value: v ?? "", placeholder: same ? "" : L("‹verschieden›"), spellcheck: false });
       inp.addEventListener("input", () => {
         const o = this.original.get(f.key);
         inp.classList.toggle("changed", o === null ? inp.value !== "" : inp.value !== o);
@@ -116,16 +117,16 @@ export class Inspector {
       h("div", { class: "field-row" }, mk(byKey("discNo")), mk(byKey("bpm"))),
       mk(byKey("key")), mk(byKey("comment")),
       this.filenameBox(tracks),
-      h("button", { class: "btn primary", style: { width: "100%", marginTop: "4px" }, onclick: () => this.save() }, "Speichern  (Strg+S)"),
+      h("button", { class: "btn primary", style: { width: "100%", marginTop: "4px" }, onclick: () => this.save() }, L("Speichern  (Strg+S)")),
     );
 
     // Aktionen
     this.el.append(
       h("div", { class: "acts" },
-        h("button", { class: "btn", onclick: () => this.onlineSearch(tracks[0]) }, "Online suchen (MusicBrainz) …"),
-        one ? h("button", { class: "btn", onclick: () => this.recognize(one), title: "Erkennt den Titel am Audio-Fingerabdruck – auch ohne Tags" }, "Am Klang erkennen (AcoustID) …") : "",
-        h("button", { class: "btn", onclick: () => this.fromFilename(tracks) }, "Dateiname → Tags …"),
-        tracks.some((t) => t.bpm || t.key) ? h("button", { class: "btn", onclick: () => this.analysisToTags() }, "BPM + Tonart in Datei schreiben") : null,
+        h("button", { class: "btn", onclick: () => this.onlineSearch(tracks[0]) }, L("Online suchen (MusicBrainz) …")),
+        one ? h("button", { class: "btn", onclick: () => this.recognize(one), title: L("Erkennt den Titel am Audio-Fingerabdruck – auch ohne Tags") }, L("Am Klang erkennen (AcoustID) …")) : "",
+        h("button", { class: "btn", onclick: () => this.fromFilename(tracks) }, L("Dateiname → Tags …")),
+        tracks.some((t) => t.bpm || t.key) ? h("button", { class: "btn", onclick: () => this.analysisToTags() }, L("BPM + Tonart in Datei schreiben")) : null,
         one ? h("button", { class: "btn", onclick: () => revealItemInDir(one.path) }, SHOW_IN) : null,
       ),
     );
@@ -139,21 +140,21 @@ export class Inspector {
     // Infos
     if (one) {
       this.el.append(
-        h("div", { class: "section", style: { padding: "18px 0 6px" } }, "Datei"),
+        h("div", { class: "section", style: { padding: "18px 0 6px" } }, L("Datei")),
         h("div", { class: "path" }, one.path),
-        kv("Format", `${ext(one.path)}${one.bitrate ? ` · ${one.bitrate} kbit/s` : ""}`),
-        kv("Echte Qualität", qualityText(one)),
-        one.upscaled ? h("div", { class: "note" }, `Die Höhen enden bei ${((one.cutoff ?? 0) / 1000).toLocaleString("de", { maximumFractionDigits: 1 })} kHz – typisch für ${one.realKbps} kbps. Manche Aufnahmen (alt, Vinyl, Lo-Fi) haben von Natur aus wenig Höhen.`) : "",
-        kv("Abtastrate", one.sampleRate ? `${(one.sampleRate / 1000).toLocaleString("de")} kHz · ${one.channels === 1 ? "Mono" : "Stereo"}` : "–"),
-        kv("Dauer", fmtTime(one.duration)),
-        kv("Größe", fmtSize(one.size)),
-        kv("Analyse", one.analyzed ? (one.analysisError ? "Fehler" : "fertig") : "ausstehend"),
-        one.analysisError ? h("div", { class: "err" }, one.analysisError) : "",
+        kv("Format", `${ext(one.path)}${one.bitrate ? L(" · {0} kbit/s", one.bitrate) : ""}`),
+        kv(L("Echte Qualität"), qualityText(one)),
+        one.upscaled ? h("div", { class: "note" }, L("Die Höhen enden bei {0} kHz – typisch für {1} kbps. Manche Aufnahmen (alt, Vinyl, Lo-Fi) haben von Natur aus wenig Höhen.", ((one.cutoff ?? 0) / 1000).toLocaleString(LOCALE, { maximumFractionDigits: 1 }), one.realKbps)) : "",
+        kv(L("Abtastrate"), one.sampleRate ? L("{0} kHz · {1}", (one.sampleRate / 1000).toLocaleString(LOCALE), one.channels === 1 ? L("Mono") : L("Stereo")) : "–"),
+        kv(L("Dauer"), fmtTime(one.duration)),
+        kv(L("Größe"), fmtSize(one.size)),
+        kv(L("Analyse"), one.analyzed ? (one.analysisError ? L("Fehler") : L("fertig")) : L("ausstehend")),
+        one.analysisError ? h("div", { class: "err" }, trMsg(one.analysisError)) : "",
       );
     } else {
       const total = tracks.reduce((s, t) => s + t.size, 0);
       const dur = tracks.reduce((s, t) => s + t.duration, 0);
-      this.el.append(h("div", { class: "section", style: { padding: "18px 0 6px" } }, "Auswahl"), kv("Dauer", fmtTime(dur)), kv("Größe", fmtSize(total)));
+      this.el.append(h("div", { class: "section", style: { padding: "18px 0 6px" } }, L("Auswahl")), kv(L("Dauer"), fmtTime(dur)), kv(L("Größe"), fmtSize(total)));
     }
   }
 
@@ -169,7 +170,7 @@ export class Inspector {
       ...["{artist}", "{title}", "{album}", "{albumartist}", "{track}", "{disc}", "{year}", "{genre}", "{bpm}", "{key}"].map((c) =>
         h("span", { class: "chip", onclick: () => { insertAtCursor(pat, c); update(); } }, c)),
     );
-    const current = tracks.length === 1 ? basename(tracks[0].path) : `${tracks.length} Dateien`;
+    const current = tracks.length === 1 ? basename(tracks[0].path) : L("{0} Dateien", tracks.length);
     const update = () => {
       this.namePattern = pat.value;
       localStorage.setItem("ml.namePattern", pat.value);
@@ -187,7 +188,7 @@ export class Inspector {
         track: val("trackNo", t.trackNo?.toString() ?? null), disc: val("discNo", t.discNo?.toString() ?? null),
         bpm: val("bpm", t.bpm ? String(Math.round(t.bpm)) : null), key: val("key", t.key),
       }, t.path);
-      prev.textContent = box.checked ? `${current}  →  ${name}${tracks.length > 1 ? "  (1. Datei, alle nach diesem Muster)" : ""}` : `Aktuell: ${current}`;
+      prev.textContent = box.checked ? `${current}  →  ${name}${tracks.length > 1 ? L("  (1. Datei, alle nach diesem Muster)") : ""}` : L("Aktuell: {0}", current);
       pat.style.opacity = box.checked ? "1" : "0.55";
     };
     box.addEventListener("change", () => {
@@ -200,8 +201,8 @@ export class Inspector {
     for (const inp of this.inputs.values()) inp.addEventListener("input", update);
     setTimeout(update);
     return h("div", { class: "field", style: { marginTop: "6px" } },
-      h("label", {}, "Dateiname"),
-      h("label", { class: "check", style: { fontSize: "13px", margin: "2px 0 6px" } }, box, "Beim Speichern Datei umbenennen"),
+      h("label", {}, L("Dateiname")),
+      h("label", { class: "check", style: { fontSize: "13px", margin: "2px 0 6px" } }, box, L("Beim Speichern Datei umbenennen")),
       pat, chips, prev,
     );
   }
@@ -222,20 +223,20 @@ export class Inspector {
     const release = this.pendingCoverRelease;
     const rename = this.renameOn && this.namePattern.trim() !== "";
     if (!Object.keys(u).length && !release && !rename) {
-      toast("Keine Änderungen");
+      toast(L("Keine Änderungen"));
       return;
     }
     if (Object.keys(u).length) {
       const errs = await api.writeTags(ids, u);
-      reportErrors(errs, `${ids.length} ${ids.length === 1 ? "Titel" : "Titel"} gespeichert`);
+      reportErrors(errs, L("{0} Titel gespeichert", ids.length));
     }
     if (release) {
       const errs = await api.mbCover(ids, release).catch((e) => [String(e)]);
-      reportErrors(errs, "Cover übernommen");
+      reportErrors(errs, L("Cover übernommen"));
     }
     if (rename) {
       const r = await api.renameByPattern(ids, this.namePattern).catch((e) => ({ moved: 0, errors: [String(e)], batchId: 0 }));
-      reportErrors(r.errors, r.moved ? `${r.moved} Datei${r.moved === 1 ? "" : "en"} umbenannt` : undefined);
+      reportErrors(r.errors, r.moved ? L("{0} Datei{1} umbenannt", r.moved, pl(r.moved, "en")) : undefined);
       store.emit("dirs");
     }
     this.original.clear();
@@ -245,21 +246,21 @@ export class Inspector {
   }
 
   private async pickCover() {
-    const file = await open({ multiple: false, filters: [{ name: "Bilder", extensions: ["jpg", "jpeg", "png"] }] });
+    const file = await open({ multiple: false, filters: [{ name: L("Bilder"), extensions: ["jpg", "jpeg", "png"] }] });
     if (!file) return;
-    reportErrors(await api.setCoverFile(this.ids, file as string), "Cover gesetzt");
+    reportErrors(await api.setCoverFile(this.ids, file as string), L("Cover gesetzt"));
     await store.refreshTracks(this.ids);
     this.render(this.ids);
   }
 
   private async removeCover() {
-    reportErrors(await api.removeCover(this.ids), "Cover entfernt");
+    reportErrors(await api.removeCover(this.ids), L("Cover entfernt"));
     await store.refreshTracks(this.ids);
     this.render(this.ids);
   }
 
   private async analysisToTags() {
-    reportErrors(await api.writeAnalysisToTags(this.ids), "BPM und Tonart in die Dateien geschrieben");
+    reportErrors(await api.writeAnalysisToTags(this.ids), L("BPM und Tonart in die Dateien geschrieben"));
     await store.refreshTracks(this.ids);
   }
 
@@ -271,19 +272,19 @@ export class Inspector {
       clear(prev);
       for (const t of tracks.slice(0, 12)) {
         const r = parseFilename(basename(t.path).replace(/\.[^.]+$/, ""), pattern.value);
-        prev.appendChild(h("tr", {}, h("td", { class: "mono" }, basename(t.path)), h("td", {}, r ? Object.entries(r).map(([k, v]) => `${k}: ${v}`).join(" · ") : "passt nicht")));
+        prev.appendChild(h("tr", {}, h("td", { class: "mono" }, basename(t.path)), h("td", {}, r ? Object.entries(r).map(([k, v]) => `${k}: ${v}`).join(" · ") : L("passt nicht"))));
       }
     };
     pattern.addEventListener("input", update);
     update();
     const s = sheet(
-      "Dateiname → Tags",
+      L("Dateiname → Tags"),
       h("div", {},
-        h("div", { class: "note" }, "Platzhalter: {artist} {title} {album} {track} {year} {genre} {*} (ignorieren). Alles andere ist Trenntext."),
+        h("div", { class: "note" }, L("Platzhalter: {artist} {title} {album} {track} {year} {genre} {*} (ignorieren). Alles andere ist Trenntext.")),
         h("div", { class: "line" }, pattern),
-        h("table", { class: "grid" }, h("thead", {}, h("tr", {}, h("th", {}, "Datei"), h("th", {}, "Ergebnis"))), prev),
+        h("table", { class: "grid" }, h("thead", {}, h("tr", {}, h("th", {}, L("Datei")), h("th", {}, L("Ergebnis")))), prev),
         h("div", { class: "foot" },
-          h("button", { class: "btn", onclick: () => s.close() }, "Abbrechen"),
+          h("button", { class: "btn", onclick: () => s.close() }, L("Abbrechen")),
           h("button", {
             class: "btn primary",
             onclick: async () => {
@@ -304,10 +305,10 @@ export class Inspector {
                 n++;
               }
               s.close();
-              reportErrors(errs, `${n} Titel aktualisiert`);
+              reportErrors(errs, L("{0} Titel aktualisiert", n));
               await store.refreshTracks(tracks.map((t) => t.id));
             },
-          }, "Übernehmen"),
+          }, L("Übernehmen")),
         ),
       ),
       { wide: true },
@@ -316,12 +317,12 @@ export class Inspector {
 
   // ---------- MusicBrainz ----------
   private async onlineSearch(t: Track) {
-    const artist = h("input", { type: "text", value: t.artist ?? "", placeholder: "Künstler" });
-    const title = h("input", { type: "text", value: t.title ?? basename(t.path).replace(/\.[^.]+$/, ""), placeholder: "Titel" });
+    const artist = h("input", { type: "text", value: t.artist ?? "", placeholder: L("Künstler") });
+    const title = h("input", { type: "text", value: t.title ?? basename(t.path).replace(/\.[^.]+$/, ""), placeholder: L("Titel") });
     const withCover = h("input", { type: "checkbox", checked: true });
-    const results = h("div", {}, h("div", { class: "note" }, "Sucht in der freien MusicBrainz-Datenbank. Es werden nur Künstler und Titel übertragen."));
+    const results = h("div", {}, h("div", { class: "note" }, L("Sucht in der freien MusicBrainz-Datenbank. Es werden nur Künstler und Titel übertragen.")));
     const run = async () => {
-      results.replaceChildren(h("div", { class: "note" }, "Suche …"));
+      results.replaceChildren(h("div", { class: "note" }, L("Suche …")));
       try {
         const list = await api.mbSearch(artist.value, title.value, null);
         results.replaceChildren(
@@ -332,20 +333,20 @@ export class Inspector {
                   h("small", {}, `${c.length ? fmtTime(c.length) + " · " : ""}${c.score} %`),
                 ),
               )
-            : [h("div", { class: "note" }, "Nichts gefunden.")]),
+            : [h("div", { class: "note" }, L("Nichts gefunden."))]),
         );
       } catch (e) {
-        results.replaceChildren(h("div", { class: "err" }, String(e)));
+        results.replaceChildren(h("div", { class: "err" }, trMsg(String(e))));
       }
     };
     [artist, title].forEach((i) => i.addEventListener("keydown", (e) => e.key === "Enter" && run()));
     const s = sheet(
-      "Online suchen",
+      L("Online suchen"),
       h("div", {},
-        h("div", { class: "line" }, h("div", { class: "grow" }, artist), h("div", { class: "grow" }, title), h("button", { class: "btn primary", onclick: run }, "Suchen")),
-        h("div", { class: "line" }, h("label", { class: "check" }, withCover, "Cover mit übernehmen (Cover Art Archive)")),
+        h("div", { class: "line" }, h("div", { class: "grow" }, artist), h("div", { class: "grow" }, title), h("button", { class: "btn primary", onclick: run }, L("Suchen"))),
+        h("div", { class: "line" }, h("label", { class: "check" }, withCover, L("Cover mit übernehmen (Cover Art Archive)"))),
         results,
-        h("div", { class: "note", style: { marginTop: "12px" } }, `Für ${this.ids.length} ausgewählte${this.ids.length === 1 ? "n" : ""} Titel. Werte landen erst in den Feldern – Speichern schreibt sie in die Datei.`),
+        h("div", { class: "note", style: { marginTop: "12px" } }, L("Für {0} ausgewählte{1} Titel. Werte landen erst in den Feldern – Speichern schreibt sie in die Datei.", this.ids.length, this.ids.length === 1 ? "n" : "")),
       ),
       { wide: true },
     );
@@ -354,26 +355,26 @@ export class Inspector {
 
   /** Titel am Klang erkennen (Fingerabdruck → AcoustID → MusicBrainz) */
   private async recognize(t: Track) {
-    const results = h("div", {}, h("div", { class: "note" }, "Erkenne …"));
+    const results = h("div", {}, h("div", { class: "note" }, L("Erkenne …")));
     const withCover = true;
-    const s = sheet("Am Klang erkennen", h("div", {},
-      h("div", { class: "note", style: { marginBottom: "10px" } }, `${store.label(t)} – der Audio-Fingerabdruck wird mit der freien AcoustID-Datenbank verglichen. Es werden nur Fingerabdruck und Dauer übertragen.`),
+    const s = sheet(L("Am Klang erkennen"), h("div", {},
+      h("div", { class: "note", style: { marginBottom: "10px" } }, L("{0} – der Audio-Fingerabdruck wird mit der freien AcoustID-Datenbank verglichen. Es werden nur Fingerabdruck und Dauer übertragen.", store.label(t))),
       results,
     ), { wide: true });
     const run = async () => {
       if (!t.analyzed || t.analysisError) {
-        results.replaceChildren(h("div", { class: "err" }, "Dieser Titel ist noch nicht analysiert – erst nach der Analyse gibt es einen Fingerabdruck."));
+        results.replaceChildren(h("div", { class: "err" }, L("Dieser Titel ist noch nicht analysiert – erst nach der Analyse gibt es einen Fingerabdruck.")));
         return;
       }
       if (!store.settings.acoustidKey) {
-        results.replaceChildren(h("div", { class: "err" }, "Kein AcoustID-Schlüssel eingetragen."), h("div", { class: "note" }, "Einstellungen → Online: kostenlosen Schlüssel eintragen (einmalig)."));
+        results.replaceChildren(h("div", { class: "err" }, L("Kein AcoustID-Schlüssel eingetragen.")), h("div", { class: "note" }, L("Einstellungen → Online: kostenlosen Schlüssel eintragen (einmalig).")));
         return;
       }
-      results.replaceChildren(h("div", { class: "note" }, "Erkenne …"));
+      results.replaceChildren(h("div", { class: "note" }, L("Erkenne …")));
       try {
         const list = await api.acoustidLookup(t.id);
         if (!list.length) {
-          results.replaceChildren(h("div", { class: "note" }, "Nicht erkannt. Der Titel ist wahrscheinlich nicht in der AcoustID-Datenbank."));
+          results.replaceChildren(h("div", { class: "note" }, L("Nicht erkannt. Der Titel ist wahrscheinlich nicht in der AcoustID-Datenbank.")));
           return;
         }
         results.replaceChildren(
@@ -385,7 +386,7 @@ export class Inspector {
           ),
         );
       } catch (e) {
-        results.replaceChildren(h("div", { class: "err" }, String(e)));
+        results.replaceChildren(h("div", { class: "err" }, trMsg(String(e))));
       }
     };
     run();
@@ -404,22 +405,22 @@ export class Inspector {
       // Vorauswahl: nur wo neu und anders; Titel/Track bei Mehrfachauswahl aus
       const pre = val !== cur && !(multi && (key === "title" || key === "trackNo"));
       rows.push({ key, label, val, box: h("input", { type: "checkbox", checked: pre }) });
-      rows[rows.length - 1].box.dataset.cur = isVarious ? "‹verschieden›" : cur;
+      rows[rows.length - 1].box.dataset.cur = isVarious ? L("‹verschieden›") : cur;
     };
-    add("title", "Titel", c.title);
-    add("artist", "Künstler", c.artist);
-    add("album", "Album", c.album);
-    add("albumArtist", "Albumkünstler", c.albumArtist);
-    add("year", "Jahr", c.year);
-    add("trackNo", "Track", c.trackNo);
-    add("discNo", "Disc", c.discNo);
-    add("genre", "Genre", c.genre);
+    add("title", L("Titel"), c.title);
+    add("artist", L("Künstler"), c.artist);
+    add("album", L("Album"), c.album);
+    add("albumArtist", L("Albumkünstler"), c.albumArtist);
+    add("year", L("Jahr"), c.year);
+    add("trackNo", L("Track"), c.trackNo);
+    add("discNo", L("Disc"), c.discNo);
+    add("genre", L("Genre"), c.genre);
     const coverBox = h("input", { type: "checkbox", checked: withCover && !!c.releaseId });
     const all = h("input", { type: "checkbox", checked: false });
     all.addEventListener("change", () => rows.forEach((r) => (r.box.checked = all.checked)));
     results.replaceChildren(
       h("table", { class: "grid" },
-        h("thead", {}, h("tr", {}, h("th", {}, all), h("th", {}, "Feld"), h("th", {}, "Aktuell"), h("th", {}, "MusicBrainz"))),
+        h("thead", {}, h("tr", {}, h("th", {}, all), h("th", {}, L("Feld")), h("th", {}, L("Aktuell")), h("th", {}, "MusicBrainz"))),
         h("tbody", {},
           ...rows.map((r) => {
             const tr = h("tr", { style: { cursor: "pointer" } },
@@ -430,12 +431,12 @@ export class Inspector {
             tr.addEventListener("click", (e) => { if (e.target !== r.box) r.box.checked = !r.box.checked; });
             return tr;
           }),
-          c.releaseId ? h("tr", {}, h("td", {}, coverBox), h("td", {}, "Cover"), h("td", { style: { color: "var(--weak)" } }, "–"), h("td", {}, "Front-Cover aus dem Cover Art Archive")) : "",
+          c.releaseId ? h("tr", {}, h("td", {}, coverBox), h("td", {}, "Cover"), h("td", { style: { color: "var(--weak)" } }, "–"), h("td", {}, L("Front-Cover aus dem Cover Art Archive"))) : "",
         ),
       ),
-      multi ? h("div", { class: "note", style: { marginTop: "8px" } }, "Mehrfachauswahl: Titel und Track sind nicht vorausgewählt, damit nicht alle Dateien denselben Titel bekommen.") : "",
+      multi ? h("div", { class: "note", style: { marginTop: "8px" } }, L("Mehrfachauswahl: Titel und Track sind nicht vorausgewählt, damit nicht alle Dateien denselben Titel bekommen.")) : "",
       h("div", { class: "foot" },
-        h("button", { class: "btn", onclick: back }, "‹ Andere Treffer"),
+        h("button", { class: "btn", onclick: back }, L("‹ Andere Treffer")),
         h("span", { class: "spacer" }),
         h("button", {
           class: "btn primary",
@@ -451,9 +452,9 @@ export class Inspector {
             }
             if (coverBox.checked && c.releaseId) this.pendingCoverRelease = c.releaseId;
             s.close();
-            toast(n || coverBox.checked ? `${n} Feld${n === 1 ? "" : "er"}${coverBox.checked ? " + Cover" : ""} übernommen – mit Speichern in die Datei schreiben` : "Nichts übernommen");
+            toast(n || coverBox.checked ? L("{0} Feld{1}{2} übernommen – mit Speichern in die Datei schreiben", n, pl(n, "er"), coverBox.checked ? L(" + Cover") : "") : L("Nichts übernommen"));
           },
-        }, "Auswahl übernehmen"),
+        }, L("Auswahl übernehmen")),
       ),
     );
   }
@@ -474,11 +475,11 @@ export function renderName(pattern: string, v: Record<string, string | null>, pa
   const extn = (basename(path).match(/\.[^.]+$/) ?? [""])[0].toLowerCase();
   const pad = (n: string | null) => (n && /^\d+/.test(n) ? String(parseInt(n, 10)).padStart(2, "0") : "");
   const map: Record<string, string> = {
-    artist: v.artist ?? "Unbekannter Künstler",
-    albumartist: v.albumartist ?? v.artist ?? "Unbekannter Künstler",
-    album: v.album ?? "Unbekanntes Album",
+    artist: v.artist ?? L("Unbekannter Künstler"),
+    albumartist: v.albumartist ?? v.artist ?? L("Unbekannter Künstler"),
+    album: v.album ?? L("Unbekanntes Album"),
     title: v.title ?? stem,
-    genre: v.genre ?? "Unbekanntes Genre",
+    genre: v.genre ?? L("Unbekanntes Genre"),
     year: v.year ? v.year.slice(0, 4) : "0000",
     track: pad(v.track),
     disc: v.disc ?? "1",

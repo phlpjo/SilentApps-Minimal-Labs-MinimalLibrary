@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "Hauptfenster",
   "windows": [
-    "main"
+    "main",
+    "tab-*"
   ],
   "permissions": [
     "core:default",

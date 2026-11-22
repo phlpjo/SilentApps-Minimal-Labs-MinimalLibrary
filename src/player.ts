@@ -3,6 +3,7 @@ import { api, type CastDevice, type Track } from "./api";
 import { store } from "./store";
 import { toast } from "./ui";
 import { eq } from "./eq";
+import { claimAudio, onOtherTabPlays } from "./tabs";
 
 type PosListener = (id: number, frac: number) => void;
 
@@ -32,6 +33,8 @@ class Player {
     const vol = Number(localStorage.getItem("ml.volume") ?? "0.9");
     this.volume = isFinite(vol) ? vol : 0.9;
     this.audio = this.makeAudio();
+    // Anderer Tab spielt jetzt → hier aufhören
+    onOtherTabPlays((device) => this.yieldToOtherTab(device));
     // Nach Verschieben/Umbenennen: neuen Pfad übernehmen, ohne anzuhalten
     store.on("tracks", () => this.follow());
   }
@@ -44,6 +47,7 @@ class Player {
     a.addEventListener("ended", () => a === this.audio && this.next(true));
     a.addEventListener("play", () => {
       if (a !== this.audio) return;
+      claimAudio();
       this.loop();
       store.emit("player");
     });
@@ -150,6 +154,7 @@ class Player {
         const start = frac * (t.duration || 0);
         await api.castPlay(this.device!.id, id, start);
         if (my !== this.token) return;
+        claimAudio(this.device!.id);
         this.remote = { ...this.remote, playing: true, pos: start, at: performance.now(), dur: t.duration, startedAt: performance.now(), seekUntil: 0, loading: false };
         this.startPolling();
         this.loop();
@@ -249,6 +254,7 @@ class Player {
         this.remote.playing = true;
         this.remote.at = performance.now();
         api.castResume(dev).catch((e) => toast(String(e)));
+        claimAudio(dev);
         this.loop();
       }
       store.emit("player");
@@ -415,6 +421,20 @@ class Player {
     if (this.isRemote) await this.setDevice(null);
     await eq.setSink(id, this.audio);
     eq.use("local:" + id);
+    store.emit("player");
+  }
+
+  /** Ein anderer Tab hat die Wiedergabe übernommen */
+  private yieldToOtherTab(device: string) {
+    if (this.isRemote) {
+      clearInterval(this.remote.poll);
+      // Gleiches Gerät spielt jetzt den Titel des anderen Tabs – nicht stoppen; sonst unseres anhalten
+      if (this.remote.playing && device !== this.device!.id) api.castStop(this.device!.id).catch(() => {});
+      this.remote.playing = false;
+      this.remote.loading = false;
+    } else if (!this.audio.paused) {
+      this.audio.pause();
+    }
     store.emit("player");
   }
 

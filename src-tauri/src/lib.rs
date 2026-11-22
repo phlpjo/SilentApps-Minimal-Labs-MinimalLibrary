@@ -6,14 +6,97 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager};
 
 type Db = Arc<Mutex<Connection>>;
 
+/// Eine Bibliothek – je Tab eine eigene (eigene Datenbank, Einstellungen, Überwachung)
 struct AppState {
+    /// Fensterkennung des Tabs ("main" oder "tab-…")
+    label: String,
     db: Db,
     cancel: Arc<AtomicBool>,
     watcher: Mutex<Option<watch::Watcher>>,
+}
+
+// ---------- Tabs: jede Registerkarte ist eine eigene, komplette Instanz ----------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TabInfo {
+    label: String,
+    name: String,
+}
+
+struct Tabs {
+    base: PathBuf,
+    map: Mutex<HashMap<String, Arc<AppState>>>,
+    /// zuletzt sichtbarer Tab (Infobereich „öffnen“ zeigt ihn)
+    active: Mutex<String>,
+}
+
+impl Tabs {
+    fn list_file(&self) -> PathBuf {
+        self.base.join("tabs.json")
+    }
+    fn list(&self) -> Vec<TabInfo> {
+        let mut v: Vec<TabInfo> = std::fs::read(self.list_file()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        if !v.iter().any(|t| t.label == "main") {
+            v.insert(0, TabInfo { label: "main".into(), name: "Bibliothek".into() });
+        }
+        v
+    }
+    fn save(&self, v: &[TabInfo]) {
+        let _ = std::fs::write(self.list_file(), serde_json::to_vec_pretty(v).unwrap_or_default());
+    }
+    fn dir_of(&self, label: &str) -> PathBuf {
+        if label == "main" { self.base.clone() } else { self.base.join("tabs").join(label) }
+    }
+}
+
+/// Bibliothek eines Tabs (beim ersten Zugriff öffnen)
+fn tab_state(app: &AppHandle, label: &str) -> anyhow::Result<Arc<AppState>> {
+    let tabs = app.state::<Tabs>();
+    if let Some(s) = tabs.map.lock().unwrap().get(label) {
+        return Ok(s.clone());
+    }
+    let conn = db::open(&tabs.dir_of(label).join("library.db"))?;
+    if label == "main" {
+        musiccore::webcache::purge(&conn); // Online-Zwischenspeicher nach 3 Tagen löschen
+    }
+    // Nur, was in den Musikordnern liegt, gehört zur Bibliothek
+    let roots: Vec<PathBuf> = load_settings(&conn).roots.iter().map(PathBuf::from).collect();
+    let _ = dirs::prune_outside(&conn, &roots);
+    for r in &roots {
+        let _ = app.asset_protocol_scope().allow_directory(r, true);
+    }
+    let st = Arc::new(AppState { label: label.to_string(), db: Arc::new(Mutex::new(conn)), cancel: Arc::new(AtomicBool::new(false)), watcher: Mutex::new(None) });
+    let st = {
+        let mut m = tabs.map.lock().unwrap();
+        m.entry(label.to_string()).or_insert(st).clone()
+    };
+    if st.watcher.lock().unwrap().is_none() {
+        restart_watcher(app, &st);
+    }
+    Ok(st)
+}
+
+/// Befehlsargument: die Bibliothek des Fensters, aus dem der Aufruf kommt
+#[derive(Clone)]
+struct Tab(Arc<AppState>);
+
+impl std::ops::Deref for Tab {
+    type Target = AppState;
+    fn deref(&self) -> &AppState {
+        &self.0
+    }
+}
+
+impl<'de> tauri::ipc::CommandArg<'de, tauri::Wry> for Tab {
+    fn from_command(cmd: tauri::ipc::CommandItem<'de, tauri::Wry>) -> Result<Self, tauri::ipc::InvokeError> {
+        let wv = cmd.message.webview();
+        tab_state(wv.app_handle(), wv.label()).map(Tab).map_err(|e| tauri::ipc::InvokeError::from(e.to_string()))
+    }
 }
 
 /// Musikordner (neu) überwachen
@@ -21,11 +104,12 @@ fn restart_watcher(app: &AppHandle, state: &AppState) {
     let roots: Vec<PathBuf> = load_settings(&state.db.lock().unwrap()).roots.iter().map(PathBuf::from).collect();
     let app2 = app.clone();
     let db = state.db.clone();
+    let label = state.label.clone();
     let w = watch::start(state.db.clone(), &roots, move |ch| {
         if !ch.added.is_empty() || ch.moved > 0 || ch.removed > 0 {
             sync_playlists(&db.lock().unwrap());
         }
-        let _ = app2.emit("library-changed", ch);
+        let _ = app2.emit_to(&label, "library-changed", ch);
     })
     .ok();
     *state.watcher.lock().unwrap() = w;
@@ -46,11 +130,13 @@ struct ProgressEvent {
     message: String,
 }
 
-fn emitter(app: &AppHandle, task: &str) -> impl Fn(usize, usize, &str) + Sync + use<> {
+/// Fortschritt an das Fenster des Tabs melden
+fn emitter(app: &AppHandle, label: &str, task: &str) -> impl Fn(usize, usize, &str) + Sync + use<> {
     let app = app.clone();
     let task = task.to_string();
+    let label = label.to_string();
     move |done, total, msg| {
-        let _ = app.emit("progress", ProgressEvent { task: task.clone(), done, total, message: msg.to_string() });
+        let _ = app.emit_to(&label, "progress", ProgressEvent { task: task.clone(), done, total, message: msg.to_string() });
     }
 }
 
@@ -105,12 +191,12 @@ fn load_settings(conn: &Connection) -> Settings {
 }
 
 #[tauri::command]
-fn get_settings(state: State<AppState>) -> R<Settings> {
+fn get_settings(state: Tab) -> R<Settings> {
     Ok(load_settings(&state.db.lock().unwrap()))
 }
 
 #[tauri::command]
-fn set_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> R<usize> {
+fn set_settings(app: AppHandle, state: Tab, settings: Settings) -> R<usize> {
     let c = state.db.lock().unwrap();
     db::set_setting(&c, "settings", &serde_json::to_string(&settings).map_err(err)?).map_err(err)?;
     for r in &settings.roots {
@@ -139,10 +225,10 @@ fn sync_playlists(conn: &Connection) {
 // ---------- Bibliothek ----------
 
 #[tauri::command]
-async fn scan_library(app: AppHandle, state: State<'_, AppState>) -> R<scanner::ScanReport> {
+async fn scan_library(app: AppHandle, state: Tab) -> R<scanner::ScanReport> {
     let db = state.db.clone();
     let roots: Vec<PathBuf> = load_settings(&db.lock().unwrap()).roots.iter().map(PathBuf::from).collect();
-    let prog = emitter(&app, "scan");
+    let prog = emitter(&app, &state.label, "scan");
     blocking(move || {
         let r = scanner::scan(&db, &roots, &prog)?;
         sync_playlists(&db.lock().unwrap());
@@ -152,7 +238,7 @@ async fn scan_library(app: AppHandle, state: State<'_, AppState>) -> R<scanner::
 }
 
 #[tauri::command]
-async fn add_paths(app: AppHandle, state: State<'_, AppState>, paths: Vec<String>) -> R<AddReport> {
+async fn add_paths(app: AppHandle, state: Tab, paths: Vec<String>) -> R<AddReport> {
     let db = state.db.clone();
     blocking(move || {
         // Nur Musikordner zählen: hineingezogene Ordner außerhalb werden selbst zu Musikordnern,
@@ -192,19 +278,19 @@ struct AddReport {
 }
 
 #[tauri::command]
-async fn list_tracks(state: State<'_, AppState>) -> R<Vec<db::Track>> {
+async fn list_tracks(state: Tab) -> R<Vec<db::Track>> {
     let db = state.db.clone();
     blocking(move || db::all_tracks(&db.lock().unwrap())).await
 }
 
 #[tauri::command]
-fn get_tracks(state: State<AppState>, ids: Vec<i64>) -> R<Vec<db::Track>> {
+fn get_tracks(state: Tab, ids: Vec<i64>) -> R<Vec<db::Track>> {
     db::tracks_by_ids(&state.db.lock().unwrap(), &ids).map_err(err)
 }
 
 /// Wellenformen als Base64 (je 2000 Bytes).
 #[tauri::command]
-fn get_peaks(state: State<AppState>, ids: Vec<i64>) -> R<HashMap<i64, String>> {
+fn get_peaks(state: Tab, ids: Vec<i64>) -> R<HashMap<i64, String>> {
     let c = state.db.lock().unwrap();
     let mut out = HashMap::new();
     for id in ids {
@@ -222,29 +308,30 @@ fn allow_play(app: AppHandle, path: String) -> R<()> {
 }
 
 #[tauri::command]
-async fn analyze(app: AppHandle, state: State<'_, AppState>, ids: Option<Vec<i64>>) -> R<usize> {
+async fn analyze(app: AppHandle, state: Tab, ids: Option<Vec<i64>>) -> R<usize> {
     let db = state.db.clone();
     let cancel = state.cancel.clone();
     cancel.store(false, Ordering::Relaxed);
     let s = load_settings(&db.lock().unwrap());
     let (threads, pioneer) = (s.threads, s.pioneer);
-    let prog = emitter(&app, "analyze");
+    let prog = emitter(&app, &state.label, "analyze");
     let app2 = app.clone();
+    let label = state.label.clone();
     blocking(move || {
         analysis::analyze_pending_with(&db, ids, threads, pioneer, &cancel, &prog, &|id| {
-            let _ = app2.emit("analyzed", id);
+            let _ = app2.emit_to(&label, "analyzed", id);
         })
     })
     .await
 }
 
 #[tauri::command]
-fn cancel_task(state: State<AppState>) {
+fn cancel_task(state: Tab) {
     state.cancel.store(true, Ordering::Relaxed);
 }
 
 #[tauri::command]
-async fn remove_from_library(state: State<'_, AppState>, ids: Vec<i64>) -> R<()> {
+async fn remove_from_library(state: Tab, ids: Vec<i64>) -> R<()> {
     let db = state.db.clone();
     blocking(move || {
         let c = db.lock().unwrap();
@@ -257,7 +344,7 @@ async fn remove_from_library(state: State<'_, AppState>, ids: Vec<i64>) -> R<()>
 
 /// Dateien in den Windows-Papierkorb verschieben und aus der Bibliothek entfernen.
 #[tauri::command]
-async fn trash_tracks(state: State<'_, AppState>, ids: Vec<i64>, replace: Option<HashMap<String, i64>>) -> R<Vec<String>> {
+async fn trash_tracks(state: Tab, ids: Vec<i64>, replace: Option<HashMap<String, i64>>) -> R<Vec<String>> {
     let db = state.db.clone();
     blocking(move || {
         // Duplikate: Playlist-Einträge auf den behaltenen Titel umbiegen
@@ -301,7 +388,7 @@ async fn trash_tracks(state: State<'_, AppState>, ids: Vec<i64>, replace: Option
 // ---------- Tags ----------
 
 #[tauri::command]
-async fn write_tags(state: State<'_, AppState>, ids: Vec<i64>, update: tags::TagUpdate) -> R<Vec<String>> {
+async fn write_tags(state: Tab, ids: Vec<i64>, update: tags::TagUpdate) -> R<Vec<String>> {
     let db = state.db.clone();
     blocking(move || {
         let tracks = db::tracks_by_ids(&db.lock().unwrap(), &ids)?;
@@ -356,7 +443,7 @@ fn changed_fields(u: &tags::TagUpdate) -> String {
 
 /// Analysierte BPM/Tonart dauerhaft in die Datei-Tags schreiben.
 #[tauri::command]
-async fn write_analysis_to_tags(state: State<'_, AppState>, ids: Vec<i64>) -> R<Vec<String>> {
+async fn write_analysis_to_tags(state: Tab, ids: Vec<i64>) -> R<Vec<String>> {
     let db = state.db.clone();
     blocking(move || {
         let tracks = db::tracks_by_ids(&db.lock().unwrap(), &ids)?;
@@ -387,7 +474,7 @@ async fn write_analysis_to_tags(state: State<'_, AppState>, ids: Vec<i64>) -> R<
 }
 
 #[tauri::command]
-async fn get_cover(state: State<'_, AppState>, id: i64) -> R<Option<String>> {
+async fn get_cover(state: Tab, id: i64) -> R<Option<String>> {
     let db = state.db.clone();
     blocking(move || {
         let Some(t) = db::track(&db.lock().unwrap(), id)? else { return Ok(None) };
@@ -427,7 +514,7 @@ fn apply_cover(db: &Db, ids: &[i64], data: Option<Vec<u8>>) -> anyhow::Result<Ve
 }
 
 #[tauri::command]
-async fn set_cover_file(state: State<'_, AppState>, ids: Vec<i64>, file: String) -> R<Vec<String>> {
+async fn set_cover_file(state: Tab, ids: Vec<i64>, file: String) -> R<Vec<String>> {
     let db = state.db.clone();
     blocking(move || {
         let data = std::fs::read(&file)?;
@@ -437,7 +524,7 @@ async fn set_cover_file(state: State<'_, AppState>, ids: Vec<i64>, file: String)
 }
 
 #[tauri::command]
-async fn remove_cover(state: State<'_, AppState>, ids: Vec<i64>) -> R<Vec<String>> {
+async fn remove_cover(state: Tab, ids: Vec<i64>) -> R<Vec<String>> {
     let db = state.db.clone();
     blocking(move || apply_cover(&db, &ids, None)).await
 }
@@ -445,14 +532,14 @@ async fn remove_cover(state: State<'_, AppState>, ids: Vec<i64>) -> R<Vec<String
 // ---------- MusicBrainz ----------
 
 #[tauri::command]
-async fn mb_search(state: State<'_, AppState>, artist: String, title: String, album: Option<String>) -> R<Vec<musicbrainz::Candidate>> {
+async fn mb_search(state: Tab, artist: String, title: String, album: Option<String>) -> R<Vec<musicbrainz::Candidate>> {
     let db = state.db.clone();
     blocking(move || musicbrainz::search(Some(&db), &artist, &title, album.as_deref())).await
 }
 
 /// Titel am Klang erkennen (AcoustID)
 #[tauri::command]
-async fn acoustid_lookup(state: State<'_, AppState>, id: i64) -> R<Vec<musicbrainz::Candidate>> {
+async fn acoustid_lookup(state: Tab, id: i64) -> R<Vec<musicbrainz::Candidate>> {
     let db = state.db.clone();
     blocking(move || {
         let c = db.lock().unwrap();
@@ -466,7 +553,7 @@ async fn acoustid_lookup(state: State<'_, AppState>, id: i64) -> R<Vec<musicbrai
 }
 
 #[tauri::command]
-async fn mb_cover(state: State<'_, AppState>, ids: Vec<i64>, release_id: String) -> R<Vec<String>> {
+async fn mb_cover(state: Tab, ids: Vec<i64>, release_id: String) -> R<Vec<String>> {
     let db = state.db.clone();
     blocking(move || {
         let data = musicbrainz::cover(Some(&db), &release_id)?;
@@ -478,9 +565,9 @@ async fn mb_cover(state: State<'_, AppState>, ids: Vec<i64>, release_id: String)
 // ---------- Duplikate ----------
 
 #[tauri::command]
-async fn find_duplicates(app: AppHandle, state: State<'_, AppState>, modes: duplicates::Modes) -> R<Vec<duplicates::DupGroup>> {
+async fn find_duplicates(app: AppHandle, state: Tab, modes: duplicates::Modes) -> R<Vec<duplicates::DupGroup>> {
     let db = state.db.clone();
-    let prog = emitter(&app, "duplicates");
+    let prog = emitter(&app, &state.label, "duplicates");
     blocking(move || {
         let (tracks, fps, ignored) = {
             let c = db.lock().unwrap();
@@ -495,7 +582,7 @@ async fn find_duplicates(app: AppHandle, state: State<'_, AppState>, modes: dupl
 
 /// „Kein Duplikat“: diese Titel nie wieder gegeneinander melden (jedes Paar der Liste)
 #[tauri::command]
-fn dup_ignore(state: State<AppState>, ids: Vec<i64>, against: Option<Vec<i64>>) -> R<usize> {
+fn dup_ignore(state: Tab, ids: Vec<i64>, against: Option<Vec<i64>>) -> R<usize> {
     let c = state.db.lock().unwrap();
     let mut n = 0;
     let mut add = |a: i64, b: i64| {
@@ -514,12 +601,12 @@ fn dup_ignore(state: State<AppState>, ids: Vec<i64>, against: Option<Vec<i64>>) 
 }
 
 #[tauri::command]
-fn dup_ignore_count(state: State<AppState>) -> R<usize> {
+fn dup_ignore_count(state: Tab) -> R<usize> {
     state.db.lock().unwrap().query_row("SELECT COUNT(*) FROM dup_ignore", [], |r| r.get::<_, i64>(0)).map(|n| n as usize).map_err(err)
 }
 
 #[tauri::command]
-fn dup_ignore_clear(state: State<AppState>) -> R<()> {
+fn dup_ignore_clear(state: Tab) -> R<()> {
     state.db.lock().unwrap().execute("DELETE FROM dup_ignore", []).map(|_| ()).map_err(err)
 }
 
@@ -535,7 +622,7 @@ fn stop_dirs(conn: &Connection) -> Vec<PathBuf> {
 }
 
 #[tauri::command]
-async fn organize_preview(state: State<'_, AppState>, ids: Option<Vec<i64>>, target: String, pattern: String) -> R<Vec<organize::PlannedMove>> {
+async fn organize_preview(state: Tab, ids: Option<Vec<i64>>, target: String, pattern: String) -> R<Vec<organize::PlannedMove>> {
     let db = state.db.clone();
     blocking(move || {
         let c = db.lock().unwrap();
@@ -549,9 +636,9 @@ async fn organize_preview(state: State<'_, AppState>, ids: Option<Vec<i64>>, tar
 }
 
 #[tauri::command]
-async fn organize_apply(app: AppHandle, state: State<'_, AppState>, plan: Vec<organize::PlannedMove>, copy: bool, description: String) -> R<organize::ApplyReport> {
+async fn organize_apply(app: AppHandle, state: Tab, plan: Vec<organize::PlannedMove>, copy: bool, description: String) -> R<organize::ApplyReport> {
     let db = state.db.clone();
-    let prog = emitter(&app, "organize");
+    let prog = emitter(&app, &state.label, "organize");
     blocking(move || {
         let stops = stop_dirs(&db.lock().unwrap());
         let r = organize::apply(&db, &plan, copy, &description, &stops, &prog)?;
@@ -562,12 +649,12 @@ async fn organize_apply(app: AppHandle, state: State<'_, AppState>, plan: Vec<or
 }
 
 #[tauri::command]
-fn move_batches(state: State<AppState>) -> R<Vec<organize::Batch>> {
+fn move_batches(state: Tab) -> R<Vec<organize::Batch>> {
     organize::batches(&state.db.lock().unwrap()).map_err(err)
 }
 
 #[tauri::command]
-async fn undo_batch(state: State<'_, AppState>, id: Option<i64>) -> R<history::UndoReport> {
+async fn undo_batch(state: Tab, id: Option<i64>) -> R<history::UndoReport> {
     let db = state.db.clone();
     blocking(move || {
         let id = match id {
@@ -591,12 +678,12 @@ fn delete_playlist_file(conn: &Connection, name: &str) {
 }
 
 #[tauri::command]
-fn playlists_list(state: State<AppState>) -> R<Vec<playlists::Playlist>> {
+fn playlists_list(state: Tab) -> R<Vec<playlists::Playlist>> {
     playlists::list(&state.db.lock().unwrap()).map_err(err)
 }
 
 #[tauri::command]
-fn playlist_create(state: State<AppState>, name: String, rules: Option<playlists::SmartRules>, ids: Option<Vec<i64>>) -> R<i64> {
+fn playlist_create(state: Tab, name: String, rules: Option<playlists::SmartRules>, ids: Option<Vec<i64>>) -> R<i64> {
     let mut c = state.db.lock().unwrap();
     let id = playlists::create(&c, &name, rules.as_ref()).map_err(err)?;
     if let Some(ids) = ids {
@@ -607,7 +694,7 @@ fn playlist_create(state: State<AppState>, name: String, rules: Option<playlists
 }
 
 #[tauri::command]
-fn playlist_update(state: State<AppState>, id: i64, name: String, rules: Option<playlists::SmartRules>) -> R<()> {
+fn playlist_update(state: Tab, id: i64, name: String, rules: Option<playlists::SmartRules>) -> R<()> {
     let c = state.db.lock().unwrap();
     let old = playlists::name(&c, id).map_err(err)?;
     if old != name {
@@ -619,7 +706,7 @@ fn playlist_update(state: State<AppState>, id: i64, name: String, rules: Option<
 }
 
 #[tauri::command]
-fn playlist_delete(state: State<AppState>, id: i64) -> R<()> {
+fn playlist_delete(state: Tab, id: i64) -> R<()> {
     let c = state.db.lock().unwrap();
     if let Ok(n) = playlists::name(&c, id) {
         delete_playlist_file(&c, &n);
@@ -628,12 +715,12 @@ fn playlist_delete(state: State<AppState>, id: i64) -> R<()> {
 }
 
 #[tauri::command]
-fn playlist_items(state: State<AppState>, id: i64) -> R<Vec<i64>> {
+fn playlist_items(state: Tab, id: i64) -> R<Vec<i64>> {
     playlists::track_ids(&state.db.lock().unwrap(), id).map_err(err)
 }
 
 #[tauri::command]
-fn playlist_set_items(state: State<AppState>, id: i64, ids: Vec<i64>) -> R<()> {
+fn playlist_set_items(state: Tab, id: i64, ids: Vec<i64>) -> R<()> {
     let mut c = state.db.lock().unwrap();
     playlists::set_items(&mut c, id, &ids).map_err(err)?;
     sync_playlists(&c);
@@ -641,7 +728,7 @@ fn playlist_set_items(state: State<AppState>, id: i64, ids: Vec<i64>) -> R<()> {
 }
 
 #[tauri::command]
-fn playlist_add_items(state: State<AppState>, id: i64, ids: Vec<i64>) -> R<()> {
+fn playlist_add_items(state: Tab, id: i64, ids: Vec<i64>) -> R<()> {
     let mut c = state.db.lock().unwrap();
     playlists::add_items(&mut c, id, &ids).map_err(err)?;
     sync_playlists(&c);
@@ -649,14 +736,14 @@ fn playlist_add_items(state: State<AppState>, id: i64, ids: Vec<i64>) -> R<()> {
 }
 
 #[tauri::command]
-fn smart_preview(state: State<AppState>, rules: playlists::SmartRules) -> R<Vec<i64>> {
+fn smart_preview(state: Tab, rules: playlists::SmartRules) -> R<Vec<i64>> {
     let all = db::all_tracks(&state.db.lock().unwrap()).map_err(err)?;
     Ok(playlists::evaluate(&all, &rules))
 }
 
 /// M3U/M3U8 importieren: unbekannte Dateien werden zur Bibliothek hinzugefügt.
 #[tauri::command]
-async fn playlist_import(state: State<'_, AppState>, file: String) -> R<(i64, usize)> {
+async fn playlist_import(state: Tab, file: String) -> R<(i64, usize)> {
     let db = state.db.clone();
     blocking(move || {
         let paths: Vec<PathBuf> = playlists::read_m3u(Path::new(&file))?.into_iter().filter(|p| p.exists()).collect();
@@ -672,21 +759,21 @@ async fn playlist_import(state: State<'_, AppState>, file: String) -> R<(i64, us
 }
 
 #[tauri::command]
-fn playlist_save_m3u8(state: State<AppState>, id: i64, file: String) -> R<()> {
+fn playlist_save_m3u8(state: Tab, id: i64, file: String) -> R<()> {
     playlists::write_m3u8(&state.db.lock().unwrap(), id, Path::new(&file)).map_err(err)
 }
 
 #[tauri::command]
-fn export_size(state: State<AppState>, ids: Vec<i64>) -> R<u64> {
+fn export_size(state: Tab, ids: Vec<i64>) -> R<u64> {
     export::size_of(&state.db.lock().unwrap(), &ids).map_err(err)
 }
 
 #[tauri::command]
-async fn export_playlists(app: AppHandle, state: State<'_, AppState>, ids: Vec<i64>, dest: String, layout: export::Layout) -> R<export::ExportReport> {
+async fn export_playlists(app: AppHandle, state: Tab, ids: Vec<i64>, dest: String, layout: export::Layout) -> R<export::ExportReport> {
     let db = state.db.clone();
     let cancel = state.cancel.clone();
     cancel.store(false, Ordering::Relaxed);
-    let prog = emitter(&app, "export");
+    let prog = emitter(&app, &state.label, "export");
     blocking(move || export::export(&db, &ids, Path::new(&dest), layout, &cancel, &prog)).await
 }
 
@@ -706,7 +793,7 @@ struct PioneerTrack {
 }
 
 #[tauri::command]
-fn pioneer_track(state: State<AppState>, id: i64) -> R<PioneerTrack> {
+fn pioneer_track(state: Tab, id: i64) -> R<PioneerTrack> {
     pioneer_on(&state.db)?;
     use base64::Engine;
     let c = state.db.lock().unwrap();
@@ -718,25 +805,25 @@ fn pioneer_track(state: State<AppState>, id: i64) -> R<PioneerTrack> {
 }
 
 #[tauri::command]
-fn pioneer_set_grid(state: State<AppState>, id: i64, bpm: f64, downbeat_ms: f64, what: String) -> R<i64> {
+fn pioneer_set_grid(state: Tab, id: i64, bpm: f64, downbeat_ms: f64, what: String) -> R<i64> {
     pioneer_on(&state.db)?;
     pioneer::set_grid(&state.db.lock().unwrap(), id, bpm, downbeat_ms, &what).map_err(err)
 }
 
 #[tauri::command]
-fn pioneer_set_cue(state: State<AppState>, id: i64, cue: pioneer::Cue) -> R<i64> {
+fn pioneer_set_cue(state: Tab, id: i64, cue: pioneer::Cue) -> R<i64> {
     pioneer_on(&state.db)?;
     pioneer::set_cue(&state.db.lock().unwrap(), id, &cue).map_err(err)
 }
 
 #[tauri::command]
-fn pioneer_delete_cue(state: State<AppState>, id: i64, cue_id: i64) -> R<i64> {
+fn pioneer_delete_cue(state: Tab, id: i64, cue_id: i64) -> R<i64> {
     pioneer_on(&state.db)?;
     pioneer::delete_cue(&state.db.lock().unwrap(), id, cue_id).map_err(err)
 }
 
 #[tauri::command]
-async fn pioneer_preview(app: AppHandle, state: State<'_, AppState>, options: pioneer::export::Options) -> R<pioneer::export::Preview> {
+async fn pioneer_preview(app: AppHandle, state: Tab, options: pioneer::export::Options) -> R<pioneer::export::Preview> {
     pioneer_on(&state.db)?;
     let db = state.db.clone();
     let ff = ripper::find(&tools_dir(&app), ripper::FFMPEG).is_some();
@@ -745,20 +832,21 @@ async fn pioneer_preview(app: AppHandle, state: State<'_, AppState>, options: pi
 
 /// Export: fehlende Analysen nachholen, dann auf das Laufwerk schreiben
 #[tauri::command]
-async fn pioneer_export(app: AppHandle, state: State<'_, AppState>, options: pioneer::export::Options) -> R<pioneer::export::Report> {
+async fn pioneer_export(app: AppHandle, state: Tab, options: pioneer::export::Options) -> R<pioneer::export::Report> {
     pioneer_on(&state.db)?;
     let db = state.db.clone();
     let cancel = state.cancel.clone();
     cancel.store(false, Ordering::Relaxed);
     let threads = load_settings(&db.lock().unwrap()).threads;
     let ffmpeg = ripper::find(&tools_dir(&app), ripper::FFMPEG);
-    let prog = emitter(&app, "pioneer");
+    let prog = emitter(&app, &state.label, "pioneer");
     let app2 = app.clone();
+    let label = state.label.clone();
     blocking(move || {
         let missing = pioneer::export::preview(&db.lock().unwrap(), &options, ffmpeg.is_some())?.missing_analysis;
         if !missing.is_empty() {
             analysis::analyze_pending_with(&db, Some(missing), threads, true, &cancel, &prog, &|id| {
-                let _ = app2.emit("analyzed", id);
+                let _ = app2.emit_to(&label, "analyzed", id);
             })?;
         }
         if cancel.load(Ordering::Relaxed) {
@@ -770,7 +858,7 @@ async fn pioneer_export(app: AppHandle, state: State<'_, AppState>, options: pio
 }
 
 #[tauri::command]
-async fn pioneer_xml(app: AppHandle, state: State<'_, AppState>, playlists: Vec<i64>, file: String) -> R<()> {
+async fn pioneer_xml(app: AppHandle, state: Tab, playlists: Vec<i64>, file: String) -> R<()> {
     pioneer_on(&state.db)?;
     let db = state.db.clone();
     let version = app.package_info().version.to_string();
@@ -783,7 +871,7 @@ async fn pioneer_xml(app: AppHandle, state: State<'_, AppState>, playlists: Vec<
 }
 
 #[tauri::command]
-fn sync_playlist_folder(state: State<AppState>) -> R<usize> {
+fn sync_playlist_folder(state: Tab) -> R<usize> {
     let c = state.db.lock().unwrap();
     let s = load_settings(&c);
     match s.playlist_dir.filter(|d| !d.is_empty()) {
@@ -795,14 +883,14 @@ fn sync_playlist_folder(state: State<AppState>) -> R<usize> {
 // ---------- Ordneransicht ----------
 
 #[tauri::command]
-async fn dir_list(state: State<'_, AppState>, path: String) -> R<Vec<dirs::DirEntry>> {
+async fn dir_list(state: Tab, path: String) -> R<Vec<dirs::DirEntry>> {
     let db = state.db.clone();
     blocking(move || dirs::list(&db.lock().unwrap(), Path::new(&path))).await
 }
 
 /// Audiodateien im Ordner, die noch nicht in der Bibliothek sind, aufnehmen.
 #[tauri::command]
-async fn dir_import_untracked(state: State<'_, AppState>, path: String) -> R<Vec<i64>> {
+async fn dir_import_untracked(state: Tab, path: String) -> R<Vec<i64>> {
     let db = state.db.clone();
     blocking(move || {
         let files = dirs::untracked_files(&db.lock().unwrap(), Path::new(&path))?;
@@ -819,7 +907,7 @@ fn dir_create(app: AppHandle, parent: String, name: String) -> R<String> {
 }
 
 #[tauri::command]
-async fn dir_rename(app: AppHandle, state: State<'_, AppState>, path: String, name: String) -> R<String> {
+async fn dir_rename(app: AppHandle, state: Tab, path: String, name: String) -> R<String> {
     let db = state.db.clone();
     let p = blocking(move || {
         let c = db.lock().unwrap();
@@ -834,7 +922,7 @@ async fn dir_rename(app: AppHandle, state: State<'_, AppState>, path: String, na
 }
 
 #[tauri::command]
-async fn dir_move(app: AppHandle, state: State<'_, AppState>, path: String, target: String) -> R<String> {
+async fn dir_move(app: AppHandle, state: Tab, path: String, target: String) -> R<String> {
     let db = state.db.clone();
     let p = blocking(move || {
         let c = db.lock().unwrap();
@@ -851,7 +939,7 @@ async fn dir_move(app: AppHandle, state: State<'_, AppState>, path: String, targ
 }
 
 #[tauri::command]
-async fn dir_trash(state: State<'_, AppState>, path: String) -> R<usize> {
+async fn dir_trash(state: Tab, path: String) -> R<usize> {
     let db = state.db.clone();
     blocking(move || {
         {
@@ -875,9 +963,9 @@ async fn dir_trash(state: State<'_, AppState>, path: String) -> R<usize> {
 
 /// Titel manuell in einen Ordner verschieben/kopieren (mit Verlauf + Rückgängig).
 #[tauri::command]
-async fn move_tracks_to(app: AppHandle, state: State<'_, AppState>, ids: Vec<i64>, dir: String, copy: bool) -> R<organize::ApplyReport> {
+async fn move_tracks_to(app: AppHandle, state: Tab, ids: Vec<i64>, dir: String, copy: bool) -> R<organize::ApplyReport> {
     let db = state.db.clone();
-    let prog = emitter(&app, "organize");
+    let prog = emitter(&app, &state.label, "organize");
     let _ = app.asset_protocol_scope().allow_directory(&dir, true);
     blocking(move || {
         let tracks = db::tracks_by_ids(&db.lock().unwrap(), &ids)?;
@@ -894,7 +982,7 @@ async fn move_tracks_to(app: AppHandle, state: State<'_, AppState>, ids: Vec<i64
 
 /// Datei umbenennen (Name ohne Endung), mit Verlauf + Rückgängig.
 #[tauri::command]
-async fn rename_track(state: State<'_, AppState>, id: i64, name: String) -> R<organize::ApplyReport> {
+async fn rename_track(state: Tab, id: i64, name: String) -> R<organize::ApplyReport> {
     let db = state.db.clone();
     blocking(move || {
         let tracks = db::tracks_by_ids(&db.lock().unwrap(), &[id])?;
@@ -909,7 +997,7 @@ async fn rename_track(state: State<'_, AppState>, id: i64, name: String) -> R<or
 }
 
 #[tauri::command]
-fn rename_preview(state: State<AppState>, ids: Vec<i64>, pattern: String) -> R<Vec<(i64, String)>> {
+fn rename_preview(state: Tab, ids: Vec<i64>, pattern: String) -> R<Vec<(i64, String)>> {
     let tracks = db::tracks_by_ids(&state.db.lock().unwrap(), &ids).map_err(err)?;
     Ok(tracks
         .iter()
@@ -922,7 +1010,7 @@ fn rename_preview(state: State<AppState>, ids: Vec<i64>, pattern: String) -> R<V
 
 /// Dateien nach Muster aus den Tags umbenennen (bleiben im selben Ordner).
 #[tauri::command]
-async fn rename_by_pattern(state: State<'_, AppState>, ids: Vec<i64>, pattern: String) -> R<organize::ApplyReport> {
+async fn rename_by_pattern(state: Tab, ids: Vec<i64>, pattern: String) -> R<organize::ApplyReport> {
     let db = state.db.clone();
     blocking(move || {
         let tracks = db::tracks_by_ids(&db.lock().unwrap(), &ids)?;
@@ -947,22 +1035,22 @@ async fn rename_by_pattern(state: State<'_, AppState>, ids: Vec<i64>, pattern: S
 // ---------- Sync (USB-Stick, SD-Karte …) ----------
 
 #[tauri::command]
-fn sync_targets(state: State<AppState>) -> R<Vec<sync::TargetState>> {
+fn sync_targets(state: Tab) -> R<Vec<sync::TargetState>> {
     sync::list(&state.db.lock().unwrap()).map_err(err)
 }
 
 #[tauri::command]
-fn sync_save(state: State<AppState>, target: sync::Target) -> R<i64> {
+fn sync_save(state: Tab, target: sync::Target) -> R<i64> {
     sync::save(&state.db.lock().unwrap(), &target).map_err(err)
 }
 
 #[tauri::command]
-fn sync_delete(state: State<AppState>, id: i64) -> R<()> {
+fn sync_delete(state: Tab, id: i64) -> R<()> {
     sync::delete(&state.db.lock().unwrap(), id).map_err(err)
 }
 
 #[tauri::command]
-async fn sync_preview(state: State<'_, AppState>, id: i64) -> R<sync::Preview> {
+async fn sync_preview(state: Tab, id: i64) -> R<sync::Preview> {
     let db = state.db.clone();
     blocking(move || {
         let c = db.lock().unwrap();
@@ -973,11 +1061,11 @@ async fn sync_preview(state: State<'_, AppState>, id: i64) -> R<sync::Preview> {
 }
 
 #[tauri::command]
-async fn sync_run(app: AppHandle, state: State<'_, AppState>, id: i64) -> R<sync::Report> {
+async fn sync_run(app: AppHandle, state: Tab, id: i64) -> R<sync::Report> {
     let db = state.db.clone();
     let cancel = state.cancel.clone();
     cancel.store(false, Ordering::Relaxed);
-    let prog = emitter(&app, "sync");
+    let prog = emitter(&app, &state.label, "sync");
     blocking(move || sync::run(&db, id, &cancel, &prog)).await
 }
 
@@ -999,9 +1087,9 @@ async fn rip_tools(app: AppHandle) -> R<ripper::ToolStatus> {
 }
 
 #[tauri::command]
-async fn rip_install(app: AppHandle) -> R<ripper::ToolStatus> {
+async fn rip_install(app: AppHandle, window: tauri::WebviewWindow) -> R<ripper::ToolStatus> {
     let dir = tools_dir(&app);
-    let prog = emitter(&app, "tools");
+    let prog = emitter(&app, window.label(), "tools");
     blocking(move || ripper::install(&dir, &prog)).await
 }
 
@@ -1012,7 +1100,7 @@ async fn rip_update(app: AppHandle) -> R<String> {
 }
 
 #[tauri::command]
-async fn rip_resolve(app: AppHandle, state: State<'_, AppState>, url: String) -> R<ripper::Resolved> {
+async fn rip_resolve(app: AppHandle, state: Tab, url: String) -> R<ripper::Resolved> {
     let dir = tools_dir(&app);
     let db = state.db.clone();
     blocking(move || {
@@ -1032,23 +1120,24 @@ struct RipReport {
 }
 
 #[tauri::command]
-async fn rip_download(app: AppHandle, state: State<'_, AppState>, entries: Vec<ripper::Entry>, dir: String, format: ripper::Format) -> R<RipReport> {
+async fn rip_download(app: AppHandle, state: Tab, entries: Vec<ripper::Entry>, dir: String, format: ripper::Format) -> R<RipReport> {
     let tools = tools_dir(&app);
     let db = state.db.clone();
     let cancel = state.cancel.clone();
     cancel.store(false, Ordering::Relaxed);
     let _ = app.asset_protocol_scope().allow_directory(&dir, true);
+    let label = state.label.clone();
     blocking(move || {
         let mut rep = RipReport { ids: vec![], errors: vec![] };
         let total = entries.len();
         let on = |ev: ripper::RipEvent| {
-            let _ = app.emit("rip", ev);
+            let _ = app.emit_to(&label, "rip", ev);
         };
         for (n, e) in entries.iter().enumerate() {
             if cancel.load(Ordering::Relaxed) {
                 break;
             }
-            let _ = app.emit("progress", ProgressEvent { task: "rip".into(), done: n, total, message: format!("{} – {}", e.artist, e.title) });
+            let _ = app.emit_to(&label, "progress", ProgressEvent { task: "rip".into(), done: n, total, message: format!("{} – {}", e.artist, e.title) });
             if n > 0 {
                 // Schonend: kurze Pause zwischen den Titeln, damit YouTube nicht sperrt
                 std::thread::sleep(std::time::Duration::from_millis(2500));
@@ -1064,7 +1153,7 @@ async fn rip_download(app: AppHandle, state: State<'_, AppState>, entries: Vec<r
                 }
             }
         }
-        let _ = app.emit("progress", ProgressEvent { task: "rip".into(), done: total, total, message: "Fertig".into() });
+        let _ = app.emit_to(&label, "progress", ProgressEvent { task: "rip".into(), done: total, total, message: "Fertig".into() });
         sync_playlists(&db.lock().unwrap());
         Ok(rep)
     })
@@ -1079,7 +1168,7 @@ async fn cast_devices() -> R<Vec<cast::Device>> {
 }
 
 #[tauri::command]
-async fn cast_play(state: State<'_, AppState>, device: String, id: i64, start: f64) -> R<()> {
+async fn cast_play(state: Tab, device: String, id: i64, start: f64) -> R<()> {
     let db = state.db.clone();
     blocking(move || {
         let t = db::track(&db.lock().unwrap(), id)?.ok_or_else(|| anyhow::anyhow!("Titel nicht gefunden"))?;
@@ -1152,7 +1241,8 @@ fn quit(app: &AppHandle) {
 }
 
 fn show_main(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
+    let label = app.try_state::<Tabs>().map(|t| t.active.lock().unwrap().clone()).unwrap_or_else(|| "main".into());
+    if let Some(w) = app.get_webview_window(&label).or_else(|| app.get_webview_window("main")) {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
@@ -1195,6 +1285,129 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+// ---------- Tabs ----------
+
+#[tauri::command]
+fn tabs_list(app: AppHandle) -> Vec<TabInfo> {
+    app.state::<Tabs>().list()
+}
+
+/// Fenster eines Tabs holen oder (versteckt) anlegen – gleiche Größe/Lage wie das aufrufende Fenster
+fn tab_window(app: &AppHandle, label: &str, like: &tauri::WebviewWindow) -> anyhow::Result<tauri::WebviewWindow> {
+    if let Some(w) = app.get_webview_window(label) {
+        return Ok(w);
+    }
+    let size = like.inner_size()?.to_logical::<f64>(like.scale_factor()?);
+    let pos = like.outer_position()?.to_logical::<f64>(like.scale_factor()?);
+    let mut b = tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App("index.html".into()))
+        .title("Minimal Library")
+        .inner_size(size.width, size.height)
+        .position(pos.x, pos.y)
+        .min_inner_size(1000.0, 640.0)
+        .visible(false);
+    #[cfg(target_os = "macos")]
+    {
+        b = b
+            .decorations(true)
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .traffic_light_position(tauri::LogicalPosition::new(14.0, 17.0));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        b = b.decorations(false).shadow(true);
+    }
+    Ok(b.build()?)
+}
+
+/// Zu einem Tab wechseln: Zielfenster an gleicher Stelle zeigen, aktuelles verstecken
+#[tauri::command]
+fn tab_show(app: AppHandle, window: tauri::WebviewWindow, label: String) -> R<()> {
+    if label == window.label() {
+        return Ok(());
+    }
+    let tabs = app.state::<Tabs>();
+    if !tabs.list().iter().any(|t| t.label == label) {
+        return Err("Tab gibt es nicht mehr".into());
+    }
+    let target = tab_window(&app, &label, &window).map_err(err)?;
+    // Lage und Größe übernehmen (auch maximiert)
+    if window.is_maximized().unwrap_or(false) {
+        let _ = target.maximize();
+    } else {
+        let _ = target.unmaximize();
+        if let (Ok(sz), Ok(sf)) = (window.inner_size(), window.scale_factor()) {
+            let _ = target.set_size(sz.to_logical::<f64>(sf));
+        }
+        if let Ok(p) = window.outer_position() {
+            let _ = target.set_position(p);
+        }
+    }
+    target.show().map_err(err)?;
+    let _ = target.set_focus();
+    let _ = window.hide();
+    *tabs.active.lock().unwrap() = label;
+    Ok(())
+}
+
+#[tauri::command]
+fn tab_create(app: AppHandle, window: tauri::WebviewWindow) -> R<String> {
+    let tabs = app.state::<Tabs>();
+    let mut v = tabs.list();
+    let id = format!("tab-{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis());
+    let n = v.len() + 1;
+    v.push(TabInfo { label: id.clone(), name: format!("Bibliothek {n}") });
+    tabs.save(&v);
+    let _ = app.emit("tabs-changed", ());
+    tab_show(app, window, id.clone())?;
+    Ok(id)
+}
+
+#[tauri::command]
+fn tab_rename(app: AppHandle, label: String, name: String) -> R<()> {
+    let tabs = app.state::<Tabs>();
+    let mut v = tabs.list();
+    if let Some(t) = v.iter_mut().find(|t| t.label == label) {
+        t.name = name.trim().chars().take(40).collect::<String>();
+        if t.name.is_empty() {
+            t.name = "Bibliothek".into();
+        }
+    }
+    tabs.save(&v);
+    let _ = app.emit("tabs-changed", ());
+    Ok(())
+}
+
+/// Tab schließen: Fenster zu, Bibliothek dieses Tabs (Datenbank, Einstellungen) wird gelöscht.
+/// Die Musikdateien selbst bleiben unberührt. Der erste Tab lässt sich nicht schließen.
+#[tauri::command]
+fn tab_close(app: AppHandle, window: tauri::WebviewWindow, label: String) -> R<()> {
+    if label == "main" {
+        return Err("Der erste Tab lässt sich nicht schließen".into());
+    }
+    let tabs = app.state::<Tabs>();
+    if window.label() == label {
+        tab_show(app.clone(), window.clone(), "main".into())?;
+    }
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.destroy();
+    }
+    if let Some(st) = tabs.map.lock().unwrap().remove(&label) {
+        st.cancel.store(true, Ordering::Relaxed);
+        *st.watcher.lock().unwrap() = None;
+    }
+    let v: Vec<TabInfo> = tabs.list().into_iter().filter(|t| t.label != label).collect();
+    tabs.save(&v);
+    // Datenbank erst löschen, wenn nichts mehr darauf zugreift (kurz warten)
+    let dir = tabs.dir_of(&label);
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let _ = std::fs::remove_dir_all(dir);
+    });
+    let _ = app.emit("tabs-changed", ());
+    Ok(())
+}
+
 /// Titel im Infobereich-Tooltip anzeigen
 #[tauri::command]
 fn set_tray_title(app: AppHandle, text: String) {
@@ -1218,7 +1431,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             // Schließen (X, Alt+F4) → in den Infobereich, Musik läuft weiter
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let to_tray = window.app_handle().try_state::<AppState>().map(|s| load_settings(&s.db.lock().unwrap()).close_to_tray).unwrap_or(true);
+                let to_tray = tab_state(window.app_handle(), window.label()).map(|s| load_settings(&s.db.lock().unwrap()).close_to_tray).unwrap_or(true);
                 if to_tray {
                     api.prevent_close();
                     let _ = window.hide();
@@ -1230,16 +1443,8 @@ pub fn run() {
         .setup(|app| {
             setup_tray(app)?;
             let dir = app.path().app_data_dir()?;
-            let conn = db::open(&dir.join("library.db"))?;
-            musiccore::webcache::purge(&conn); // Online-Zwischenspeicher nach 3 Tagen löschen
-            // Nur, was in den Musikordnern liegt, gehört zur Bibliothek
-            let roots: Vec<PathBuf> = load_settings(&conn).roots.iter().map(PathBuf::from).collect();
-            let _ = dirs::prune_outside(&conn, &roots);
-            for r in load_settings(&conn).roots {
-                let _ = app.asset_protocol_scope().allow_directory(&r, true);
-            }
-            app.manage(AppState { db: Arc::new(Mutex::new(conn)), cancel: Arc::new(AtomicBool::new(false)), watcher: Mutex::new(None) });
-            restart_watcher(app.handle(), &app.state::<AppState>());
+            app.manage(Tabs { base: dir, map: Mutex::new(HashMap::new()), active: Mutex::new("main".into()) });
+            tab_state(app.handle(), "main")?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1323,6 +1528,11 @@ pub fn run() {
             cast_sound,
             cast_set_sound,
             set_tray_title,
+            tabs_list,
+            tab_show,
+            tab_create,
+            tab_rename,
+            tab_close,
             quit_app,
             app_version,
         ])

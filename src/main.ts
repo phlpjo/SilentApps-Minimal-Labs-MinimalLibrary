@@ -21,6 +21,7 @@ import { equalizerView } from "./views/equalizer";
 import { searchView } from "./views/search";
 import { startUpdater, updater } from "./updater";
 import { icon } from "./icons";
+import { MY_TAB, audioOwner, reportPlaying, tabStrip } from "./tabs";
 import { pioneerExportDialog, pioneerOn, xmlDialog } from "./pioneer";
 import { currentOutputLabel, outputPopup, restoreOutput } from "./outputs";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -40,6 +41,7 @@ function updateBack() {
 const maxBtn = h("button", { class: "tb-btn", title: "Maximieren", onclick: () => win.toggleMaximize() }, "▢");
 const titlebar = h("header", { id: "titlebar", "data-tauri-drag-region": "" },
   backBtn,
+  tabStrip(),
   h("div", { class: "tb-title", "data-tauri-drag-region": "" }),
   IS_MAC ? null : h("div", { class: "tb-ctrls" },
     h("button", { class: "tb-btn", title: "Minimieren", onclick: () => win.minimize() }, "—"),
@@ -388,12 +390,15 @@ store.on("tracks", () => store.emit("history"));
 
 // Infobereich (Tray): Steuerung + Titel im Tooltip
 listen<string>("tray", (e) => {
+  if (audioOwner() !== MY_TAB) return; // nur der Tab, in dem die Musik läuft
   if (e.payload === "toggle") player.toggle();
   else if (e.payload === "next") player.next();
 });
 let trayText = "";
 store.on("player", () => {
   const t = player.current;
+  if (audioOwner() !== MY_TAB) return;
+  reportPlaying(player.playing);
   const text = t ? `${t.artist ? t.artist + " – " : ""}${store.label(t)}${player.playing ? "" : " (Pause)"}` : "";
   if (text !== trayText) {
     trayText = text;
@@ -565,7 +570,7 @@ async function start() {
   // Alter Playlist-Ordner (nur .m3u8) ist durch Sync ersetzt
   if (store.settings.playlistDir) store.saveSettings({ playlistDir: null });
   startSyncWatch();
-  startUpdater();
+  if (MY_TAB === "main") startUpdater();
   restoreOutput();
 }
 start();

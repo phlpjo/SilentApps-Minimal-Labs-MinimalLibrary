@@ -9,7 +9,7 @@ import { player } from "./player";
 import { store } from "./store";
 import { artistLinks, clear, contextMenu, fmtTime, h, onArtistClick, sheet, toast, type MenuItem } from "./ui";
 import { drawWave, waveElement } from "./waveform";
-import { dropTarget } from "./dnd";
+import { beginDrag, dragging, dropTarget } from "./dnd";
 import { duplicatesView } from "./views/duplicates";
 import { libraryView, trackMenu } from "./views/library";
 import { foldersView } from "./views/folders";
@@ -121,6 +121,26 @@ onArtistClick(searchArtist);
 const plList = h("div", { class: "pl-list" });
 const status = h("div", { class: "status" });
 
+/** Beim Ziehen kurz über dem Menüpunkt halten → Ansicht wechselt, Ziehen geht weiter */
+let springTimer = 0;
+function springLoaded(el: HTMLElement, view: ViewName) {
+  dropTarget(el, {
+    accepts: (p) => p.kind === "ids" || p.kind === "dir",
+    enter: () => {
+      clearTimeout(springTimer);
+      if (current?.name === view) return;
+      springTimer = window.setTimeout(() => nav(view), 600);
+    },
+    leave: () => clearTimeout(springTimer),
+    drop: () => {
+      clearTimeout(springTimer);
+      if (current?.name !== view) nav(view);
+      toast("Zum Verschieben auf einen Ordner ziehen");
+    },
+  });
+  return el;
+}
+
 function navItem(label: string, active: boolean, onclick: () => void, count?: string) {
   return h("div", { class: "nav-item" + (active ? " active" : ""), onclick }, h("span", {}, label), count ? h("span", { class: "count" }, count) : null);
 }
@@ -144,7 +164,7 @@ function renderSide() {
   const mainnav = side.querySelector("#mainnav")!;
   mainnav.replaceChildren(
     navItem("Bibliothek", n === "library", () => nav("library"), store.tracks.size.toLocaleString("de")),
-    navItem("Ordner", n === "folders", () => nav("folders")),
+    springLoaded(navItem("Ordner", n === "folders", () => nav("folders")), "folders"),
     navItem("Duplikate", n === "duplicates", () => nav("duplicates")),
     navItem("Verlauf", n === "history", () => nav("history")),
     navItem("Ripper", n === "ripper", () => nav("ripper")),
@@ -350,6 +370,14 @@ function buildPlayer() {
   const nowInfo = h("div", { style: { minWidth: "0" } }, t1, t2);
   // Rechtsklick auf den laufenden Titel: gleiches Menü wie in der Liste
   for (const el of [cover, nowInfo]) {
+    // Laufenden Titel ziehen: auf Ordner (verschieben) oder Playlist (hinzufügen)
+    el.addEventListener("pointerdown", (e) => {
+      if (!player.current || (e.target as HTMLElement).closest(".artist-link")) return;
+      e.preventDefault();
+      const id = player.current.id;
+      beginDrag(e, () => ({ kind: "ids", ids: [id] }));
+    });
+    el.style.cursor = "grab";
     el.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       const t = player.current;
@@ -359,7 +387,7 @@ function buildPlayer() {
   t1.addEventListener("click", () => {
     // Klick auf den Titel: in der Bibliothek zeigen
     const t = player.current;
-    if (!t) return;
+    if (!t || dragging) return;
     store.selection.clear();
     store.selection.add(t.id);
     store.emit("selection");

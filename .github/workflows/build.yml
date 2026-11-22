@@ -65,12 +65,13 @@ jobs:
         run: npm ci
 
       - name: Version setzen (1.0.<Lauf>)
-        run: sed -i '' 's/"version": "1.0.0"/"version": "1.0.${{ github.run_number }}"/' src-tauri/tauri.conf.json
+        run: |
+          sed -i '' 's/"version": "1.0.0"/"version": "1.0.${{ github.run_number }}"/' src-tauri/tauri.conf.json
 
       - name: Tests (Kern)
         run: cargo test -p musiccore --release
 
-      - name: Bauen (Universal: Apple Silicon + Intel)
+      - name: Bauen (Universal – Apple Silicon + Intel)
         run: npx tauri build --target universal-apple-darwin
 
       - name: Artefakte hochladen

@@ -20,9 +20,9 @@ const YTDLP: &str = "yt-dlp.exe";
 #[cfg(not(windows))]
 const YTDLP: &str = "yt-dlp";
 #[cfg(windows)]
-const FFMPEG: &str = "ffmpeg.exe";
+pub const FFMPEG: &str = "ffmpeg.exe";
 #[cfg(not(windows))]
-const FFMPEG: &str = "ffmpeg";
+pub const FFMPEG: &str = "ffmpeg";
 
 fn cmd(program: &Path) -> Command {
     #[allow(unused_mut)]
@@ -36,7 +36,7 @@ fn cmd(program: &Path) -> Command {
 }
 
 /// Programm im Werkzeug-Ordner, sonst im Systempfad
-fn find(tools: &Path, name: &str) -> Option<PathBuf> {
+pub fn find(tools: &Path, name: &str) -> Option<PathBuf> {
     let local = tools.join(name);
     if local.exists() {
         return Some(local);

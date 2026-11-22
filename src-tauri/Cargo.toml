@@ -4,6 +4,7 @@ version = "1.0.0"
 description = "Minimal Library – Musikbibliothek für Windows"
 authors = ["SilentApps Minimal Labs"]
 edition = "2024"
+publish = false
 
 [lib]
 name = "minimal_library_lib"
@@ -22,6 +23,6 @@ serde_json = "1"
 anyhow = "1"
 base64 = "0.22"
 trash = "5"
-rusqlite = { version = "0.43.0", features = ["bundled"] }
+rusqlite = { version = "0.43.0", features = ["bundled-sqlcipher-vendored-openssl"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"

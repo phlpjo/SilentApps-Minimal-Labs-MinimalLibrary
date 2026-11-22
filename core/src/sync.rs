@@ -28,6 +28,11 @@ pub struct Target {
     /// Früher kopierte, nicht mehr benötigte Dateien entfernen
     pub mirror: bool,
     pub last_sync: i64,
+    /// Ablage der Titel: "artist" (Interpret/Album/Titel), "album" (Album/Titel),
+    /// "flat" (alle in einem Ordner), "playlist" (ein Ordner je Playlist)
+    pub layout: String,
+    /// Keine .m3u8-Dateien schreiben (Standard: schreiben)
+    pub no_playlist_files: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,12 +93,26 @@ struct Manifest {
     playlists: BTreeSet<String>,
 }
 
-fn rel_of(t: &Track) -> String {
-    let ext = Path::new(&t.path).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
-    let mut p = PathBuf::from(MUSIC_DIR).join(organize::render("{albumartist}/{album}/{disc-}{track} - {title}", t));
-    let f = format!("{}.{ext}", p.file_name().unwrap_or_default().to_string_lossy());
-    p.set_file_name(f);
-    p.to_string_lossy().replace('\\', "/")
+/// Dateiname/-pfad auf dem Gerät je nach Ablage (ohne Endung)
+fn rel_of(t: &Track, layout: &str, playlist: &str, pos: usize) -> String {
+    let pattern = match layout {
+        "album" => "{album}/{disc-}{track} - {title}",
+        "flat" => "{artist} - {title}",
+        "playlist" => "",
+        _ => "{albumartist}/{album}/{disc-}{track} - {title}",
+    };
+    let stem = if layout == "playlist" {
+        let one = organize::render("{artist} - {title}", t);
+        let one = one.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+        format!("{}/{:02} - {}", paths::sanitize(playlist), pos, one)
+    } else {
+        format!("{MUSIC_DIR}/{}", organize::render(pattern, t).to_string_lossy())
+    };
+    stem.replace('\\', "/")
+}
+
+fn ext_of(t: &Track) -> String {
+    Path::new(&t.path).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default()
 }
 
 struct Plan {
@@ -104,17 +123,26 @@ struct Plan {
 }
 
 fn plan(c: &Connection, t: &Target) -> Result<Plan> {
+    let layout = if t.layout.is_empty() { "artist" } else { t.layout.as_str() };
     let mut files: Vec<(PathBuf, String, u64)> = Vec::new();
-    let mut by_id: HashMap<i64, String> = HashMap::new();
+    // Titel → Zielpfad (bei „je Playlist“ pro Playlist eigene Kopie)
+    let mut by_key: HashMap<(i64, i64), String> = HashMap::new();
+    let mut used: HashMap<String, usize> = HashMap::new();
     let mut pls = Vec::new();
     let root = Path::new(&t.path);
     for &pid in &t.playlists {
         let Ok(name) = playlists::name(c, pid) else { continue };
         let tracks = db::tracks_by_ids(c, &playlists::track_ids(c, pid)?)?;
         let mut on_device: Vec<Track> = Vec::new();
-        for tr in tracks {
-            let rel = by_id.entry(tr.id).or_insert_with(|| {
-                let r = rel_of(&tr);
+        for (i, tr) in tracks.into_iter().enumerate() {
+            let key = (if layout == "playlist" { pid } else { 0 }, tr.id);
+            let rel = by_key.entry(key).or_insert_with(|| {
+                let stem = rel_of(&tr, layout, &name, i + 1);
+                let ext = ext_of(&tr);
+                // gleiche Zielnamen (zwei Titel mit gleichem Namen) auseinanderhalten
+                let n = used.entry(format!("{stem}.{ext}").to_lowercase()).or_insert(0);
+                *n += 1;
+                let r = if *n > 1 { format!("{stem} ({n}).{ext}") } else { format!("{stem}.{ext}") };
                 files.push((PathBuf::from(&tr.path), r.clone(), tr.size.max(0) as u64));
                 r
             });
@@ -122,21 +150,17 @@ fn plan(c: &Connection, t: &Target) -> Result<Plan> {
             copy.path = root.join(&*rel).to_string_lossy().to_string();
             on_device.push(copy);
         }
-        let m3u_rel = format!("{}.m3u8", paths::sanitize(&name));
-        pls.push((m3u_rel, playlists::m3u8(&on_device, root)));
-    }
-    // gleiche Zielnamen (zwei Titel mit gleichem Namen) auseinanderhalten
-    let mut seen: HashMap<String, usize> = HashMap::new();
-    for f in files.iter_mut() {
-        let k = f.1.to_lowercase();
-        let n = seen.entry(k).or_insert(0);
-        *n += 1;
-        if *n > 1 {
-            let p = Path::new(&f.1);
-            let stem = p.file_stem().unwrap_or_default().to_string_lossy();
-            let ext = p.extension().unwrap_or_default().to_string_lossy();
-            f.1 = p.with_file_name(format!("{stem} ({n}).{ext}")).to_string_lossy().replace('\\', "/");
+        if t.no_playlist_files {
+            continue;
         }
+        let file = format!("{}.m3u8", paths::sanitize(&name));
+        // bei „je Playlist“ liegt die Playlist-Datei im Ordner der Playlist
+        let (m3u_rel, base) = if layout == "playlist" {
+            (format!("{}/{file}", paths::sanitize(&name)), root.join(paths::sanitize(&name)))
+        } else {
+            (file, root.to_path_buf())
+        };
+        pls.push((m3u_rel, playlists::m3u8(&on_device, &base)));
     }
     Ok(Plan { files, playlists: pls })
 }
@@ -251,7 +275,11 @@ pub fn run(conn: &Mutex<Connection>, id: i64, cancel: &AtomicBool, progress: Pro
     }
     // Playlisten schreiben
     for (rel, content) in &p.playlists {
-        if std::fs::write(root.join(rel), content).is_ok() {
+        let f = root.join(rel);
+        if let Some(d) = f.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        if std::fs::write(&f, content).is_ok() {
             man.playlists.insert(rel.clone());
         }
     }
@@ -368,6 +396,16 @@ mod tests {
         assert_eq!(run(&conn, tid, &cancel, &|_, _, _| {}).unwrap().removed, 1);
         assert!(!base.join("stick/Musik/Band/Platte/Zwei.mp3").exists());
         assert!(base.join("stick/fremd.txt").exists());
+        // Ablage „je Playlist“: Ordner mit Nummern, Playlist-Datei darin
+        let mut t = get(&conn.lock().unwrap(), tid).unwrap();
+        t.layout = "playlist".into();
+        save(&conn.lock().unwrap(), &t).unwrap();
+        run(&conn, tid, &cancel, &|_, _, _| {}).unwrap();
+        assert!(base.join("stick/Auto/01 - Band - Eins.mp3").exists());
+        let m3u = std::fs::read_to_string(base.join("stick/Auto/Auto.m3u8")).unwrap();
+        assert!(m3u.contains("\n01 - Band - Eins.mp3"), "{m3u}");
+        assert!(!base.join("stick/Auto.m3u8").exists());
+        assert!(!base.join("stick/Musik/Band/Platte/Eins.mp3").exists());
         let _ = std::fs::remove_dir_all(&base);
     }
 }

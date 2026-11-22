@@ -20,6 +20,7 @@ import { syncView, startSyncWatch, syncReadyCount } from "./views/sync";
 import { equalizerView } from "./views/equalizer";
 import { searchView } from "./views/search";
 import { startUpdater, updater } from "./updater";
+import { icon } from "./icons";
 import { currentOutputLabel, outputPopup, restoreOutput } from "./outputs";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { organizeView } from "./views/organize";
@@ -418,7 +419,7 @@ function buildPlayer() {
   const cover = h("div", { class: "pcover" });
   const t1 = h("div", { class: "t1" }, "–");
   const t2 = h("div", { class: "t2" }, "");
-  const playBtn = h("button", { class: "btn play", onclick: () => player.toggle() }, "Abspielen");
+  const playBtn = h("button", { class: "ibtn play", title: "Abspielen / Pause (Leertaste)", onclick: () => player.toggle() }, icon("play"));
   const { wrap, canvas } = waveElement({ duration: () => player.duration, onSeek: (f) => player.current && player.seekFrac(f), cls: "big" });
   wrap.style.height = "56px";
   canvas.style.height = "56px";
@@ -427,7 +428,8 @@ function buildPlayer() {
   const tDur = h("span", {}, "0:00");
   const vol = h("input", { type: "range", min: "0", max: "1", step: "0.01", value: String(player.volumeLevel) });
   vol.addEventListener("input", () => player.setVolume(Number(vol.value)));
-  const shuffleBtn = h("button", { class: "btn", title: "Zufallswiedergabe", onclick: () => player.setShuffle(!player.shuffle) }, "Zufall");
+  const shuffleBtn = h("button", { class: "ibtn", title: "Zufallswiedergabe", onclick: () => player.setShuffle(!player.shuffle) }, icon("shuffle"));
+  const repeatBtn = h("button", { class: "ibtn", onclick: () => player.cycleRepeat() }, icon("repeat"));
   const devBtn = h("button", { class: "btn dev", title: "Ausgabegerät: dieser PC oder Lautsprecher im Heimnetz" }, "Dieser PC");
   devBtn.addEventListener("click", () => outputPopup(devBtn));
   // Lautstärke: größere Fläche, Mausrad = ±5 %
@@ -465,9 +467,10 @@ function buildPlayer() {
     nowInfo,
     h("div", { class: "ctrls" },
       shuffleBtn,
-      h("button", { class: "btn", onclick: () => player.prev() }, "Zurück"),
+      h("button", { class: "ibtn", title: "Zurück", onclick: () => player.prev() }, icon("prev")),
       playBtn,
-      h("button", { class: "btn", onclick: () => player.next() }, "Weiter"),
+      h("button", { class: "ibtn", title: "Weiter", onclick: () => player.next() }, icon("next")),
+      repeatBtn,
     ),
     h("div", { class: "bigwave" }, wrap, h("div", { class: "time" }, tCur, tDur)),
     h("div", { class: "vol" }, devBtn, volBox),
@@ -475,7 +478,10 @@ function buildPlayer() {
   let coverFor = -1;
   const update = () => {
     const t = player.current;
-    playBtn.textContent = player.playing ? "Pause" : "Abspielen";
+    playBtn.replaceChildren(icon(player.playing ? "pause" : "play"));
+    repeatBtn.replaceChildren(icon(player.repeat === "one" ? "repeat1" : "repeat"));
+    repeatBtn.classList.toggle("on", player.repeat !== "off");
+    repeatBtn.title = player.repeat === "off" ? "Wiederholen: aus" : player.repeat === "all" ? "Wiederholen: alle" : "Wiederholen: dieser Titel";
     t1.textContent = t ? store.label(t) : "–";
     if (t) t2.replaceChildren(artistLinks(t.artist, "Unbekannter Künstler"), t.album ? " · " : "", albumLink(t.album));
     else t2.textContent = "Doppelklick oder Klick in eine Wellenform";

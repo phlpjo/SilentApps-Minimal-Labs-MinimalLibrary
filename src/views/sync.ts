@@ -1,5 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { api, type SyncPreview, type SyncTarget, type SyncTargetState } from "../api";
+import { api, type SyncLayout, type SyncPreview, type SyncTarget, type SyncTargetState } from "../api";
 import { store } from "../store";
 import { clear, fmtSize, h, holdButton, reportErrors, sheet, toast } from "../ui";
 import { OS } from "../platform";
@@ -16,11 +16,15 @@ export function syncReadyCount() {
   return targets.filter((t) => t.available).length;
 }
 
+export const LAYOUTS: [SyncLayout, string, string][] = [
+  ["artist", "Interpret / Album / Titel", "Musik/Interpret/Album/01 - Titel.mp3"],
+  ["album", "Album / Titel", "Musik/Album/01 - Titel.mp3"],
+  ["flat", "Alle in einem Ordner", "Musik/Interpret - Titel.mp3"],
+  ["playlist", "Ein Ordner je Playlist", "Playlist/01 - Interpret - Titel.mp3 (+ Playlist-Datei im Ordner)"],
+];
+
 async function refreshPreview(t: SyncTargetState) {
-  if (!t.available) {
-    previews.delete(t.id);
-    return;
-  }
+  // auch ohne angeschlossenes Gerät: Größe der Playlisten anzeigen
   previews.set(t.id, await api.syncPreview(t.id).catch(() => null));
   store.emit("sync");
 }
@@ -40,7 +44,7 @@ async function poll() {
         toast(`„${t.name}“ angeschlossen – Sync bereit`, 6000);
       }
     }
-    if (before !== t.available) refreshPreview(t);
+    if (before !== t.available || !previews.has(t.id)) refreshPreview(t);
     wasAvailable.set(t.id, t.available);
   }
   targets = list;
@@ -52,7 +56,7 @@ export function startSyncWatch() {
   poll();
   timer = window.setInterval(poll, 3000);
   // Playlisten geändert → Vorschau neu
-  store.on("playlists", () => targets.forEach((t) => t.available && refreshPreview(t)));
+  store.on("playlists", () => targets.forEach((t) => refreshPreview(t)));
 }
 
 export async function runSync(id: number) {
@@ -116,7 +120,8 @@ export function syncView(): { el: HTMLElement; destroy: () => void } {
           h("div", { class: "kv" }, h("span", {}, "Ordner"), h("span", { style: { fontFamily: "var(--mono)" } }, t.path)),
           h("div", { class: "kv" }, h("span", {}, "Playlisten"), h("span", {}, pls.length ? pls.join(", ") : "– keine –")),
           h("div", { class: "kv" }, h("span", {}, "Modus"), h("span", {}, `${t.auto ? "automatisch beim Anschließen" : "manuell"}${t.mirror ? " · räumt auf" : ""}`)),
-          t.available && t.free !== null ? h("div", { class: "kv" }, h("span", {}, "Frei"), h("span", {}, fmtSize(t.free))) : "",
+          h("div", { class: "kv" }, h("span", {}, "Ablage"), h("span", {}, (LAYOUTS.find((l) => l[0] === (t.layout || "artist"))?.[1] ?? "") + (t.noPlaylistFiles ? " · ohne Playlist-Dateien" : ""))),
+          spaceBar(pv?.totalBytes ?? null, t.available ? t.free : null, pv && t.available ? pv.copyBytes : 0),
           t.lastSync ? h("div", { class: "kv" }, h("span", {}, "Zuletzt"), h("span", {}, new Date(t.lastSync * 1000).toLocaleString("de"))) : "",
           info ? h("div", { class: "note", style: { marginTop: "8px", color: "var(--ink)" } }, info) : "",
         ),
@@ -132,7 +137,7 @@ export function syncView(): { el: HTMLElement; destroy: () => void } {
     h("div", { class: "view-scroll" },
       box,
       h("div", { class: "note", style: { marginTop: "6px", lineHeight: "1.6" } },
-        "Auf dem Ziel entstehen ein Ordner „Musik“ (Künstler/Album/Titel) und je Playlist eine .m3u8 – so findet Minimal Player Lieder und Playlisten. Kopiert wird nur, was fehlt. ",
+        "Auf dem Ziel landen die Titel in der gewählten Ablage und je Playlist eine .m3u8 – so findet Minimal Player Lieder und Playlisten. Kopiert wird nur, was fehlt. ",
         "„Aufräumen“ löscht ausschließlich Dateien, die die App selbst dorthin kopiert hat. ",
         `Hinweis: Android-Handys am Kabel erscheinen unter ${OS} nicht als Laufwerk (MTP) – dafür SD-Karte oder USB-Stick nutzen.`),
     ),
@@ -141,7 +146,14 @@ export function syncView(): { el: HTMLElement; destroy: () => void } {
 }
 
 function editTarget(t: SyncTargetState | null) {
-  const v: SyncTarget = t ? { ...t } : { id: 0, name: "", path: "", playlists: [], auto: false, mirror: true, lastSync: 0 };
+  const v: SyncTarget = t ? { ...t } : { id: 0, name: "", path: "", playlists: [], auto: false, mirror: true, lastSync: 0, layout: "artist", noPlaylistFiles: false };
+  const layout = h("select", {}, ...LAYOUTS.map(([k, l]) => h("option", { value: k, selected: (v.layout || "artist") === k }, l)));
+  const layoutHint = h("div", { class: "note", style: { fontFamily: "var(--mono)", fontSize: "11px" } });
+  const upLayout = () => (layoutHint.textContent = LAYOUTS.find((l) => l[0] === layout.value)?.[2] ?? "");
+  layout.addEventListener("change", upLayout);
+  upLayout();
+  const m3u = h("input", { type: "checkbox", checked: !v.noPlaylistFiles });
+  const sizeInfo = h("div", { class: "note", style: { color: "var(--ink)" } });
   const name = h("input", { type: "text", value: v.name, placeholder: "z. B. USB-Stick Auto", style: { width: "100%" } });
   const path = h("input", { type: "text", value: v.path, placeholder: "Ordner auf dem Gerät, z. B. E:\\", style: { width: "100%" } });
   const auto = h("input", { type: "checkbox", checked: v.auto });
@@ -151,11 +163,22 @@ function editTarget(t: SyncTargetState | null) {
     ...(store.playlists.length
       ? store.playlists.map((p) => {
           const c = h("input", { type: "checkbox", checked: chosen.has(p.id) });
-          c.addEventListener("change", () => (c.checked ? chosen.add(p.id) : chosen.delete(p.id)));
-          return h("div", {}, h("label", { class: "check", style: { padding: "4px 0" } }, c, (p.rules ? "◇ " : "") + p.name, h("span", { class: "sub" }, ` · ${p.count} Titel`)));
+          c.addEventListener("change", () => { c.checked ? chosen.add(p.id) : chosen.delete(p.id); upSize(); });
+          const sz = h("span", { class: "sub" }, ` · ${p.count} Titel`);
+          api.exportSize([p.id]).then((b) => (sz.textContent = ` · ${p.count} Titel · ${fmtSize(b)}`)).catch(() => {});
+          return h("div", {}, h("label", { class: "check", style: { padding: "4px 0" } }, c, (p.rules ? "◇ " : "") + p.name, sz));
         })
       : [h("div", { class: "note" }, "Noch keine Playlisten.")]),
   );
+  let sizeSeq = 0;
+  const upSize = async () => {
+    const my = ++sizeSeq;
+    const b = chosen.size ? await api.exportSize([...chosen]).catch(() => 0) : 0;
+    if (my !== sizeSeq) return;
+    const free = t?.available ? t.free : null;
+    sizeInfo.textContent = `Zusammen: ${fmtSize(b)}${free !== null && free !== undefined ? ` · frei auf dem Gerät: ${fmtSize(free)}` : ""}`;
+  };
+  upSize();
   const s = sheet(t ? `„${t.name}“ bearbeiten` : "Neues Sync-Ziel", h("div", {},
     h("div", { class: "field" }, h("label", {}, "Name"), name),
     h("div", { class: "field" }, h("label", {}, "Ordner auf dem Gerät"),
@@ -167,7 +190,9 @@ function editTarget(t: SyncTargetState | null) {
             if (!name.value.trim()) name.value = (d as string).replace(/[\\/]+$/, "").split(/[\\/]/).pop() || (d as string);
           }
         } }, "Wählen …"))),
-    h("div", { class: "card", style: { marginTop: "10px" } }, h("h3", {}, "Playlisten für dieses Ziel"), plBox),
+    h("div", { class: "card", style: { marginTop: "10px" } }, h("h3", {}, "Playlisten für dieses Ziel"), plBox, sizeInfo),
+    h("div", { class: "field" }, h("label", {}, "Ablage der Titel auf dem Gerät"), layout, layoutHint),
+    h("div", { class: "line" }, h("label", { class: "check" }, m3u, "Playlist-Dateien (.m3u8) mit ablegen")),
     h("div", { class: "line" }, h("label", { class: "check" }, auto, "Automatisch synchronisieren, sobald das Gerät angeschlossen wird")),
     h("div", { class: "line" }, h("label", { class: "check" }, mirror, "Aufräumen: von der App kopierte Titel löschen, die in keiner gewählten Playlist mehr sind")),
     h("div", { class: "foot" },
@@ -178,7 +203,7 @@ function editTarget(t: SyncTargetState | null) {
         class: "btn primary",
         onclick: async () => {
           if (!path.value.trim()) return toast("Bitte einen Ordner wählen");
-          const id = await api.syncSave({ ...v, name: name.value.trim() || path.value.trim(), path: path.value.trim(), playlists: [...chosen], auto: auto.checked, mirror: mirror.checked });
+          const id = await api.syncSave({ ...v, name: name.value.trim() || path.value.trim(), path: path.value.trim(), playlists: [...chosen], auto: auto.checked, mirror: mirror.checked, layout: layout.value as SyncLayout, noPlaylistFiles: !m3u.checked });
           s.close();
           await poll();
           const nt = targets.find((x) => x.id === id);
@@ -188,4 +213,22 @@ function editTarget(t: SyncTargetState | null) {
       }, "Speichern"),
     ),
   ), { wide: true });
+}
+
+/** Speicher: belegt durch die Playlisten · frei auf dem Gerät (mit Balken) */
+function spaceBar(total: number | null, free: number | null, pending: number): HTMLElement | string {
+  if (total === null && free === null) return "";
+  const kv = (k: string, v: string) => h("div", { class: "kv" }, h("span", {}, k), h("span", {}, v));
+  const rows: (HTMLElement | string)[] = [
+    kv("Playlisten belegen", total !== null ? fmtSize(total) : "…"),
+    free !== null ? kv("Frei auf dem Gerät", fmtSize(free) + (pending > free ? " – reicht nicht!" : "")) : kv("Frei auf dem Gerät", "nicht verbunden"),
+  ];
+  if (total !== null && free !== null) {
+    // Anteil: schon belegter Platz der Playlisten vs. frei (nach dem Sync)
+    const synced = Math.max(0, total - pending);
+    const cap = synced + free;
+    const pct = cap > 0 ? Math.min(100, (total / cap) * 100) : 0;
+    rows.push(h("div", { class: "space-bar" + (pending > free ? " over" : "") }, h("div", { style: { width: pct.toFixed(1) + "%" } })));
+  }
+  return h("div", {}, ...rows);
 }

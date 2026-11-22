@@ -113,7 +113,7 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
       }),
     );
     const pre = h("input", { type: "range", min: "-12", max: "6", step: "0.5", value: String(s.preamp) });
-    const preVal = h("span", { class: "eq-val" }, fmt(s.preamp) + " dB");
+    const preVal = h("span", { class: "eq-val", style: { minWidth: "64px", textAlign: "right", whiteSpace: "nowrap", flex: "none", fontVariantNumeric: "tabular-nums" } }, fmt(s.preamp) + " dB");
     pre.addEventListener("input", () => {
       s.preamp = Number(pre.value);
       preVal.textContent = fmt(s.preamp) + " dB";
@@ -145,7 +145,7 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
       h("div", { class: "line" }, h("label", { class: "check" }, onBox, "Equalizer an"), h("span", { class: "spacer" }), h("span", { class: "note" }, "Doppelklick auf einen Regler = 0")),
       presets,
       bands,
-      h("div", { class: "setting" }, h("span", {}, "Vorverstärkung"), h("div", { style: { display: "flex", gap: "10px", alignItems: "center", width: "60%" } }, pre, preVal)),
+      h("div", { class: "setting" }, h("span", {}, "Vorverstärkung"), h("div", { style: { display: "flex", gap: "10px", alignItems: "center", width: "60%", flexWrap: "nowrap" } }, pre, preVal)),
       h("div", { class: "note" }, "Jedes Ausgabegerät hat seine eigene Einstellung – z. B. mehr Bass für kleine Laptop-Lautsprecher, flach für die Anlage."),
     );
   };

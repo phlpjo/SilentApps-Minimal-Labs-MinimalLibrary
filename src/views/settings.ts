@@ -3,7 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { store } from "../store";
 import { clear, h, holdButton } from "../ui";
-import { analyzeIds, nav, scanNow } from "../main";
+import { analyzeIds, scanNow } from "../main";
 import { applyTheme, themeMode, type ThemeMode } from "../theme";
 import { IS_MAC, FILE_MANAGER } from "../platform";
 import { autoInstall, checkUpdate, installUpdate, updater } from "../updater";
@@ -52,10 +52,6 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
           h("button", { class: "btn", onclick: () => scanNow() }, "Jetzt scannen"),
         ),
         h("div", { class: "note" }, `Die Musikordner werden laufend überwacht: Was du im ${FILE_MANAGER} hinzufügst, verschiebst, umbenennst oder löschst, übernimmt die App sofort – Analyse und Playlisten bleiben beim Verschieben erhalten.`),
-      ),
-      h("div", { class: "card" }, h("h3", {}, "Minimal Player"),
-        h("div", { class: "note" }, "Playlisten samt Musik aufs Handy, den USB-Stick oder die SD-Karte bringst du jetzt über ",
-          h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); nav("sync"); } }, "Sync"), "."),
       ),
       h("div", { class: "card" }, h("h3", {}, "Analyse"),
         h("div", { class: "setting" }, h("span", {}, "Gleichzeitige Analysen"), threads),

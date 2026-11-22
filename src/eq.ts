@@ -24,6 +24,8 @@ class Eq {
   private filters: BiquadFilterNode[] = [];
   private sources = new WeakMap<HTMLMediaElement, MediaElementAudioSourceNode>();
   private pendingSink: string | null = null;
+  private volGain!: GainNode;
+  private vol = 1;
   /** Schlüssel des aktuellen Ausgabegeräts, z. B. "local:default" */
   key = "local:default";
   enabled = localStorage.getItem("ml.audioGraph") !== "0";
@@ -57,7 +59,11 @@ class Eq {
       node = b;
       return b;
     });
-    node.connect(this.ctx.destination);
+    // Lautstärke im Klangweg: WebKit (Mac) ignoriert audio.volume, sobald Web Audio dran hängt
+    this.volGain = this.ctx.createGain();
+    this.volGain.gain.value = this.vol;
+    node.connect(this.volGain);
+    this.volGain.connect(this.ctx.destination);
     this.apply(this.load(this.key));
     if (this.pendingSink !== null) this.setSink(this.pendingSink);
   }
@@ -80,6 +86,11 @@ class Eq {
       }
       if (this.ctx.state === "suspended") this.ctx.resume().catch(() => {});
     });
+  }
+
+  setVolume(v: number) {
+    this.vol = v;
+    if (this.ctx) this.volGain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.015);
   }
 
   apply(s: EqSettings) {

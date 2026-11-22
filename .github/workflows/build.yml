@@ -83,6 +83,23 @@ jobs:
       - name: Tests (Kern)
         run: cargo test -p musiccore --release
 
+      - name: Apple-Signatur und Beglaubigung (nur wenn eingerichtet)
+        env:
+          C: ${{ secrets.APPLE_CERTIFICATE }}
+          CP: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SI: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          AI: ${{ secrets.APPLE_ID }}
+          AP: ${{ secrets.APPLE_PASSWORD }}
+          AT: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$C" ] && [ -n "$SI" ]; then
+            { echo "APPLE_CERTIFICATE=$C"; echo "APPLE_CERTIFICATE_PASSWORD=$CP"; echo "APPLE_SIGNING_IDENTITY=$SI"; } >> "$GITHUB_ENV"
+            if [ -n "$AI" ]; then { echo "APPLE_ID=$AI"; echo "APPLE_PASSWORD=$AP"; echo "APPLE_TEAM_ID=$AT"; } >> "$GITHUB_ENV"; fi
+            echo "Signiere mit Developer ID"
+          else
+            echo "Keine Apple-Zertifikate hinterlegt – App wird nur ad-hoc signiert"
+          fi
+
       - name: Bauen (Universal – Apple Silicon + Intel)
         run: npx tauri build --target universal-apple-darwin
 

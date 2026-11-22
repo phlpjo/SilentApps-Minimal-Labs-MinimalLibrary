@@ -418,7 +418,31 @@ fn token() -> String {
 
 // ---------- Steuerung ----------
 
+/// SOAP-Aufruf mit Wiederholung (Sonos lehnt kurz nach Stop/URI-Wechsel gern mit 701 „Transition“ ab)
+fn soap_retry(control: &str, service: &str, action: &str, args: &[(&str, String)], tries: usize) -> Result<String> {
+    let mut last = None;
+    for i in 0..tries {
+        match soap(control, service, action, args) {
+            Ok(r) => return Ok(r),
+            Err(e) => {
+                last = Some(e);
+                std::thread::sleep(Duration::from_millis(300 + 300 * i as u64));
+            }
+        }
+    }
+    Err(last.unwrap_or_else(|| anyhow!("{action} fehlgeschlagen")))
+}
+
 pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<()> {
+    // Schnelles Weiterklicken: Aufträge nacheinander abarbeiten, überholte überspringen.
+    // (Sonst liest ein zweiter Start „stumm“ als Ausgangszustand und der Lautsprecher bleibt stumm.)
+    static LOCK: Mutex<()> = Mutex::new(());
+    static GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let my = GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if GEN.load(std::sync::atomic::Ordering::SeqCst) != my {
+        return Ok(()); // inzwischen wurde ein anderer Titel gewählt
+    }
     let d = device(device_id)?;
     let srv = server()?;
     let key = token();
@@ -449,9 +473,16 @@ pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<()> 
     let result = (|| -> Result<()> {
         // Manche Geräte verweigern neue URLs während der Wiedergabe → vorher stoppen
         let _ = soap(&d.av_control, AVT, "Stop", &[("InstanceID", "0".into())]);
-        soap(&d.av_control, AVT, "SetAVTransportURI", &[("InstanceID", "0".into()), ("CurrentURI", url), ("CurrentURIMetaData", didl)])?;
-        soap(&d.av_control, AVT, "Play", &[("InstanceID", "0".into()), ("Speed", "1".into())])?;
-        wait_state(&d, "PLAYING", Duration::from_secs(6));
+        soap_retry(&d.av_control, AVT, "SetAVTransportURI", &[("InstanceID", "0".into()), ("CurrentURI", url), ("CurrentURIMetaData", didl)], 3)?;
+        let play = || soap_retry(&d.av_control, AVT, "Play", &[("InstanceID", "0".into()), ("Speed", "1".into())], 4);
+        play()?;
+        if !wait_state(&d, "PLAYING", Duration::from_secs(6)) {
+            // hängt in TRANSITIONING/STOPPED → noch einmal anstoßen
+            play()?;
+            if !wait_state(&d, "PLAYING", Duration::from_secs(6)) {
+                bail!("{} startet die Wiedergabe nicht – ist der Lautsprecher erreichbar und die Firewall offen?", d.name);
+            }
+        }
         if start > 1.0 {
             seek_dev(&d, start)?;
             // kurz warten, bis der Puffer an der neuen Stelle gefüllt ist

@@ -24,7 +24,7 @@ class Player {
   private token = 0;
   private shuffleBag: number[] = [];
   private history: number[] = [];
-  private remote = { playing: false, pos: 0, at: 0, dur: 0, poll: 0, startedAt: 0, seekUntil: 0 };
+  private remote = { playing: false, pos: 0, at: 0, dur: 0, poll: 0, startedAt: 0, seekUntil: 0, loading: false };
   private volume: number;
   private volTimer = 0;
 
@@ -39,8 +39,8 @@ class Player {
   private makeAudio() {
     const a = new Audio();
     a.preload = "auto";
-    a.volume = this.volume;
-    eq.attach(a); // Equalizer (Web Audio) – setzt crossOrigin vor dem ersten src
+    eq.attach(a);
+    this.applyVolume(a); // Equalizer (Web Audio) – setzt crossOrigin vor dem ersten src
     a.addEventListener("ended", () => a === this.audio && this.next(true));
     a.addEventListener("play", () => {
       if (a !== this.audio) return;
@@ -55,13 +55,14 @@ class Player {
       if (a.crossOrigin && !corsOk && eq.enabled) {
         // Nur wenn es ohne crossOrigin klappt, liegt es an Web Audio – sonst ist die Datei das Problem
         eq.enabled = false;
+        this.applyVolume(a);
         const src = a.getAttribute("src")!;
         a.removeAttribute("crossorigin");
         a.addEventListener("loadedmetadata", () => {
           try { localStorage.setItem("ml.audioGraph", "0"); } catch {}
           toast("Equalizer ist auf diesem System nicht verfügbar – Wiedergabe läuft ohne.");
         }, { once: true });
-        a.addEventListener("error", () => (eq.enabled = true), { once: true });
+        a.addEventListener("error", () => { eq.enabled = true; this.applyVolume(a); }, { once: true });
         a.src = src;
         a.play().catch(() => {});
         return;
@@ -141,16 +142,23 @@ class Player {
         return;
       }
       this.current = t;
+      // Während das Gerät umschaltet, meldet es STOPPED – das darf nicht als „Titel zu Ende“ zählen
+      this.remote.loading = true;
+      this.remote.startedAt = performance.now();
       store.emit("player");
       try {
         const start = frac * (t.duration || 0);
         await api.castPlay(this.device!.id, id, start);
         if (my !== this.token) return;
-        this.remote = { ...this.remote, playing: true, pos: start, at: performance.now(), dur: t.duration, startedAt: performance.now(), seekUntil: 0 };
+        this.remote = { ...this.remote, playing: true, pos: start, at: performance.now(), dur: t.duration, startedAt: performance.now(), seekUntil: 0, loading: false };
         this.startPolling();
         this.loop();
       } catch (e) {
-        toast(String(e));
+        if (my === this.token) {
+          this.remote.loading = false;
+          this.remote.playing = false;
+          toast(String(e));
+        }
       }
       store.emit("player");
       return;
@@ -261,9 +269,24 @@ class Player {
     return this.shuffleBag.pop();
   }
 
+  /** Wiederholen: aus, einzelner Titel, ganze Liste */
+  repeat: "off" | "one" | "all" = (localStorage.getItem("ml.repeat") as "off" | "one" | "all") ?? "off";
+  cycleRepeat() {
+    this.repeat = this.repeat === "off" ? "all" : this.repeat === "all" ? "one" : "off";
+    localStorage.setItem("ml.repeat", this.repeat);
+    store.emit("player");
+  }
+
   next(auto = false) {
     if (!this.current) return;
-    const n = this.shuffle ? this.pickRandom() : this.queue[this.queue.indexOf(this.current.id) + 1];
+    if (auto && this.repeat === "one") {
+      const id = this.current.id;
+      if (this.isRemote) this.current = null; // Gerät neu starten
+      this.play(id, 0);
+      return;
+    }
+    let n = this.shuffle ? this.pickRandom() : this.queue[this.queue.indexOf(this.current.id) + 1];
+    if (n === undefined && this.repeat === "all" && this.queue.length) n = this.queue[0];
     if (n !== undefined) this.play(n);
     else {
       if (auto) this.remote.playing = false;
@@ -293,9 +316,20 @@ class Player {
     store.emit("player");
   }
 
+  /** Mit Equalizer regelt der Klangweg die Lautstärke, sonst das Audio-Element */
+  private applyVolume(a: HTMLMediaElement) {
+    if (eq.enabled) {
+      a.volume = 1;
+      eq.setVolume(this.volume);
+    } else {
+      a.volume = this.volume;
+      eq.setVolume(1);
+    }
+  }
+
   setVolume(v: number) {
     this.volume = v;
-    this.audio.volume = v;
+    this.applyVolume(this.audio);
     localStorage.setItem("ml.volume", String(v));
     if (this.isRemote) {
       clearTimeout(this.volTimer);
@@ -325,7 +359,7 @@ class Player {
       if (st && st.volume >= 0) this.volume = st.volume / 100;
     } else {
       this.volume = Number(localStorage.getItem("ml.volume") ?? "0.9");
-      this.audio.volume = this.volume;
+      this.applyVolume(this.audio);
     }
     store.emit("player");
     if (id !== undefined && wasPlaying) {
@@ -343,8 +377,8 @@ class Player {
       if (!st) return;
       const r = this.remote;
       // Kurz nach dem Start melden Geräte oft noch STOPPED/TRANSITIONING
-      const settling = performance.now() - r.startedAt < 4000;
-      if (performance.now() < r.seekUntil) return;
+      const settling = performance.now() - r.startedAt < 5000;
+      if (r.loading || performance.now() < r.seekUntil) return;
       if (st.state === "PLAYING") {
         if (!r.playing) {
           r.playing = true;
@@ -362,7 +396,10 @@ class Player {
         r.pos = st.position;
       } else if (st.state === "STOPPED" && r.playing && !settling) {
         r.playing = false;
-        this.next(true); // Titel zu Ende
+        // Nur kurz vor Schluss ist es das Titelende – sonst wurde am Gerät/in der Sonos-App gestoppt
+        const dur = r.dur || this.current?.duration || 0;
+        if (!dur || this.currentTime >= dur - 8) this.next(true);
+        else store.emit("player");
       }
     }, 1000);
   }

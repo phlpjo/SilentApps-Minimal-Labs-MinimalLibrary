@@ -3,7 +3,7 @@ import { applyTheme, isLight } from "./theme";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
-import { api } from "./api";
+import { api, type LibraryChange } from "./api";
 import { Inspector } from "./inspector";
 import { player } from "./player";
 import { store } from "./store";
@@ -13,12 +13,13 @@ import { dropTarget } from "./dnd";
 import { duplicatesView } from "./views/duplicates";
 import { libraryView } from "./views/library";
 import { foldersView } from "./views/folders";
+import { historyView, undo } from "./views/history";
 import { organizeView } from "./views/organize";
 import { exportDialog, playlistView, smartEditor } from "./views/playlist";
 import { settingsView } from "./views/settings";
 import logo from "./logo.svg";
 
-type ViewName = "library" | "folders" | "playlist" | "duplicates" | "organize" | "settings";
+type ViewName = "library" | "folders" | "history" | "playlist" | "duplicates" | "organize" | "settings";
 
 const app = document.getElementById("app")!;
 const side = h("nav", { id: "side" });
@@ -38,6 +39,7 @@ export function nav(name: ViewName, arg?: number[], path?: string) {
   switch (name) {
     case "library": v = libraryView(); break;
     case "folders": v = foldersView(path); break;
+    case "history": v = historyView(); break;
     case "playlist": v = playlistView(arg![0]); break;
     case "duplicates": v = duplicatesView(); break;
     case "organize": v = organizeView(arg); break;
@@ -79,6 +81,7 @@ function renderSide() {
     navItem("Bibliothek", n === "library", () => nav("library"), store.tracks.size.toLocaleString("de")),
     navItem("Ordner", n === "folders", () => nav("folders")),
     navItem("Duplikate", n === "duplicates", () => nav("duplicates")),
+    navItem("Verlauf", n === "history", () => nav("history")),
     navItem("Sortieren", n === "organize", () => nav("organize", n === "library" ? [...store.selection] : undefined)),
     navItem("Einstellungen", n === "settings", () => nav("settings")),
   );
@@ -201,6 +204,22 @@ listen<number>("analyzed", (e) => {
     }, 700);
 });
 listen<{ task: string; done: number; total: number; message: string }>("progress", (e) => setStatus(e.payload.task, e.payload.done, e.payload.total, e.payload.message));
+store.on("tracks", () => store.emit("history"));
+
+// Musikordner-Überwachung: Änderungen aus dem Explorer sofort übernehmen
+listen<LibraryChange>("library-changed", async (e) => {
+  const c = e.payload;
+  await store.loadTracks();
+  store.emit("dirs");
+  if (c.moved || c.removed || c.added.length) store.loadPlaylists();
+  const parts = [
+    c.added.length ? `${c.added.length} neu` : "",
+    c.moved ? `${c.moved} verschoben` : "",
+    c.removed ? `${c.removed} entfernt` : "",
+  ].filter(Boolean);
+  if (parts.length) toast(`Musikordner: ${parts.join(", ")}`);
+  if (c.added.length && store.settings.autoAnalyze) analyzeIds(c.added);
+});
 
 // Dateien/Ordner ins Fenster ziehen → zur Bibliothek
 getCurrentWebview().onDragDropEvent(async (e) => {
@@ -267,6 +286,11 @@ function buildPlayer() {
 document.addEventListener("keydown", (e) => {
   const tag = (e.target as HTMLElement).tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || document.querySelector(".sheet-bg")) return;
+  if (e.key === "z" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+    e.preventDefault();
+    undo(null);
+    return;
+  }
   if (e.code === "Space") {
     e.preventDefault();
     player.toggle();

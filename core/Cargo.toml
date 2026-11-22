@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.104"
 trash = "5"
+base64 = "0.22"
 lofty = "0.25.5"
 rayon = "1.12.0"
 rusqlite = { version = "0.43.0", features = ["bundled"] }
@@ -17,3 +18,4 @@ strsim = "0.11.1"
 symphonia = { version = "0.6.1", features = ["all"] }
 ureq = { version = "3.5.2", features = ["json"] }
 walkdir = "2.5.1"
+notify-debouncer-full = "0.8"

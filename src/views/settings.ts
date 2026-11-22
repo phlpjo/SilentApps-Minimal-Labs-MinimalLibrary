@@ -25,6 +25,8 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
     );
     const threads = h("select", {}, ...[1, 2, 3, 4, 6, 8, 12, 16].map((n) => h("option", { value: String(n), selected: n === s.threads }, String(n))));
     threads.addEventListener("change", () => store.saveSettings({ threads: Number(threads.value) }));
+    const acoustid = h("input", { type: "text", value: s.acoustidKey ?? "", placeholder: "z. B. AbCdEf1234", spellcheck: false, style: { width: "220px", fontFamily: "var(--mono)" } });
+    acoustid.addEventListener("change", () => store.saveSettings({ acoustidKey: acoustid.value.trim() }));
     const auto = h("input", { type: "checkbox", checked: s.autoAnalyze });
     auto.addEventListener("change", () => store.saveSettings({ autoAnalyze: auto.checked }));
 
@@ -44,7 +46,7 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
           } }, "Ordner hinzufügen …"),
           h("button", { class: "btn", onclick: () => scanNow() }, "Jetzt scannen"),
         ),
-        h("div", { class: "note" }, "Beim Start wird automatisch nach neuen, geänderten und gelöschten Dateien gesucht."),
+        h("div", { class: "note" }, "Die Musikordner werden laufend überwacht: Was du im Explorer hinzufügst, verschiebst, umbenennst oder löschst, übernimmt die App sofort – Analyse und Playlisten bleiben beim Verschieben erhalten."),
       ),
       h("div", { class: "card" }, h("h3", {}, "Playlist-Ordner für Minimal Player"),
         h("div", { class: "setting" }, h("span", {}, "Ordner"), h("span", { class: "v", style: { fontFamily: "var(--mono)", fontSize: "12px" } }, s.playlistDir || "aus")),
@@ -71,10 +73,18 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
         ),
         h("div", { class: "note" }, "Die Analyse erstellt Wellenform, Audio-Fingerabdruck (für Duplikate), BPM und Tonart. Sie liest jede Datei einmal vollständig."),
       ),
+      h("div", { class: "card" }, h("h3", {}, "Online (nur auf Klick)"),
+        h("div", { class: "setting" }, h("span", {}, "AcoustID-Schlüssel"), acoustid),
+        h("div", { class: "note" },
+          "Für „Am Klang erkennen“. Einmalig kostenlos anlegen: ",
+          h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); openUrl("https://acoustid.org/new-application"); } }, "acoustid.org/new-application"),
+          " (Name z. B. „Minimal Library“), den angezeigten API-Schlüssel hier einfügen. Übertragen werden nur Fingerabdruck und Dauer.",
+        ),
+      ),
       h("div", { class: "card" }, h("h3", {}, "Tastatur"),
         ...[
           ["Leertaste", "Abspielen / Pause"], ["← / →", "5 Sekunden zurück / vor"], ["Strg+F", "Suchen"], ["Strg+A", "Alle auswählen"],
-          ["Strg+S", "Tags speichern"], ["Enter", "Auswahl abspielen"], ["Entf", "Aus Playlist entfernen"], ["Doppelklick", "Abspielen"], ["Klick in Wellenform", "ab dieser Stelle abspielen"],
+          ["Strg+S", "Tags speichern"], ["Strg+Z", "Letzte Änderung rückgängig"], ["F2", "Datei umbenennen"], ["Enter", "Auswahl abspielen"], ["Entf", "Aus Playlist entfernen"], ["Doppelklick", "Abspielen"], ["Klick in Wellenform", "ab dieser Stelle abspielen"],
         ].map(([k, v]) => h("div", { class: "setting" }, h("span", {}, v), h("span", { class: "v", style: { fontFamily: "var(--mono)", fontSize: "12px" } }, k))),
       ),
       h("div", { class: "card" }, h("h3", {}, "Über"),

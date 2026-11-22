@@ -79,7 +79,7 @@ pub fn create(parent: &Path, name: &str) -> Result<PathBuf> {
 }
 
 /// Pfade in der Datenbank nach Umbenennen/Verschieben eines Ordners anpassen.
-fn rewrite_prefix(conn: &Connection, old: &Path, new: &Path) -> Result<usize> {
+pub fn rewrite_prefix(conn: &Connection, old: &Path, new: &Path) -> Result<usize> {
     let o = with_sep(&old.to_string_lossy());
     let n = with_sep(&new.to_string_lossy());
     Ok(conn.execute(
@@ -88,7 +88,7 @@ fn rewrite_prefix(conn: &Connection, old: &Path, new: &Path) -> Result<usize> {
     )?)
 }
 
-fn move_dir_raw(conn: &Connection, from: &Path, to: &Path) -> Result<PathBuf> {
+pub fn move_dir_raw(conn: &Connection, from: &Path, to: &Path) -> Result<PathBuf> {
     if !from.is_dir() {
         bail!("Ordner nicht gefunden: {}", from.display());
     }

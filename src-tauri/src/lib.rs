@@ -1,5 +1,5 @@
 use base64::Engine;
-use musiccore::{analysis, db, dirs, duplicates, export, musicbrainz, organize, playlists, scanner, tags};
+use musiccore::{acoustid, analysis, db, dirs, duplicates, history, watch, export, musicbrainz, organize, playlists, scanner, tags};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -13,6 +13,22 @@ type Db = Arc<Mutex<Connection>>;
 struct AppState {
     db: Db,
     cancel: Arc<AtomicBool>,
+    watcher: Mutex<Option<watch::Watcher>>,
+}
+
+/// Musikordner (neu) überwachen
+fn restart_watcher(app: &AppHandle, state: &AppState) {
+    let roots: Vec<PathBuf> = load_settings(&state.db.lock().unwrap()).roots.iter().map(PathBuf::from).collect();
+    let app2 = app.clone();
+    let db = state.db.clone();
+    let w = watch::start(state.db.clone(), &roots, move |ch| {
+        if !ch.added.is_empty() || ch.moved > 0 || ch.removed > 0 {
+            sync_playlists(&db.lock().unwrap());
+        }
+        let _ = app2.emit("library-changed", ch);
+    })
+    .ok();
+    *state.watcher.lock().unwrap() = w;
 }
 
 type R<T> = Result<T, String>;
@@ -53,6 +69,7 @@ struct Settings {
     pattern: String,
     threads: usize,
     auto_analyze: bool,
+    acoustid_key: String,
 }
 
 impl Default for Settings {
@@ -65,6 +82,7 @@ impl Default for Settings {
             pattern: organize::DEFAULT_PATTERN.into(),
             threads: (threads.saturating_sub(1)).clamp(1, 8),
             auto_analyze: true,
+            acoustid_key: String::new(),
         }
     }
 }
@@ -89,6 +107,8 @@ fn set_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> R
     for r in &settings.roots {
         let _ = app.asset_protocol_scope().allow_directory(r, true);
     }
+    drop(c);
+    restart_watcher(&app, &state);
     Ok(())
 }
 
@@ -201,18 +221,25 @@ async fn trash_tracks(state: State<'_, AppState>, ids: Vec<i64>, replace: Option
         let tracks = db::tracks_by_ids(&db.lock().unwrap(), &ids)?;
         let mut errors = vec![];
         let mut gone = vec![];
-        for t in tracks {
+        let batch = history::begin(&db.lock().unwrap(), "trash", &format!("Papierkorb: {}", describe_tracks(&tracks)))?;
+        let mut trashed = 0;
+        for t in &tracks {
             let p = Path::new(&t.path);
             if !p.exists() {
                 gone.push(t.id);
                 continue;
             }
+            history::backup_trash(&db.lock().unwrap(), batch, p, false, &[t.id])?;
             match trash::delete(p) {
-                Ok(()) => gone.push(t.id),
+                Ok(()) => {
+                    gone.push(t.id);
+                    trashed += 1;
+                }
                 Err(e) => errors.push(format!("{}: {e}", t.path)),
             }
         }
         let c = db.lock().unwrap();
+        history::finish(&c, batch, trashed)?;
         db::remove_tracks(&c, &gone)?;
         sync_playlists(&c);
         Ok(errors)
@@ -228,10 +255,17 @@ async fn write_tags(state: State<'_, AppState>, ids: Vec<i64>, update: tags::Tag
     blocking(move || {
         let tracks = db::tracks_by_ids(&db.lock().unwrap(), &ids)?;
         let mut errors = vec![];
+        let batch = history::begin(&db.lock().unwrap(), "tags", &format!("Tags ({}): {}", changed_fields(&update), describe_tracks(&tracks)))?;
+        let mut done = 0;
         for t in tracks {
             let p = Path::new(&t.path);
+            if let Err(e) = history::backup_tags(&db.lock().unwrap(), batch, &t, false) {
+                errors.push(format!("{e:#}"));
+                continue;
+            }
             match tags::write(p, &update) {
                 Ok(()) => {
+                    done += 1;
                     let c = db.lock().unwrap();
                     scanner::refresh(&c, p)?;
                     // Eingetragene BPM/Tonart sollen die Analyse überstimmen
@@ -245,10 +279,28 @@ async fn write_tags(state: State<'_, AppState>, ids: Vec<i64>, update: tags::Tag
                 Err(e) => errors.push(format!("{e:#}")),
             }
         }
-        sync_playlists(&db.lock().unwrap());
+        let c = db.lock().unwrap();
+        history::finish(&c, batch, done)?;
+        sync_playlists(&c);
         Ok(errors)
     })
     .await
+}
+
+fn describe_tracks(tracks: &[db::Track]) -> String {
+    match tracks {
+        [t] => t.title.clone().unwrap_or_else(|| Path::new(&t.path).file_name().unwrap_or_default().to_string_lossy().to_string()),
+        _ => format!("{} Titel", tracks.len()),
+    }
+}
+
+fn changed_fields(u: &tags::TagUpdate) -> String {
+    let f = [
+        (&u.title, "Titel"), (&u.artist, "Künstler"), (&u.album, "Album"), (&u.album_artist, "Albumkünstler"), (&u.genre, "Genre"),
+        (&u.year, "Jahr"), (&u.track_no, "Track"), (&u.disc_no, "Disc"), (&u.comment, "Kommentar"), (&u.bpm, "BPM"), (&u.key, "Tonart"),
+    ];
+    let v: Vec<&str> = f.iter().filter(|(x, _)| x.is_some()).map(|(_, n)| *n).collect();
+    v.join(", ")
 }
 
 /// Analysierte BPM/Tonart dauerhaft in die Datei-Tags schreiben.
@@ -258,10 +310,16 @@ async fn write_analysis_to_tags(state: State<'_, AppState>, ids: Vec<i64>) -> R<
     blocking(move || {
         let tracks = db::tracks_by_ids(&db.lock().unwrap(), &ids)?;
         let mut errors = vec![];
+        let batch = history::begin(&db.lock().unwrap(), "tags", &format!("BPM + Tonart in Datei: {}", describe_tracks(&tracks)))?;
+        let mut done = 0;
         for t in tracks {
             if t.bpm.is_none() && t.key.is_none() {
                 continue;
             }
+            if history::backup_tags(&db.lock().unwrap(), batch, &t, false).is_err() {
+                continue;
+            }
+            done += 1;
             let u = tags::TagUpdate { bpm: t.bpm.map(|b| b.to_string()), key: t.key.clone(), ..Default::default() };
             let p = Path::new(&t.path);
             match tags::write(p, &u) {
@@ -271,6 +329,7 @@ async fn write_analysis_to_tags(state: State<'_, AppState>, ids: Vec<i64>) -> R<
                 Err(e) => errors.push(format!("{e:#}")),
             }
         }
+        history::finish(&db.lock().unwrap(), batch, done)?;
         Ok(errors)
     })
     .await
@@ -292,8 +351,15 @@ async fn get_cover(state: State<'_, AppState>, id: i64) -> R<Option<String>> {
 fn apply_cover(db: &Db, ids: &[i64], data: Option<Vec<u8>>) -> anyhow::Result<Vec<String>> {
     let tracks = db::tracks_by_ids(&db.lock().unwrap(), ids)?;
     let mut errors = vec![];
+    let what = if data.is_some() { "Cover gesetzt" } else { "Cover entfernt" };
+    let batch = history::begin(&db.lock().unwrap(), "tags", &format!("{what}: {}", describe_tracks(&tracks)))?;
+    let n = tracks.len();
     for t in tracks {
         let p = Path::new(&t.path);
+        if let Err(e) = history::backup_tags(&db.lock().unwrap(), batch, &t, true) {
+            errors.push(format!("{e:#}"));
+            continue;
+        }
         let r = match &data {
             Some(d) => tags::set_cover(p, d.clone()),
             None => tags::remove_cover(p),
@@ -305,6 +371,7 @@ fn apply_cover(db: &Db, ids: &[i64], data: Option<Vec<u8>>) -> anyhow::Result<Ve
             Err(e) => errors.push(format!("{e:#}")),
         }
     }
+    history::finish(&db.lock().unwrap(), batch, n - errors.len().min(n))?;
     Ok(errors)
 }
 
@@ -329,6 +396,21 @@ async fn remove_cover(state: State<'_, AppState>, ids: Vec<i64>) -> R<Vec<String
 #[tauri::command]
 async fn mb_search(artist: String, title: String, album: Option<String>) -> R<Vec<musicbrainz::Candidate>> {
     blocking(move || musicbrainz::search(&artist, &title, album.as_deref())).await
+}
+
+/// Titel am Klang erkennen (AcoustID)
+#[tauri::command]
+async fn acoustid_lookup(state: State<'_, AppState>, id: i64) -> R<Vec<musicbrainz::Candidate>> {
+    let db = state.db.clone();
+    blocking(move || {
+        let c = db.lock().unwrap();
+        let key = load_settings(&c).acoustid_key;
+        let (fp, dur): (Option<Vec<u8>>, f64) = c.query_row("SELECT fingerprint, duration FROM tracks WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        drop(c);
+        let fp = db::bytes_to_u32(&fp.unwrap_or_default());
+        acoustid::lookup(&key, &fp, dur)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -401,11 +483,15 @@ fn move_batches(state: State<AppState>) -> R<Vec<organize::Batch>> {
 }
 
 #[tauri::command]
-async fn undo_batch(state: State<'_, AppState>, id: i64) -> R<organize::ApplyReport> {
+async fn undo_batch(state: State<'_, AppState>, id: Option<i64>) -> R<history::UndoReport> {
     let db = state.db.clone();
     blocking(move || {
+        let id = match id {
+            Some(id) => id,
+            None => history::last_open(&db.lock().unwrap())?.ok_or_else(|| anyhow::anyhow!("Nichts zum Rückgängigmachen"))?,
+        };
         let stops = stop_dirs(&db.lock().unwrap());
-        let r = organize::undo(&db, id, &stops)?;
+        let r = history::undo(&db, id, &stops)?;
         sync_playlists(&db.lock().unwrap());
         Ok(r)
     })
@@ -562,6 +648,7 @@ async fn dir_rename(app: AppHandle, state: State<'_, AppState>, path: String, na
     let p = blocking(move || {
         let c = db.lock().unwrap();
         let p = dirs::rename(&c, Path::new(&path), &name)?;
+        history::log_dir_move(&c, Path::new(&path), &p, &format!("Ordner umbenannt: {} → {}", Path::new(&path).file_name().unwrap_or_default().to_string_lossy(), p.file_name().unwrap_or_default().to_string_lossy()))?;
         sync_playlists(&c);
         Ok(p)
     })
@@ -576,6 +663,9 @@ async fn dir_move(app: AppHandle, state: State<'_, AppState>, path: String, targ
     let p = blocking(move || {
         let c = db.lock().unwrap();
         let p = dirs::move_into(&c, Path::new(&path), Path::new(&target))?;
+        if !musiccore::paths::same_path(&p, Path::new(&path)) {
+            history::log_dir_move(&c, Path::new(&path), &p, &format!("Ordner verschoben: {} → {}", p.file_name().unwrap_or_default().to_string_lossy(), Path::new(&target).file_name().unwrap_or_default().to_string_lossy()))?;
+        }
         sync_playlists(&c);
         Ok(p)
     })
@@ -588,6 +678,16 @@ async fn dir_move(app: AppHandle, state: State<'_, AppState>, path: String, targ
 async fn dir_trash(state: State<'_, AppState>, path: String) -> R<usize> {
     let db = state.db.clone();
     blocking(move || {
+        {
+            let c = db.lock().unwrap();
+            let pre = format!("{}{}", path.trim_end_matches(['/', '\\']), std::path::MAIN_SEPARATOR);
+            let mut st = c.prepare("SELECT id FROM tracks WHERE substr(path, 1, ?2) = ?1")?;
+            let ids: Vec<i64> = st.query_map(rusqlite::params![pre, pre.chars().count() as i64], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+            let name = Path::new(&path).file_name().unwrap_or_default().to_string_lossy().to_string();
+            let b = history::begin(&c, "trash", &format!("Ordner in den Papierkorb: {name}"))?;
+            history::backup_trash(&c, b, Path::new(&path), true, &ids)?;
+            history::finish(&c, b, 1)?;
+        }
         trash::delete(&path)?;
         let c = db.lock().unwrap();
         let n = dirs::remove_tracks_under(&c, Path::new(&path))?;
@@ -661,7 +761,7 @@ async fn rename_by_pattern(state: State<'_, AppState>, ids: Vec<i64>, pattern: S
             plan.extend(organize::plan_to_folder(&ts, &dir, Some(&names)));
         }
         let n = plan.iter().filter(|m| !m.unchanged).count();
-        let r = organize::apply(&db, &plan, false, &format!("Umbenannt nach {pattern}: {n} Dateien"), &[], &|_, _, _| {})?;
+        let r = organize::apply(&db, &plan, false, &format!("Umbenannt nach {pattern}: {n} Datei{}", if n == 1 { "" } else { "en" }), &[], &|_, _, _| {})?;
         sync_playlists(&db.lock().unwrap());
         Ok(r)
     })
@@ -684,7 +784,8 @@ pub fn run() {
             for r in load_settings(&conn).roots {
                 let _ = app.asset_protocol_scope().allow_directory(&r, true);
             }
-            app.manage(AppState { db: Arc::new(Mutex::new(conn)), cancel: Arc::new(AtomicBool::new(false)) });
+            app.manage(AppState { db: Arc::new(Mutex::new(conn)), cancel: Arc::new(AtomicBool::new(false)), watcher: Mutex::new(None) });
+            restart_watcher(app.handle(), &app.state::<AppState>());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -706,6 +807,7 @@ pub fn run() {
             set_cover_file,
             remove_cover,
             mb_search,
+            acoustid_lookup,
             mb_cover,
             find_duplicates,
             organize_preview,

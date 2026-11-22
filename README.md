@@ -8,6 +8,10 @@ Musikbibliothek für Windows im SilentApps-Minimal-Stil – sortieren, taggen, D
 |---|---|
 | **Bibliothek** | Musikordner scannen (MP3, FLAC, M4A/AAC, OGG, Opus, WAV, AIFF), Suche, Filter (nicht analysiert, fehlende Tags, ohne Cover), Sortierung nach Titel/Künstler/Album/Genre/BPM/Tonart/Dauer, Dateien per Drag & Drop hinzufügen |
 | **Ordner** | Ordneransicht wie im Explorer: Baum + Unterordner-Kacheln + Titelliste mit Wellenform und Tag-Editor. Titel per Drag & Drop in Ordner verschieben (Strg = kopieren), Ordner anlegen, umbenennen, verschieben, in den Papierkorb. Dateien umbenennen mit F2. Im Explorer hinzugefügte Dateien werden beim Öffnen des Ordners automatisch aufgenommen |
+| **Verlauf** | Jede Änderung ist rückgängig machbar: Tags, Cover, Verschieben, Umbenennen, Ordner, Papierkorb (Titel kommen zurück in ihre Playlisten). Strg+Z = letzte Änderung |
+| **Überwachung** | Musikordner werden laufend überwacht – im Explorer hinzugefügte, verschobene, umbenannte oder gelöschte Dateien werden sofort übernommen (beim Verschieben bleiben Analyse und Playlisten erhalten) |
+| **Spalten** | Rechtsklick auf den Listenkopf: Spalten wählen (Nr., Künstler, Albumkünstler, Jahr, Bitrate, Format, kHz, Größe, Hinzugefügt, Kommentar, Dateiname, Pfad …). Breite am Spaltenrand ziehen, Doppelklick = automatisch. Pro Ansicht gespeichert |
+| **Am Klang erkennen** | AcoustID: Titel ohne oder mit falschen Tags über den Audio-Fingerabdruck erkennen, Felder einzeln übernehmen (kostenloser Schlüssel nötig) |
 | **Wellenform** | Wird einmal pro Titel berechnet und gespeichert. Klick in die Wellenform startet sofort an dieser Stelle (in der Liste, bei Duplikaten und im Player) |
 | **Tags** | Einzel- und Mehrfachbearbeitung, Cover setzen/entfernen, Dateiname → Tags per Muster, Tags → Dateiname per Muster (Checkbox „Beim Speichern umbenennen“), Online-Suche (MusicBrainz + Cover Art Archive, nur auf Klick) mit Auswahl pro Feld |
 | **Analyse** | BPM, Tonart (mit Camelot-Notation), Audio-Fingerabdruck (Chromaprint), parallel im Hintergrund, abbrechbar |

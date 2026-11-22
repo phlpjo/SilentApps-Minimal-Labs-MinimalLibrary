@@ -2,7 +2,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { api, type PlannedMove } from "../api";
 import { player } from "../player";
 import { store } from "../store";
-import { clear, h, holdButton, reportErrors, toast } from "../ui";
+import { h, holdButton, reportErrors, toast } from "../ui";
+import { historyList } from "./history";
 
 const PLACEHOLDERS: [string, string][] = [
   ["{albumartist}", "Albumkünstler"], ["{artist}", "Künstler"], ["{album}", "Album"], ["{title}", "Titel"], ["{track}", "Track (01)"],
@@ -27,7 +28,8 @@ export function organizeView(preIds?: number[]): { el: HTMLElement; destroy: () 
   const modeSel = h("select", {}, h("option", { value: "move" }, "Verschieben"), h("option", { value: "copy" }, "Kopieren"));
   const example = h("div", { class: "note", style: { fontFamily: "var(--mono)" } });
   const previewBox = h("div", {});
-  const history = h("div", {});
+  const hist = historyList(["move"]);
+  const history = hist.el;
   let plan: PlannedMove[] = [];
 
   const updExample = async () => {
@@ -77,26 +79,7 @@ export function organizeView(preIds?: number[]): { el: HTMLElement; destroy: () 
     loadHistory();
   };
 
-  const loadHistory = async () => {
-    const list = await api.moveBatches();
-    clear(history);
-    if (!list.length) return history.append(h("div", { class: "note" }, "Noch keine Vorgänge."));
-    for (const b of list) {
-      history.append(
-        h("div", { class: "setting" },
-          h("div", {}, h("div", {}, b.description), h("div", { class: "note" }, `${new Date(b.created * 1000).toLocaleString("de")} · ${b.count} Dateien`)),
-          b.undone
-            ? h("span", { class: "sub" }, "rückgängig gemacht")
-            : holdButton("Rückgängig", async () => {
-                const r = await api.undoBatch(b.id).catch((e) => ({ moved: 0, errors: [String(e)] }));
-                reportErrors(r.errors, `${r.moved} Dateien zurück an ihren Platz`);
-                await store.loadTracks();
-                loadHistory();
-              }, "halten"),
-        ),
-      );
-    }
-  };
+  const loadHistory = () => hist.reload();
   loadHistory();
   updExample();
 

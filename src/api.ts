@@ -33,6 +33,7 @@ export interface Settings {
   pattern: string;
   threads: number;
   autoAnalyze: boolean;
+  acoustidKey: string;
 }
 
 export interface ScanReport { found: number; added: number; updated: number; removed: number; errors: string[] }
@@ -46,7 +47,9 @@ export interface DupGroup { trackIds: number[]; reasons: string[]; audioSimilari
 
 export interface PlannedMove { trackId: number; from: string; to: string; renamed: boolean; unchanged: boolean }
 export interface ApplyReport { batchId: number; moved: number; errors: string[] }
-export interface Batch { id: number; created: number; description: string; count: number; undone: boolean }
+export interface Batch { id: number; kind: "move" | "tags" | "trash" | "dir"; created: number; description: string; count: number; undone: boolean }
+export interface UndoReport { restored: number; errors: string[]; newIds: number[] }
+export interface LibraryChange { added: number[]; updated: number; moved: number; removed: number }
 
 export interface Rule { field: string; op: string; value: string; value2: string }
 export interface SmartRules { all: boolean; rules: Rule[]; sort: string; desc: boolean; limit: number | null }
@@ -81,12 +84,13 @@ export const api = {
   setCoverFile: (ids: number[], file: string) => invoke<string[]>("set_cover_file", { ids, file }),
   removeCover: (ids: number[]) => invoke<string[]>("remove_cover", { ids }),
   mbSearch: (artist: string, title: string, album: string | null) => invoke<Candidate[]>("mb_search", { artist, title, album }),
+  acoustidLookup: (id: number) => invoke<Candidate[]>("acoustid_lookup", { id }),
   mbCover: (ids: number[], releaseId: string) => invoke<string[]>("mb_cover", { ids, releaseId }),
   findDuplicates: (modes: { metadata: boolean; filename: boolean; audio: boolean }) => invoke<DupGroup[]>("find_duplicates", { modes }),
   organizePreview: (ids: number[] | null, target: string, pattern: string) => invoke<PlannedMove[]>("organize_preview", { ids, target, pattern }),
   organizeApply: (plan: PlannedMove[], copy: boolean, description: string) => invoke<ApplyReport>("organize_apply", { plan, copy, description }),
   moveBatches: () => invoke<Batch[]>("move_batches"),
-  undoBatch: (id: number) => invoke<ApplyReport>("undo_batch", { id }),
+  undoBatch: (id: number | null) => invoke<UndoReport>("undo_batch", { id }),
   playlists: () => invoke<Playlist[]>("playlists_list"),
   playlistCreate: (name: string, rules: SmartRules | null, ids: number[] | null) => invoke<number>("playlist_create", { name, rules, ids }),
   playlistUpdate: (id: number, name: string, rules: SmartRules | null) => invoke<void>("playlist_update", { id, name, rules }),

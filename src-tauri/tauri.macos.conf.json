@@ -13,15 +13,25 @@
         "decorations": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "trafficLightPosition": { "x": 14, "y": 17 }
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 17
+        }
       }
     ]
   },
   "bundle": {
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "macOS": {
       "minimumSystemVersion": "11.0",
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "files": {
+        "Resources/de.lproj/InfoPlist.strings": "macos/de.lproj/InfoPlist.strings",
+        "Resources/en.lproj/InfoPlist.strings": "macos/en.lproj/InfoPlist.strings"
+      }
     }
   }
 }

@@ -1,0 +1,3 @@
+"NSLocalNetworkUsageDescription" = "Minimal Library sucht Sonos- und DLNA-Lautsprecher im Heimnetz, um Musik dorthin abzuspielen.";
+"NSAppleEventsUsageDescription" = "Minimal Library nutzt den Finder, um gelöschte Dateien aus dem Papierkorb zurückzulegen.";
+"NSMicrophoneUsageDescription" = "Nur um die Namen der Audio-Ausgabegeräte anzuzeigen. Es wird nichts aufgenommen.";

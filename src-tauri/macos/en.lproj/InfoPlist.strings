@@ -1,0 +1,3 @@
+"NSLocalNetworkUsageDescription" = "Minimal Library looks for Sonos and DLNA speakers on your home network to play music there.";
+"NSAppleEventsUsageDescription" = "Minimal Library uses the Finder to put deleted files back from the Trash.";
+"NSMicrophoneUsageDescription" = "Only to show the names of audio output devices. Nothing is recorded.";

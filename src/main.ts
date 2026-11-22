@@ -6,7 +6,7 @@ import { applyTheme, isLight } from "./theme";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
-import { api, type LibraryChange } from "./api";
+import { api, type LibraryChange, type Playlist } from "./api";
 import { Inspector } from "./inspector";
 import { player } from "./player";
 import { store } from "./store";
@@ -22,13 +22,13 @@ import { syncView, startSyncWatch, syncReadyCount } from "./views/sync";
 import { equalizerView } from "./views/equalizer";
 import { searchView } from "./views/search";
 import { startUpdater, updater } from "./updater";
-import { icon } from "./icons";
+import { icon, navIcon } from "./icons";
 import { MY_TAB, audioOwner, reportPlaying, tabStrip } from "./tabs";
 import { pioneerExportDialog, pioneerOn, xmlDialog } from "./pioneer";
 import { currentOutputLabel, outputPopup, restoreOutput } from "./outputs";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { organizeView } from "./views/organize";
-import { exportDialog, playlistView, smartEditor } from "./views/playlist";
+import { exportDialog, playlistView, renamePlaylist, smartEditor } from "./views/playlist";
 import { settingsView } from "./views/settings";
 import logo from "./logo.svg";
 import { L, pl, LOCALE, trMsg, LANG, shown } from "./i18n";
@@ -43,11 +43,15 @@ function updateBack() {
   backBtn.disabled = backStack.length === 0;
 }
 const maxBtn = h("button", { class: "tb-btn", title: L("Maximieren"), onclick: () => win.toggleMaximize() }, "▢");
+const sideBtn = h("button", { class: "tb-btn tb-icon", title: L("Seitenleiste ein-/ausklappen"), onclick: () => setSideClosed(!app.classList.contains("side-closed")) }, icon("panelLeft", 17));
+const inspBtn = h("button", { class: "tb-btn tb-icon", title: L("Infoleiste ein-/ausklappen"), onclick: () => setInspClosed(!app.classList.contains("insp-closed")) }, icon("panelRight", 17));
 const titlebar = h("header", { id: "titlebar", "data-tauri-drag-region": "" },
+  sideBtn,
   backBtn,
   tabStrip(),
   h("div", { class: "tb-title", "data-tauri-drag-region": "" }),
   // Hell/Dunkel ganz rechts in der Titelleiste (Windows: vor den Fenstersymbolen)
+  inspBtn,
   h("div", { class: "tb-theme" }, darkSwitch()),
   IS_MAC ? null : h("div", { class: "tb-ctrls" },
     h("button", { class: "tb-btn", title: L("Minimieren"), onclick: () => win.minimize() }, "—"),
@@ -229,8 +233,79 @@ function springLoaded(el: HTMLElement, view: ViewName) {
   return el;
 }
 
-function navItem(label: string, active: boolean, onclick: () => void, count?: string) {
-  return h("div", { class: "nav-item" + (active ? " active" : ""), onclick }, h("span", {}, label), count ? h("span", { class: "count" }, count) : null);
+function navItem(ico: string, label: string, active: boolean, onclick: (e: MouseEvent) => void, count?: string) {
+  return h("div", { class: "nav-item" + (active ? " active" : ""), title: label, onclick },
+    h("span", { class: "ni" }, navIcon(ico), h("span", { class: "nl" }, label)),
+    count ? h("span", { class: "count" }, count) : null);
+}
+
+// ---------- Seitenleisten ein-/ausklappen ----------
+const SIDE_KEY = "ml.sideClosed";
+const INSP_KEY = "ml.inspClosed";
+function setSideClosed(closed: boolean) {
+  app.classList.toggle("side-closed", closed);
+  app.classList.remove("side-peek");
+  try { localStorage.setItem(SIDE_KEY, closed ? "1" : ""); } catch {}
+}
+function setInspClosed(closed: boolean) {
+  app.classList.toggle("insp-closed", closed);
+  try { localStorage.setItem(INSP_KEY, closed ? "1" : ""); } catch {}
+}
+try {
+  if (localStorage.getItem(SIDE_KEY)) app.classList.add("side-closed");
+  if (localStorage.getItem(INSP_KEY)) app.classList.add("insp-closed");
+} catch {}
+/** Eingeklappt: beim Ziehen kurz über der Leiste halten → klappt auf (bis zum Loslassen) */
+let peekTimer = 0;
+dropTarget(side, {
+  accepts: () => app.classList.contains("side-closed"),
+  enter: () => {
+    clearTimeout(peekTimer);
+    peekTimer = window.setTimeout(() => app.classList.add("side-peek"), 350);
+  },
+  leave: () => clearTimeout(peekTimer),
+  drop: () => {},
+});
+new MutationObserver(() => {
+  if (!document.body.classList.contains("is-dragging") && app.classList.contains("side-peek")) {
+    clearTimeout(peekTimer);
+    setTimeout(() => app.classList.remove("side-peek"), 250);
+  }
+}).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+
+// Mehrfachauswahl in der Playlist-Liste (Strg/⌘ bzw. Umschalt + Klick)
+const plSel = new Set<number>();
+let plAnchor = -1;
+
+async function deletePlaylists(ids: number[]) {
+  for (const id of ids) await api.playlistDelete(id).catch((e) => toast(String(e)));
+  plSel.clear();
+  await store.loadPlaylists();
+  if (current?.name === "playlist" && ids.includes(current.arg?.[0] ?? -1)) nav("library");
+  else renderSide();
+}
+
+function playlistMenu(e: MouseEvent, p: Playlist) {
+  e.preventDefault();
+  const multi = plSel.has(p.id) && plSel.size > 1;
+  if (!multi) { plSel.clear(); plSel.add(p.id); plAnchor = store.playlists.findIndex((x) => x.id === p.id); renderSide(); }
+  const ids = multi ? store.playlists.filter((x) => plSel.has(x.id)).map((x) => x.id) : [p.id];
+  const pio = pioneerOn() ? [{ label: L("Für Pioneer-Player exportieren …"), action: () => pioneerExportDialog(ids) }, { label: L("rekordbox-XML speichern …"), action: () => xmlDialog(ids) }] : [];
+  contextMenu(e.clientX, e.clientY, multi
+    ? [
+        { label: L("{0} Playlisten exportieren …", ids.length), action: () => exportDialog(ids) },
+        ...pio,
+        { label: "", sep: true },
+        { label: L("{0} Playlisten löschen", ids.length), hold: true, action: () => deletePlaylists(ids) },
+      ]
+    : [
+        { label: L("Öffnen"), action: () => nav("playlist", [p.id]) },
+        p.rules ? { label: L("Regeln bearbeiten …"), action: () => smartEditor(p) } : { label: L("Umbenennen …"), action: () => renamePlaylist(p) },
+        { label: L("Exportieren …"), action: () => exportDialog(ids) },
+        ...pio,
+        { label: "", sep: true },
+        { label: L("Löschen"), hold: true, action: () => deletePlaylists(ids) },
+      ]);
 }
 
 function renderSide() {
@@ -239,11 +314,13 @@ function renderSide() {
     side.append(
       h("div", { class: "brand" }, h("div", { class: "bl" }, h("img", { src: logo, alt: "" }), h("span", {}, "Minimal Library"))),
       h("div", { class: "nav", id: "mainnav" }),
-      h("div", { class: "section" }, L("Playlisten")),
-      h("div", { class: "section", style: { padding: "0 20px 8px", justifyContent: "flex-start", gap: "14px" } },
+      // eingeklappt: ein Punkt für alle Playlisten (klappt die Leiste auf)
+      h("div", { class: "nav pl-fold" }, navItem("playlists", L("Playlisten"), false, () => setSideClosed(false))),
+      h("div", { class: "section pl-sec" }, L("Playlisten")),
+      h("div", { class: "section pl-sec", style: { padding: "0 20px 8px", justifyContent: "flex-start", gap: "14px" } },
         newDrop(h("span", { class: "act", title: L("Neue Playlist (Titel hierher ziehen = direkt hinein)"), onclick: () => newPlaylistFromIds([]) }, L("+ Neu"))),
         h("span", { class: "act", title: L("Smarte Playlist aus Regeln"), onclick: () => smartEditor() }, L("+ Smart")),
-        h("span", { class: "act", title: "M3U/M3U8 importieren", onclick: importPlaylist }, "Import …"),
+        h("span", { class: "act", title: L("M3U/M3U8 importieren"), onclick: importPlaylist }, L("+ Import")),
       ),
       plList,
       newDrop(h("div", { class: "pl-new-drop" }, L("+ Neue Playlist mit diesen Titeln"))),
@@ -252,20 +329,41 @@ function renderSide() {
   }
   const mainnav = side.querySelector("#mainnav")!;
   mainnav.replaceChildren(
-    navItem(L("Bibliothek"), n === "library", () => nav("library"), store.tracks.size.toLocaleString(LOCALE)),
-    navItem(L("Erweiterte Suche"), n === "search", () => nav("search")),
-    springLoaded(navItem(L("Ordner"), n === "folders", () => nav("folders")), "folders"),
-    navItem("Sync", n === "sync", () => nav("sync"), syncBadge()),
-    navItem("Equalizer", n === "equalizer", () => nav("equalizer")),
-    navItem("Ripper", n === "ripper", () => nav("ripper")),
-    navItem(L("Sortieren"), n === "organize", () => nav("organize", n === "library" ? [...store.selection] : undefined)),
-    navItem(L("Duplikate"), n === "duplicates", () => nav("duplicates")),
-    navItem(L("Verlauf"), n === "history", () => nav("history")),
-    navItem(L("Einstellungen"), n === "settings", () => nav("settings"), updater.state === "available" ? L("● Update") : undefined),
+    navItem("library", L("Bibliothek"), n === "library", () => nav("library"), store.tracks.size.toLocaleString(LOCALE)),
+    navItem("search", L("Erweiterte Suche"), n === "search", () => nav("search")),
+    springLoaded(navItem("folders", L("Ordner"), n === "folders", () => nav("folders")), "folders"),
+    navItem("sync", "Sync", n === "sync", () => nav("sync"), syncBadge()),
+    navItem("equalizer", "Equalizer", n === "equalizer", () => nav("equalizer")),
+    navItem("ripper", "Ripper", n === "ripper", () => nav("ripper")),
+    navItem("organize", L("Sortieren"), n === "organize", () => nav("organize", n === "library" ? [...store.selection] : undefined)),
+    navItem("duplicates", L("Duplikate"), n === "duplicates", () => nav("duplicates")),
+    navItem("history", L("Verlauf"), n === "history", () => nav("history")),
+    navItem("settings", L("Einstellungen"), n === "settings", () => nav("settings"), updater.state === "available" ? L("● Update") : undefined),
   );
+  for (const id of [...plSel]) if (!store.playlists.some((p) => p.id === id)) plSel.delete(id);
   plList.replaceChildren(
-    ...store.playlists.map((p) => {
-      const it = navItem((p.rules ? "◇ " : "") + shown(p.name), n === "playlist" && current?.arg?.[0] === p.id, () => nav("playlist", [p.id]), String(p.count));
+    ...store.playlists.map((p, i) => {
+      const star = p.name === "Stern" && !p.rules;
+      const it = navItem(p.rules ? "smart" : star ? "star" : "playlist", shown(p.name), n === "playlist" && current?.arg?.[0] === p.id, (e) => {
+        if (e.ctrlKey || e.metaKey) {
+          if (plSel.has(p.id)) plSel.delete(p.id); else plSel.add(p.id);
+          plAnchor = i;
+          renderSide();
+          return;
+        }
+        if (e.shiftKey && plAnchor >= 0) {
+          const [a, b] = [Math.min(plAnchor, i), Math.max(plAnchor, i)];
+          plSel.clear();
+          store.playlists.slice(a, b + 1).forEach((x) => plSel.add(x.id));
+          renderSide();
+          return;
+        }
+        plSel.clear();
+        plSel.add(p.id);
+        plAnchor = i;
+        nav("playlist", [p.id]);
+      }, String(p.count));
+      if (plSel.size > 1 && plSel.has(p.id)) it.classList.add("multi");
       // Titel auf die Playlist ziehen → hinzufügen (smarte Playlisten füllen sich selbst)
       dropTarget(it, {
         accepts: (pl) => pl.kind === "ids" && !p.rules,
@@ -273,19 +371,11 @@ function renderSide() {
           if (pl.kind !== "ids") return;
           await api.playlistAddItems(p.id, pl.ids);
           await store.loadPlaylists();
-          toast(L("{0} Titel → {1}", pl.ids.length, p.name));
+          toast(L("{0} Titel → {1}", pl.ids.length, shown(p.name)));
           if (current?.name === "playlist" && current.arg?.[0] === p.id) nav("playlist", [p.id]);
         },
       });
-      it.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        contextMenu(e.clientX, e.clientY, [
-          { label: L("Öffnen"), action: () => nav("playlist", [p.id]) },
-          { label: L("Exportieren …"), action: () => exportDialog([p.id]) },
-          ...(pioneerOn() ? [{ label: L("Für Pioneer-Player exportieren …"), action: () => pioneerExportDialog([p.id]) }, { label: L("rekordbox-XML speichern …"), action: () => xmlDialog([p.id]) }] : []),
-          ...(p.rules ? [{ label: L("Regeln bearbeiten …"), action: () => smartEditor(p) }] : []),
-        ]);
-      });
+      it.addEventListener("contextmenu", (e) => playlistMenu(e, p));
       return it;
     }),
   );
@@ -317,7 +407,7 @@ async function importPlaylist() {
 }
 
 export function newPlaylistFromIds(ids: number[]) {
-  const name = h("input", { type: "text", value: "Neue Playlist", style: { width: "100%" } });
+  const name = h("input", { type: "text", value: L("Neue Playlist"), style: { width: "100%" } });
   const go = async () => {
     const id = await api.playlistCreate(name.value.trim() || L("Neue Playlist"), null, ids.length ? ids : null);
     await store.loadPlaylists();

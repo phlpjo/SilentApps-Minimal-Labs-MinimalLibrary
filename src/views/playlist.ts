@@ -82,7 +82,7 @@ export function playlistView(id: number): { el: HTMLElement; destroy: () => void
   return { el, destroy: () => { unsubs.forEach((u) => u()); list.destroy(); } };
 }
 
-function renamePlaylist(p: Playlist) {
+export function renamePlaylist(p: Playlist) {
   const name = h("input", { type: "text", value: p.name, style: { width: "100%" } });
   const go = async () => {
     if (!name.value.trim()) return;

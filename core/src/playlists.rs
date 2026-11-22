@@ -220,7 +220,37 @@ pub fn name(conn: &Connection, id: i64) -> Result<String> {
     )
 }
 
+/// Gleicher Name schon vergeben → „Name (2)“, „Name (3)“ …
+pub fn unique_name(conn: &Connection, name: &str, except: Option<i64>) -> Result<String> {
+    let name = name.trim();
+    let taken = |n: &str| -> Result<bool> {
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM playlists WHERE name = ?1 COLLATE NOCASE AND id != ?2",
+            params![n, except.unwrap_or(-1)],
+            |r| r.get::<_, i64>(0),
+        )? > 0)
+    };
+    if !taken(name)? {
+        return Ok(name.to_string());
+    }
+    // vorhandene Nummer am Ende weiterzählen
+    let base = match name.rfind(" (") {
+        Some(i) if name.ends_with(')') && name[i + 2..name.len() - 1].parse::<u32>().is_ok() => {
+            &name[..i]
+        }
+        _ => name,
+    };
+    for n in 2.. {
+        let c = format!("{base} ({n})");
+        if !taken(&c)? {
+            return Ok(c);
+        }
+    }
+    unreachable!()
+}
+
 pub fn create(conn: &Connection, name: &str, rules: Option<&SmartRules>) -> Result<i64> {
+    let name = &unique_name(conn, name, None)?;
     let rules = rules.map(serde_json::to_string).transpose()?;
     conn.execute(
         "INSERT INTO playlists(name, rules, created) VALUES(?1, ?2, ?3)",
@@ -230,6 +260,7 @@ pub fn create(conn: &Connection, name: &str, rules: Option<&SmartRules>) -> Resu
 }
 
 pub fn update(conn: &Connection, id: i64, name: &str, rules: Option<&SmartRules>) -> Result<()> {
+    let name = &unique_name(conn, name, Some(id))?;
     let rules = rules.map(serde_json::to_string).transpose()?;
     conn.execute(
         "UPDATE playlists SET name = ?2, rules = ?3 WHERE id = ?1",
@@ -408,4 +439,20 @@ fn amp(s: &str) -> String {
         return s.to_string();
     }
     s.split('&').map(str::trim).collect::<Vec<_>>().join(" & ")
+}
+
+#[cfg(test)]
+mod unique_tests {
+    #[test]
+    fn numbers() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(crate::db::SCHEMA).unwrap();
+        let a = super::create(&c, "Party", None).unwrap();
+        let b = super::create(&c, "Party", None).unwrap();
+        let d = super::create(&c, "party", None).unwrap();
+        assert_eq!(super::name(&c, b).unwrap(), "Party (2)");
+        assert_eq!(super::name(&c, d).unwrap(), "party (3)");
+        super::update(&c, a, "Party", None).unwrap();
+        assert_eq!(super::name(&c, a).unwrap(), "Party");
+    }
 }

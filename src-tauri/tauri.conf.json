@@ -54,9 +54,11 @@
       },
       "nsis": {
         "languages": [
+          "English",
           "German"
         ],
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
       },
       "wix": {
         "language": "de-DE"

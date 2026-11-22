@@ -366,16 +366,36 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     store.on("settings", () => reloadAll()),
   ];
 
+  // Ordnerbaum: Breite am Trennstrich ziehen (wird gemerkt)
+  const splitter = h("div", { class: "splitter", title: L("Breite ziehen") });
+  const foldersBox = h("div", { class: "folders" }, tree, splitter, h("div", { class: "folder-main" }, tiles, list.el));
+  try { const w = Number(localStorage.getItem("ml.treeW")); if (w) foldersBox.style.setProperty("--tree-w", w + "px"); } catch {}
+  splitter.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    const x0 = e.clientX;
+    const w0 = tree.getBoundingClientRect().width;
+    let w = w0;
+    const move = (ev: PointerEvent) => {
+      w = Math.max(160, Math.min(window.innerWidth * 0.6, w0 + ev.clientX - x0));
+      foldersBox.style.setProperty("--tree-w", Math.round(w) + "px");
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", up, true);
+      document.body.classList.remove("is-resizing");
+      try { localStorage.setItem("ml.treeW", String(Math.round(w))); } catch {}
+    };
+    document.body.classList.add("is-resizing");
+    window.addEventListener("pointermove", move, true);
+    window.addEventListener("pointerup", up, true);
+  });
   const el = h("div", { style: { display: "contents" } },
     h("div", { class: "head nowrap" }, h("h1", {}, L("Ordner")), crumbs, info,
       search,
       h("label", { class: "check", title: L("Titel aus allen Unterordnern mit anzeigen und durchsuchen") }, recBox, L("Unterordner")),
       h("button", { class: "btn", onclick: () => current && revealItemInDir(current) }, FILE_MANAGER),
     ),
-    h("div", { class: "folders" },
-      tree,
-      h("div", { class: "folder-main" }, tiles, list.el),
-    ),
+    foldersBox,
   );
 
   (async () => {

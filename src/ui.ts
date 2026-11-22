@@ -115,7 +115,7 @@ export function sheet(title: string, body: Child, opts: { wide?: boolean; onClos
 }
 
 // ---------- Kontextmenü ----------
-export interface MenuItem { label: string; hint?: string; action?: () => void; sub?: MenuItem[]; sep?: boolean; disabled?: boolean }
+export interface MenuItem { label: string; hint?: string; action?: () => void; sub?: MenuItem[]; sep?: boolean; disabled?: boolean; /** riskant: 1,2 s gedrückt halten statt klicken */ hold?: boolean }
 
 export function contextMenu(x: number, y: number, items: MenuItem[]) {
   document.querySelectorAll(".menu").forEach((m) => m.remove());
@@ -127,7 +127,8 @@ export function contextMenu(x: number, y: number, items: MenuItem[]) {
         m.appendChild(h("hr"));
         continue;
       }
-      const o = h("div", { class: "option", style: it.disabled ? { opacity: "0.45", pointerEvents: "none" } : {} }, it.label, it.hint || it.sub ? h("small", {}, it.hint ?? "›") : null);
+      const hint = it.hold ? L("gedrückt halten") : it.hint;
+      const o = h("div", { class: "option" + (it.hold ? " hold" : ""), style: it.disabled ? { opacity: "0.45", pointerEvents: "none" } : {} }, h("span", {}, it.label), hint || it.sub ? h("small", {}, hint ?? "›") : null);
       if (it.sub) {
         o.addEventListener("mouseenter", () => {
           document.querySelectorAll(".menu.sub").forEach((s) => s.remove());
@@ -137,10 +138,25 @@ export function contextMenu(x: number, y: number, items: MenuItem[]) {
       } else {
         // Nur im Hauptmenü schließt das Überfahren anderer Einträge das Untermenü
         if (level === 0) o.addEventListener("mouseenter", () => document.querySelectorAll(".menu.sub").forEach((s) => s.remove()));
-        o.addEventListener("click", () => {
-          document.querySelectorAll(".menu").forEach((mm) => mm.remove());
-          it.action?.();
-        });
+        if (it.hold) {
+          // Füllt sich beim Halten; vorher loslassen = nichts passiert
+          let timer = 0;
+          const stop = () => { clearTimeout(timer); o.classList.remove("holding"); };
+          o.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return;
+            o.classList.add("holding");
+            timer = window.setTimeout(() => {
+              document.querySelectorAll(".menu").forEach((mm) => mm.remove());
+              it.action?.();
+            }, 1200);
+          });
+          o.addEventListener("pointerup", stop);
+          o.addEventListener("pointerleave", stop);
+        } else
+          o.addEventListener("click", () => {
+            document.querySelectorAll(".menu").forEach((mm) => mm.remove());
+            it.action?.();
+          });
       }
       m.appendChild(o);
     }

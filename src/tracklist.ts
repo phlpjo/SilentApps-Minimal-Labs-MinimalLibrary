@@ -74,6 +74,9 @@ export class TrackList {
   private storageKey: string;
   private unsub: (() => void)[] = [];
   private dropIndex = -1;
+  private inner: HTMLElement;
+  /** nach dem Ziehen einer Spalte den Klick (= Sortieren) unterdrücken */
+  private dragged = false;
 
   constructor(
     private opts: {
@@ -98,14 +101,16 @@ export class TrackList {
     });
     this.spacer = h("div", { style: { height: "0px" } });
     this.body = h("div", { class: "list-body", tabindex: "0" }, this.spacer);
-    this.el = h("div", { class: "list" }, this.head, this.body);
+    // Kopf + Liste in einem Rahmen mit Mindestbreite: passt die Ansicht nicht, wird waagerecht gescrollt
+    this.inner = h("div", { class: "list-inner" }, this.head, this.body);
+    this.el = h("div", { class: "list" }, this.inner);
     this.updateCols();
     this.body.addEventListener("scroll", () => this.renderRows());
     this.body.addEventListener("keydown", (e) => this.onKey(e));
     new ResizeObserver(() => {
       this.updateCols();
       this.renderRows(true);
-    }).observe(this.body);
+    }).observe(this.el);
     this.unsub.push(store.on("peaks", () => this.redrawWaves()));
     this.unsub.push(store.on("player", () => this.renderRows(true)));
     this.unsub.push(player.onPos((id, f) => {
@@ -148,16 +153,75 @@ export class TrackList {
   }
 
   private template() {
-    return this.cols.map((c) => this.widthOf(c)).join(" ");
+    const tpl = this.cols.map((c) => this.widthOf(c)).join(" ");
+    if (this.inner) this.inner.style.minWidth = this.minWidth() + "px";
+    return tpl;
+  }
+
+  /** Kleinste sinnvolle Breite aller Spalten (fest oder minmax-Untergrenze) + Abstände */
+  private minWidth() {
+    const w = this.cols.reduce((sum, c) => {
+      const m = /(\d+)px/.exec(this.widthOf(c));
+      return sum + (m ? Number(m[1]) : 60);
+    }, 0);
+    return w + 12 * Math.max(0, this.cols.length - 1) + 40;
+  }
+
+  /** Spalte am Kopf greifen und an eine andere Stelle ziehen */
+  private startMove(e: PointerEvent, c: Col, cell: HTMLElement) {
+    if (e.button !== 0) return;
+    const x0 = e.clientX;
+    let ghost: HTMLElement | null = null;
+    let target = -1;
+    const cells = () => [...this.head.querySelectorAll<HTMLElement>(".hcell")];
+    const move = (ev: PointerEvent) => {
+      if (!ghost && Math.abs(ev.clientX - x0) < 6) return;
+      if (!ghost) {
+        ghost = h("div", { class: "col-ghost" }, cell.textContent ?? "");
+        document.body.append(ghost);
+        cell.classList.add("moving");
+        document.body.classList.add("is-resizing");
+      }
+      ghost.style.left = ev.clientX + 8 + "px";
+      ghost.style.top = cell.getBoundingClientRect().top + "px";
+      // Einfügestelle: vor der ersten Zelle, deren Mitte rechts vom Zeiger liegt
+      const list = cells();
+      target = list.findIndex((x) => { const r = x.getBoundingClientRect(); return ev.clientX < r.left + r.width / 2; });
+      if (target < 0) target = list.length;
+      list.forEach((x, i) => { x.classList.toggle("ins-before", i === target); x.classList.toggle("ins-after", target === list.length && i === list.length - 1); });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", up, true);
+      cells().forEach((x) => x.classList.remove("ins-before", "ins-after", "moving"));
+      document.body.classList.remove("is-resizing");
+      if (!ghost) return;
+      ghost.remove();
+      this.dragged = true;
+      setTimeout(() => (this.dragged = false), 0);
+      const keys = this.cols.map((x) => x.key);
+      const from = keys.indexOf(c.key);
+      if (target < 0 || target === from || target === from + 1) return;
+      const before = keys[target]; // Spalte, vor die eingefügt wird (undefined = ans Ende)
+      const vis = this.config.visible.filter((k) => k !== c.key);
+      const at = before ? vis.indexOf(before) : vis.length;
+      vis.splice(at < 0 ? vis.length : at, 0, c.key);
+      this.config.visible = vis;
+      this.saveConfig();
+      this.updateCols(true);
+    };
+    window.addEventListener("pointermove", move, true);
+    window.addEventListener("pointerup", up, true);
   }
 
   /** Sichtbare Spalten bestimmen (schmale Ansicht: Album/Genre ohne feste Breite ausblenden) */
   private updateCols(force = false) {
-    const w = this.body.clientWidth || 1200;
+    const w = this.el?.clientWidth || this.body.clientWidth || 1200;
     const cols = this.config.visible
       .map((k) => COLUMNS.find((c) => c.key === k)!)
       .filter((c) => c && (c.key !== "pos" || this.opts.reorderable))
-      .filter((c) => !c.hideBelow || this.config.widths[c.key] || w >= c.hideBelow);
+      // schmale Ansicht: Spalten bleiben, stattdessen waagerecht scrollen
+      .filter(() => w > 0);
     if (!force && cols.map((c) => c.key).join() === this.cols.map((c) => c.key).join()) return;
     this.cols = cols;
     this.head.style.gridTemplateColumns = this.template();
@@ -294,7 +358,7 @@ export class TrackList {
           {
             class: "hcell" + (sorted ? " sorted" : "") + (c.num ? " num" : ""),
             onclick: () => {
-              if (c.key === "wave") return;
+              if (c.key === "wave" || this.dragged) return;
               let key = c.key as SortKey;
               if (c.key === "title" && !artistCol) {
                 if (this.sort === "title" && !this.desc) key = "artist";
@@ -308,6 +372,7 @@ export class TrackList {
           },
           h("span", { class: "hlabel" }, (c.key === "title" && titleShowsArtist ? L("Künstler") : c.label) + (sorted ? (this.desc ? " ↓" : " ↑") : "")),
         );
+        cell.addEventListener("pointerdown", (e) => this.startMove(e, c, cell));
         if (c.key !== "wave") {
           const rz = h("div", { class: "rz" });
           rz.addEventListener("pointerdown", (e) => this.startResize(e, c, cell));

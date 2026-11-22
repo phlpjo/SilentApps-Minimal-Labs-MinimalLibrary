@@ -845,4 +845,11 @@ export const EN: Record<string, string> = {
   "unbekannt": "unknown",
   "Ungültiger Schlüssel. Bitte den Anwendungs-Schlüssel (API key) von acoustid.org/new-application eintragen – nicht den Benutzer-Schlüssel aus dem Profil.": "Invalid key. Please enter the application key (API key) from acoustid.org/new-application – not the user key from your profile.",
   "Stern": "Star",
+  "{0} Playlisten exportieren …": "Export {0} playlists …",
+  "{0} Playlisten löschen": "Delete {0} playlists",
+  "Seitenleiste ein-/ausklappen": "Show / hide sidebar",
+  "Infoleiste ein-/ausklappen": "Show / hide info panel",
+  "M3U/M3U8 importieren": "Import M3U/M3U8",
+  "+ Import": "+ Import",
+  "Breite ziehen": "Drag to resize",
 };

@@ -3,16 +3,21 @@
 <plist version="1.0">
 <dict>
   <key>NSLocalNetworkUsageDescription</key>
-  <string>Minimal Library sucht Sonos- und DLNA-Lautsprecher im Heimnetz, um Musik dorthin abzuspielen.</string>
+  <string>Minimal Library looks for Sonos and DLNA speakers on your home network to play music there.</string>
   <key>NSBonjourServices</key>
   <array>
     <string>_sonos._tcp</string>
   </array>
   <key>NSAppleEventsUsageDescription</key>
-  <string>Minimal Library nutzt den Finder, um gelöschte Dateien aus dem Papierkorb zurückzulegen.</string>
+  <string>Minimal Library uses the Finder to put deleted files back from the Trash.</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Nur um die Namen der Audio-Ausgabegeräte anzuzeigen. Es wird nichts aufgenommen.</string>
+  <string>Only to show the names of audio output devices. Nothing is recorded.</string>
   <key>CFBundleDevelopmentRegion</key>
-  <string>de</string>
+  <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>de</string>
+  </array>
 </dict>
 </plist>

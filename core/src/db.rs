@@ -3,7 +3,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-const SCHEMA: &str = r#"
+pub const SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS tracks (

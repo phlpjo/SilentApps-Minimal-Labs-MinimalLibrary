@@ -152,13 +152,27 @@ export function contextMenu(x: number, y: number, items: MenuItem[]) {
     return m;
   };
   build(items, x, y, 0);
+  // pointerdown statt mousedown: Listenzeilen unterdrücken mousedown (wegen Ziehen)
+  const close = () => {
+    document.querySelectorAll(".menu").forEach((m) => m.remove());
+    document.removeEventListener("pointerdown", off, true);
+    document.removeEventListener("keydown", esc, true);
+    window.removeEventListener("blur", close);
+  };
   const off = (e: Event) => {
-    if (!(e.target as HTMLElement).closest(".menu")) {
-      document.querySelectorAll(".menu").forEach((m) => m.remove());
-      document.removeEventListener("mousedown", off, true);
+    if (!(e.target as HTMLElement).closest(".menu")) close();
+  };
+  const esc = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      close();
     }
   };
-  setTimeout(() => document.addEventListener("mousedown", off, true));
+  setTimeout(() => {
+    document.addEventListener("pointerdown", off, true);
+    document.addEventListener("keydown", esc, true);
+    window.addEventListener("blur", close);
+  });
 }
 
 // ---------- Gedrückt halten (statt Rückfrage) ----------

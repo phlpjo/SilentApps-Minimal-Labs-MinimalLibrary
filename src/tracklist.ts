@@ -1,10 +1,12 @@
+import { zoomCover } from "./coverzoom";
 import type { Track } from "./api";
 import { player } from "./player";
+import { starfield } from "./stars";
 import { store } from "./store";
 import { drawWave, waveElement } from "./waveform";
 import { albumLink, artistLinks, camelot, fmtTime, h, keyLabel, keyOrder, ext, type MenuItem, contextMenu, qualityText } from "./ui";
 import { renameFileDialog } from "./fileops";
-import { beginDrag, dropTarget } from "./dnd";
+import { beginDrag, dragging, dropTarget } from "./dnd";
 import { L, LOCALE } from "./i18n";
 import { thumb } from "./thumbs";
 
@@ -25,7 +27,15 @@ const COLUMNS: Col[] = [
     key: "cover", label: L("Cover"), width: "44px",
     render: (t) => {
       const box = h("span", { class: "tcover" });
-      if (t.hasCover) thumb(t.id, (u) => u && box.replaceChildren(h("img", { src: u, alt: "", draggable: "false" })));
+      if (t.hasCover) {
+        thumb(t.id, (u) => u && box.replaceChildren(h("img", { src: u, alt: "", draggable: "false" })));
+        // Klick aufs Cover: groß ansehen (Zeile bleibt ausgewählt wie bisher)
+        box.addEventListener("click", (e) => {
+          if (dragging || !box.firstChild) return;
+          e.stopPropagation();
+          zoomCover(box, t.id);
+        });
+      }
       return box;
     },
   },
@@ -69,6 +79,8 @@ const ROW_H = 48;
 
 export class TrackList {
   el: HTMLElement;
+  /** waagerecht scrollender Rahmen (Kopf + Liste) */
+  scroller: HTMLElement;
   private head: HTMLElement;
   private body: HTMLElement;
   private spacer: HTMLElement;
@@ -112,9 +124,18 @@ export class TrackList {
     this.body = h("div", { class: "list-body", tabindex: "0" }, this.spacer);
     // Kopf + Liste in einem Rahmen mit Mindestbreite: passt die Ansicht nicht, wird waagerecht gescrollt
     this.inner = h("div", { class: "list-inner" }, this.head, this.body);
-    this.el = h("div", { class: "list" }, this.inner);
+    this.scroller = h("div", { class: "list" }, this.inner);
+    // Rahmen mit Sternenhimmel dahinter (wie in der Handy-App; Einstellungen → Darstellung)
+    this.el = h("div", { class: "list-wrap" }, this.scroller);
+    const sky = starfield(this.el);
+    this.unsub.push(sky.destroy);
     this.updateCols();
-    this.body.addEventListener("scroll", () => this.renderRows());
+    let lastTop = 0;
+    this.body.addEventListener("scroll", () => {
+      sky.kick(this.body.scrollTop - lastTop);
+      lastTop = this.body.scrollTop;
+      this.renderRows();
+    });
     this.body.addEventListener("keydown", (e) => this.onKey(e));
     new ResizeObserver(() => {
       this.updateCols();

@@ -397,7 +397,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
 
   // Ordnerbaum: Breite am Trennstrich ziehen (wird gemerkt)
   const splitter = h("div", { class: "splitter", title: L("Breite ziehen") });
-  const foldersBox = h("div", { class: "folders" }, tree, splitter, h("div", { class: "folder-main" }, tiles, list.el));
+  const foldersBox = h("div", { class: "folders" }, tree, splitter, h("div", { class: "folder-main" }, list.el));
   try { const w = Number(localStorage.getItem("ml.treeW")); if (w) foldersBox.style.setProperty("--tree-w", w + "px"); } catch {}
   splitter.addEventListener("pointerdown", (e) => {
     e.preventDefault();

@@ -5,6 +5,7 @@ import { api, type CastDevice } from "./api";
 import { player } from "./player";
 import { store } from "./store";
 import { h, holdButton, toast } from "./ui";
+import { icon } from "./icons";
 import { L } from "./i18n";
 import { IS_MAC } from "./platform";
 import { MY_SESSION, busyBy, house, outNameOf, sessionCmd, takeOver, whoOf, type House, type Session } from "./remotectl";
@@ -168,7 +169,11 @@ export function currentOutputLabel(): string {
   return localCache?.find((o) => o.id === player.localSink)?.label ?? L("Dieser PC");
 }
 
-/** Auswahl-Fenster am Player: oben was im Haus läuft (live, steuerbar), darunter jeder Ausgang genau einmal */
+/**
+ * Auswahl-Fenster am Player – bewusst einfach: eine Liste „Abspielen auf“, jeder Ausgang einmal mit Symbol.
+ * Belegte Ausgänge zeigen, wer dort spielt; antippen → „Übernehmen“ gedrückt halten.
+ * Was sonst noch im Haus läuft, steht eingeklappt darunter.
+ */
 export function outputPopup(anchor: HTMLElement) {
   document.querySelectorAll(".out-pop").forEach((m) => m.remove());
   const box = h("div", { class: "menu out-pop" });
@@ -180,56 +185,50 @@ export function outputPopup(anchor: HTMLElement) {
     box.style.top = Math.max(8, r.top - b.height - 8) + "px";
   };
   let hs: House = { computer: "", sessions: [], outputs: [] };
-  let arming = ""; // Ausgang, der zum Übernehmen bereitsteht
-  const fmt = (sec?: number) => (sec && sec > 0 ? `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, "0")}` : "");
+  let arming = "";
+  let showOthers = false;
 
-  // Ein Ausgang: frei → antippen; belegt → antippen zeigt „Übernehmen“ zum Gedrückthalten
-  const row = (id: string, label: string, on: boolean, hint: string, select: () => Promise<void> | void, dim = false) => {
+  const row = (id: string, ico: string, label: string, on: boolean, select: () => Promise<void> | void, dim = false) => {
     const other = on ? undefined : busyBy(hs, id);
-    const sub = other ? L("belegt · {0}", whoOf(other, hs.computer)) : hint;
     if (other && arming === id) {
-      return h("div", { class: "option armed" }, h("span", {}, "  " + label),
+      return h("div", { class: "out-row armed" }, icon(ico, 18), h("span", { class: "out-l" }, label),
         holdButton(L("Übernehmen"), () => { close(); takeOver(hs, id, select); }, L("halten · {0} pausiert", whoOf(other, hs.computer))));
     }
-    return h("div", { class: "option" + (dim ? " dim" : "") + (other ? " busy" : ""), onclick: (e: Event) => {
+    return h("div", { class: "out-row" + (on ? " on" : "") + (dim ? " dim" : ""), onclick: (e: Event) => {
+      if (on) return close();
       if (other) { e.stopPropagation(); arming = id; render(); return; }
       close(); select();
-    } }, h("span", {}, (on ? "✓ " : "  ") + label), sub ? h("small", {}, sub) : "");
+    } },
+      icon(ico, 18),
+      h("span", { class: "out-l" }, label),
+      on ? h("span", { class: "out-s" }, "✓") : other ? h("span", { class: "out-s busy" }, whoOf(other, hs.computer)) : "");
   };
 
-  // Läuft gerade woanders (andere Tabs, Handys): live mit Tasten
-  const card = (s: Session) => {
-    const btn = (label: string, title: string, cmd: Record<string, unknown>) =>
-      h("button", { class: "btn small", title, disabled: !s.controllable, onclick: (e: Event) => { e.stopPropagation(); sessionCmd(s.id, cmd); setTimeout(refresh, 700); } }, label);
-    const vol = typeof s.volume === "number" ? s.volume : 0.5;
-    const where = outNameOf(s);
-    return h("div", { class: "phone-now" },
-      h("div", {}, (s.kind === "phone" ? "📱 " : "🖥 ") + whoOf(s, hs.computer) + (where ? " → " + where : ""),
-        h("small", {}, s.title ? (s.playing ? " · " : L(" · pausiert · ")) + (s.artist ? s.artist + " – " : "") + s.title + (s.dur ? `  ${fmt(s.pos)} / ${fmt(s.dur)}` : "") : L(" · spielt nichts"))),
-      s.controllable
-        ? h("div", { class: "phone-ctl" },
-          btn("⏮", L("Zurück"), { cmd: "prev" }),
-          btn(s.playing ? "⏸" : "▶", L("Abspielen / Pause"), { cmd: "toggle" }),
-          btn("⏭", L("Weiter"), { cmd: "next" }),
-          btn("−", L("Leiser"), { cmd: "volume", vol: Math.max(0, vol - 0.1) }),
-          btn("+", L("Lauter"), { cmd: "volume", vol: Math.min(1, vol + 0.1) }))
-        : h("small", { class: "note" }, L("nur ansehen")),
-    );
+  const others = () => hs.sessions.filter((s) => s.id !== MY_SESSION && !s.self && s.playing);
+  const otherRow = (s: Session) => {
+    const btn = (ico: string, title: string, cmd: Record<string, unknown>) =>
+      h("button", { class: "ibtn", title, onclick: (e: Event) => { e.stopPropagation(); sessionCmd(s.id, cmd); setTimeout(refresh, 700); } }, icon(ico, 16));
+    return h("div", { class: "out-other" },
+      icon(s.kind === "phone" ? "phone" : "laptop", 16),
+      h("span", { class: "out-l" }, h("b", {}, whoOf(s, hs.computer)), " → ", outNameOf(s) || "?", h("small", {}, (s.artist ? s.artist + " – " : "") + (s.title ?? ""))),
+      s.controllable ? h("span", { class: "out-ctl" }, btn(s.playing ? "pause" : "play", L("Abspielen / Pause"), { cmd: "toggle" }), btn("next", L("Weiter"), { cmd: "next" })) : "");
   };
 
   const render = async () => {
     const locals = await localOutputs();
-    const others = hs.sessions.filter((s) => s.id !== MY_SESSION && !s.self && (s.title || s.playing));
+    const busyOthers = others();
     box.replaceChildren(
-      ...(others.length ? [h("div", { class: "pop-title" }, L("Läuft gerade im Haus")), ...others.map(card), h("hr")] : []),
-      h("div", { class: "pop-title" }, L("Diese Wiedergabe spielt auf …")),
-      ...locals.map((o) => row("local:" + o.id, o.id === "default" ? L("Dieser PC") : o.label, !player.device && player.localSink === o.id, o.id === "default" ? L("Standard") : "", () => selectLocal(o.id))),
-      h("div", { class: "pop-title" }, L("Heimnetz"), isSearching() ? h("span", { class: "searching" }, L("  sucht …")) : ""),
-      ...cache.map((d) =>
-        row(d.id, d.name, player.device?.id === d.id, (player.device?.id === d.id ? L("streamt · ") : "") + (d.kind === "sonos" ? "Sonos" : "DLNA"), () => selectCast(d), !isFound(d.id) && isSearching()),
-      ),
-      cache.length ? "" : h("div", { class: "option dim" }, isSearching() ? L("Suche Geräte …") : L("Keine Geräte gefunden")),
-      h("div", { class: "option small", onclick: (e: Event) => { e.stopPropagation(); discoverIfStale(true); } }, h("span", {}, L("  Neu suchen"))),
+      h("div", { class: "out-head" }, h("span", {}, L("Abspielen auf")),
+        h("button", { class: "ibtn" + (isSearching() ? " spin" : ""), title: L("Lautsprecher neu suchen"), onclick: (e: Event) => { e.stopPropagation(); discoverIfStale(true); } }, icon("refresh", 15))),
+      ...locals.map((o) => row("local:" + o.id, o.id === "default" ? "laptop" : /kopfh|headph|airpod|buds/i.test(o.label) ? "headphones" : "speaker",
+        o.id === "default" ? L("Dieser PC") : o.label, !player.device && player.localSink === o.id, () => selectLocal(o.id))),
+      ...cache.map((d) => row(d.id, "speaker", d.name, player.device?.id === d.id, () => selectCast(d), !isFound(d.id) && isSearching())),
+      !cache.length && isSearching() ? h("div", { class: "out-note" }, L("Suche Lautsprecher …")) : "",
+      ...(busyOthers.length
+        ? [h("div", { class: "out-more", onclick: (e: Event) => { e.stopPropagation(); showOthers = !showOthers; render(); } },
+          (showOthers ? "▾ " : "▸ ") + L("Läuft auch gerade ({0})", busyOthers.length)),
+          ...(showOthers ? busyOthers.map(otherRow) : [])]
+        : []),
     );
     place();
   };
@@ -237,7 +236,7 @@ export function outputPopup(anchor: HTMLElement) {
     hs = await house();
     if (document.body.contains(box)) render();
   };
-  const timer = window.setInterval(() => (document.body.contains(box) ? refresh() : clearInterval(timer)), 1500);
+  const timer = window.setInterval(() => (document.body.contains(box) ? refresh() : clearInterval(timer)), 2000);
   const unsub = store.on("outputs", render);
   const unsub2 = store.on("player", render);
   const off = (e: Event) => {

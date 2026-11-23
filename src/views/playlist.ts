@@ -202,6 +202,7 @@ export function smartEditor(p?: Playlist) {
 // ---------- Export ----------
 
 export async function exportDialog(preselect: number[]) {
+  if (!requireLicense("export")) return;
   const checks = new Map<number, HTMLInputElement>();
   const size = h("span", { class: "sub" });
   const dest = h("input", { type: "text", value: localStorage.getItem("ml.exportDest") ?? "", placeholder: L("Zielordner (z. B. USB-Stick oder Handy)"), style: { width: "100%" } });

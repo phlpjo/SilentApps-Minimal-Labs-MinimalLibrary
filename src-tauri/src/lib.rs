@@ -1943,6 +1943,7 @@ async fn export_playlists(
     dest: String,
     layout: export::Layout,
 ) -> R<export::ExportReport> {
+    need_license("export")?;
     let db = state.db.clone();
     let cancel = state.task();
     let prog = emitter(&app, &state.label, "export");

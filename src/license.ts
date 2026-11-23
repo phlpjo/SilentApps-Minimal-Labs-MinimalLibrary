@@ -7,7 +7,7 @@ import { store } from "./store";
 import { h, sheet, toast, toastHooks } from "./ui";
 
 /** Funktionen der Vollversion */
-export type Feature = "connect" | "organize" | "smart" | "search" | "sync" | "ripper";
+export type Feature = "connect" | "organize" | "smart" | "search" | "sync" | "ripper" | "export";
 
 export const FEATURE_NAME: Record<Feature, () => string> = {
   connect: () => L("App verbinden (Minimal Player Connected)"),
@@ -16,6 +16,7 @@ export const FEATURE_NAME: Record<Feature, () => string> = {
   search: () => L("Erweiterte Suche"),
   sync: () => L("Sync"),
   ripper: () => L("Ripper"),
+  export: () => L("Playlisten exportieren"),
 };
 
 export const BUY_URL = () => (LANG === "de" ? "https://silentapps-minimal-labs.com/de/app/minimal-library" : "https://silentapps-minimal-labs.com/app/minimal-library");

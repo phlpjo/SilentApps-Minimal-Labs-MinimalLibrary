@@ -1,3 +1,4 @@
+import { zoomCover } from "./coverzoom";
 import { lyricsPanel } from "./lyrics";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -78,7 +79,7 @@ export class Inspector {
     if (tracks[0].hasCover) {
       api.getCover(tracks[0].id).then((url) => {
         if (this.ids !== ids) return;
-        cov.replaceChildren(url ? h("img", { src: url }) : L("Kein Cover"));
+        cov.replaceChildren(url ? h("img", { src: url, title: L("Klicken: groß ansehen"), onclick: (e: Event) => zoomCover(e.currentTarget as HTMLElement, tracks[0].id, url) }) : L("Kein Cover"));
       });
     }
     this.el.append(

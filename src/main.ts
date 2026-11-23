@@ -32,7 +32,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { organizeView } from "./views/organize";
 import { exportDialog, playlistView, renamePlaylist, smartEditor } from "./views/playlist";
 import { settingsView } from "./views/settings";
-import logo from "./logo.svg";
 import { L, pl, LOCALE, trMsg, LANG, shown } from "./i18n";
 api.setLang(LANG).catch(() => {});
 
@@ -210,11 +209,30 @@ function syncBadge(): string | undefined {
   return n ? `● ${n}` : undefined;
 }
 
-/** Titel auf „+ Neu“ ziehen → neue Playlist anlegen, Titel kommen direkt hinein */
+/** Alle Titel eines Ordners (mit Unterordnern), in Ordner-/Dateireihenfolge */
+const basename = (p: string) => p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? p;
+function idsInDir(dir: string): number[] {
+  const n = (s: string) => s.replace(/\\/g, "/").toLowerCase();
+  const base = n(dir).replace(/\/+$/, "") + "/";
+  return [...store.tracks.values()]
+    .filter((t) => n(t.path).startsWith(base))
+    .sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true, sensitivity: "base" }))
+    .map((t) => t.id);
+}
+/** Gezogene Titel – bei einem Ordner alle Titel darin */
+function dropIds(p: Payload): number[] {
+  return p.kind === "ids" ? p.ids : p.kind === "dir" ? idsInDir(p.path) : [];
+}
+
+/** Titel oder ganzen Ordner auf „+ Neu“ ziehen → neue Playlist anlegen, Titel kommen direkt hinein */
 function newDrop(el: HTMLElement) {
   dropTarget(el, {
-    accepts: (p) => p.kind === "ids",
-    drop: (p) => p.kind === "ids" && newPlaylistFromIds(p.ids),
+    accepts: (p) => p.kind === "ids" || p.kind === "dir",
+    drop: (p) => {
+      const ids = dropIds(p);
+      if (ids.length) newPlaylistFromIds(ids, p.kind === "dir" ? basename(p.path) : undefined);
+      else toast(L("In diesem Ordner sind keine Titel"));
+    },
   });
   return el;
 }
@@ -334,7 +352,7 @@ function plFold() {
   const it = navItem("playlists", L("Playlisten"), false, () => setFly(!app.classList.contains("pl-fly"), it));
   box.append(it);
   dropTarget(it, {
-    accepts: (p) => p.kind === "ids" && app.classList.contains("side-closed"),
+    accepts: (p) => (p.kind === "ids" || p.kind === "dir") && app.classList.contains("side-closed"),
     enter: () => {
       clearTimeout(flyTimer);
       flyTimer = window.setTimeout(() => { flyByDrag = true; setFly(true, it); }, 350);
@@ -360,7 +378,7 @@ function renderSide() {
   if (!side.firstChild) {
     side.append(
       // Logo wie gehabt; im Schriftzug ersetzt das Logo-Zeichen (ohne Kreis) das „M“
-      h("div", { class: "brand", title: "Minimal Library" }, h("div", { class: "bl" }, h("img", { src: logo, alt: "" }), h("span", { class: "wordmark" }, logoM(), "inimal Library"))),
+      h("div", { class: "brand", title: "Minimal Library" }, h("div", { class: "bl" }, h("span", { class: "wordmark" }, logoM(), h("span", { class: "wm-rest" }, "inimal Library")))),
       h("div", { class: "nav", id: "mainnav" }),
       // eingeklappt: ein Punkt für alle Playlisten – öffnet sie als Ausklapp-Menü
       plFold(),
@@ -421,7 +439,7 @@ function renderSide() {
       // Titel auf die Playlist ziehen → hinzufügen (smarte Playlisten füllen sich selbst)
       let after = false;
       dropTarget(it, {
-        accepts: (pl) => (pl.kind === "ids" && !p.rules) || (pl.kind === "pl" && pl.id !== p.id),
+        accepts: (pl) => ((pl.kind === "ids" || pl.kind === "dir") && !p.rules) || (pl.kind === "pl" && pl.id !== p.id),
         over: (pl, e) => {
           if (pl.kind !== "pl") return;
           const r = it.getBoundingClientRect();
@@ -432,10 +450,12 @@ function renderSide() {
         leave: () => it.classList.remove("ins-before", "ins-after"),
         drop: async (pl) => {
           if (pl.kind === "pl") return movePlaylist(pl.id, p.id, after);
-          if (pl.kind !== "ids") return;
-          await api.playlistAddItems(p.id, pl.ids);
+          // Titel – oder ein ganzer Ordner: dann alle Titel darin
+          const ids = dropIds(pl);
+          if (!ids.length) return toast(L("In diesem Ordner sind keine Titel"));
+          await api.playlistAddItems(p.id, ids);
           await store.loadPlaylists();
-          toast(L("{0} Titel → {1}", pl.ids.length, shown(p.name)));
+          toast(L("{0} Titel → {1}", ids.length, shown(p.name)));
           if (current?.name === "playlist" && current.arg?.[0] === p.id) nav("playlist", [p.id]);
         },
       });
@@ -470,8 +490,8 @@ async function importPlaylist() {
   nav("playlist", [id]);
 }
 
-export function newPlaylistFromIds(ids: number[]) {
-  const name = h("input", { type: "text", value: L("Neue Playlist"), style: { width: "100%" } });
+export function newPlaylistFromIds(ids: number[], suggested?: string) {
+  const name = h("input", { type: "text", value: suggested || L("Neue Playlist"), style: { width: "100%" } });
   const go = async () => {
     const id = await api.playlistCreate(name.value.trim() || L("Neue Playlist"), null, ids.length ? ids : null);
     await store.loadPlaylists();

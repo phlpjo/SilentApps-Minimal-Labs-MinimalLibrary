@@ -1,3 +1,4 @@
+import { setStarMode, starMode, type StarMode } from "../stars";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
@@ -63,6 +64,11 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
       licenseCard(),
       h("div", { class: "card" }, h("h3", {}, L("Darstellung")), h("div", { class: "setting" }, h("span", {}, L("Farbschema")), theme),
         h("div", { class: "setting" }, h("span", {}, L("Sprache")), lang),
+        h("div", { class: "setting" }, h("span", {}, L("Sternenhimmel hinter den Listen")), (() => {
+          const sel = h("select", {}, ...([["move", L("bewegt")], ["calm", L("ruhig")], ["off", L("aus")]] as const).map(([v, l]) => h("option", { value: v, selected: starMode() === v }, l))) as HTMLSelectElement;
+          sel.addEventListener("change", () => setStarMode(sel.value as StarMode));
+          return sel;
+        })()),
         h("div", { class: "setting" }, h("label", { class: "check" }, tray, L("Schließen (X) legt die App in den Infobereich – Musik läuft weiter")), h("button", { class: "btn", onclick: () => api.quit() }, L("Jetzt beenden"))),
         h("div", { class: "note" }, L("Der Schalter oben links wechselt direkt zwischen Hell und Dunkel."))),
       h("div", { class: "card" }, h("h3", {}, L("Musikordner")), roots,

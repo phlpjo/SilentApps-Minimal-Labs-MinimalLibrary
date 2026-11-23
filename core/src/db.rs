@@ -482,12 +482,11 @@ pub fn revive_lost(conn: &Connection, path: &Path, size: i64, mtime: i64) -> Res
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    let sep = std::path::MAIN_SEPARATOR.to_string();
     let found: Option<i64> = conn
         .query_row(
-            "SELECT id FROM lost_tracks WHERE size = ?1 AND (mtime = ?2 OR path LIKE '%' || ?3 || ?4)
+            "SELECT id FROM lost_tracks WHERE size = ?1 AND (mtime = ?2 OR path LIKE '%/' || ?3 OR path LIKE '%\\' || ?3)
              ORDER BY (mtime = ?2) DESC, lost_at DESC LIMIT 1",
-            params![size, mtime, sep, name],
+            params![size, mtime, name],
             |r| r.get(0),
         )
         .optional()?;

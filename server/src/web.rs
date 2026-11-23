@@ -22,7 +22,7 @@ impl Options {
     pub fn from_env() -> Self {
         let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_default();
         let data = std::env::var("ML_DATA").map(PathBuf::from).unwrap_or_else(|_| exe_dir.join("data"));
-        let music = std::env::var("ML_MUSIC").map(PathBuf::from).unwrap_or_else(|_| {
+        let music = std::env::var("ML_MUSIC").ok().filter(|m| !m.is_empty()).map(PathBuf::from).unwrap_or_else(|| {
             ["/volume1/music", "/volume1/Music"].iter().map(PathBuf::from).find(|p| p.is_dir()).unwrap_or_else(|| data.join("music"))
         });
         let web = std::env::var("ML_WEB").map(PathBuf::from).unwrap_or_else(|_| exe_dir.join("web"));

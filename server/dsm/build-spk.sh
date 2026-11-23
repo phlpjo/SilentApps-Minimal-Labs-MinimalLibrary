@@ -16,7 +16,7 @@ cp -r "$HERE/ui" "$WORK/pkg/ui"
 mkdir -p "$WORK/pkg/app"
 cp "$HERE/MinimalLibrary.sc" "$WORK/pkg/app/MinimalLibrary.sc"
 (cd "$WORK/pkg" && tar czf "$WORK/spk/package.tgz" .)
-cp -r "$HERE/scripts" "$HERE/conf" "$WORK/spk/"
+cp -r "$HERE/scripts" "$HERE/conf" "$HERE/WIZARD_UIFILES" "$WORK/spk/"
 cp "$HERE/PACKAGE_ICON.PNG" "$HERE/PACKAGE_ICON_256.PNG" "$WORK/spk/"
 cat > "$WORK/spk/INFO" <<INFO
 package="MinimalLibrary"
@@ -40,8 +40,7 @@ adminprotocol="http"
 adminurl="/"
 startable="yes"
 thirdparty="yes"
-silent_upgrade="yes"
 INFO
-(cd "$WORK/spk" && tar cf "$OUT/MinimalLibrary-$VER.spk" INFO package.tgz scripts conf PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG)
+(cd "$WORK/spk" && tar cf "$OUT/MinimalLibrary-$VER.spk" INFO package.tgz scripts conf WIZARD_UIFILES PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG)
 rm -rf "$WORK"
 echo "$OUT/MinimalLibrary-$VER.spk"

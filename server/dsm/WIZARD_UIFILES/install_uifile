@@ -1,0 +1,21 @@
+[
+  {
+    "step_title": "Musikordner / Music folder",
+    "items": [
+      {
+        "type": "textfield",
+        "desc": "Name des gemeinsamen Ordners mit deiner Musik (z. B. music). Minimal Library bekommt darauf Lese- und Schreibrechte; gibt es ihn noch nicht, wird er angelegt. Weitere Ordner kannst du später in DSM freigeben (Systemsteuerung → Gemeinsamer Ordner → Bearbeiten → Berechtigungen → Systeminterner Benutzer „MinimalLibrary“).<br><br>Name of the shared folder with your music (e.g. music). Minimal Library gets read/write access; it is created if missing.",
+        "subitems": [
+          {
+            "key": "wizard_music_share",
+            "desc": "Gemeinsamer Ordner / Shared folder",
+            "defaultValue": "music",
+            "validator": {
+              "allowBlank": false
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

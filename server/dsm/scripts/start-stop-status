@@ -21,7 +21,10 @@ case "$1" in
     # Log klein halten
     [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 2000000 ] && mv "$LOG" "$LOG.1"
     cd "$VAR" || exit 1
-    HOME="$VAR" XDG_DATA_HOME="$VAR/share" ML_DATA="$VAR" ML_WEB="$DIR/web" \
+    # Musikordner: der bei der Installation gewählte gemeinsame Ordner (DSM legt dafür einen Link an)
+    MUSIC=""
+    for l in "/var/packages/$PKG/shares/"*; do [ -d "$l" ] && MUSIC="$(readlink -f "$l")" && break; done
+    HOME="$VAR" XDG_DATA_HOME="$VAR/share" ML_DATA="$VAR" ML_WEB="$DIR/web" ML_MUSIC="$MUSIC" \
       nohup "$BIN" >> "$LOG" 2>&1 &
     echo $! > "$PID"
     sleep 1

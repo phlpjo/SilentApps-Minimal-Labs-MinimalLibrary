@@ -1,5 +1,17 @@
 {
   "port-config": {
     "protocol-file": "app/MinimalLibrary.sc"
+  },
+  "data-share": {
+    "shares": [
+      {
+        "name": "{{wizard_music_share}}",
+        "permission": {
+          "rw": [
+            "MinimalLibrary"
+          ]
+        }
+      }
+    ]
   }
 }

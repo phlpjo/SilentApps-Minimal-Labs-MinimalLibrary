@@ -22,6 +22,18 @@ fn main() -> anyhow::Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     let _guard = rt.enter();
     let main = tab_state(&app, "main")?;
+    // Erster Start: den bei der Installation freigegebenen Musikordner gleich als Bibliothek eintragen
+    {
+        let c = main.db.lock().unwrap();
+        let mut st = load_settings(&c);
+        if st.roots.is_empty() && opt.music.is_dir() && std::fs::read_dir(&opt.music).is_ok() {
+            st.roots.push(opt.music.to_string_lossy().to_string());
+            let _ = db::set_setting(&c, "settings", &serde_json::to_string(&st).unwrap_or_default());
+        }
+        for r in &st.roots {
+            let _ = app.asset_protocol_scope().allow_directory(r, true);
+        }
+    }
     let _ = license_compute(&app);
     start_remote(&app, &main);
     {

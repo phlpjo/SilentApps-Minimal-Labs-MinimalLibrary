@@ -37,7 +37,10 @@ fn browse(_app: &AppHandle, args: &Value) -> Result<Value, String> {
                     if s.starts_with('@') || s.starts_with('#') || s.starts_with('.') || !sh.path().is_dir() {
                         continue;
                     }
-                    out.push(json!({ "name": format!("{s} ({n})"), "path": sh.path(), "dir": true }));
+                    // Freigaben ohne Rechte fürs Paket kennzeichnen
+                    let ok = std::fs::read_dir(sh.path()).is_ok();
+                    let label = if ok { format!("{s} ({n})") } else { format!("{s} ({n}) – keine Freigabe") };
+                    out.push(json!({ "name": label, "path": sh.path(), "dir": true }));
                 }
             }
         }
@@ -49,7 +52,14 @@ fn browse(_app: &AppHandle, args: &Value) -> Result<Value, String> {
     }
     let p = std::path::Path::new(path);
     let mut entries = vec![];
-    for e in std::fs::read_dir(p).map_err(|e| format!("{path}: {e}"))?.flatten() {
+    let rd = std::fs::read_dir(p).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            no_access(path)
+        } else {
+            format!("{path}: {e}")
+        }
+    })?;
+    for e in rd.flatten() {
         let n = e.file_name().to_string_lossy().to_string();
         if n.starts_with('@') || n.starts_with('#') || n.starts_with('.') {
             continue;
@@ -66,4 +76,12 @@ fn browse(_app: &AppHandle, args: &Value) -> Result<Value, String> {
     });
     let parent = p.parent().map(|x| x.to_string_lossy().to_string()).filter(|x| x != "/" && !x.is_empty());
     Ok(json!({ "path": path, "parent": parent, "entries": entries }))
+}
+
+/// Verständliche Meldung, wenn dem Paket die Freigabe für einen Ordner fehlt
+pub fn no_access(path: &str) -> String {
+    let share = path.trim_start_matches('/').split('/').nth(1).unwrap_or(path);
+    format!(
+        "Kein Zugriff auf „{share}“. In DSM freigeben: Systemsteuerung → Gemeinsamer Ordner → „{share}“ → Bearbeiten → Berechtigungen → oben „Systeminterner Benutzer“ wählen → „MinimalLibrary“: Lesen/Schreiben → Speichern. Danach hier erneut versuchen."
+    )
 }

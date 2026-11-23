@@ -910,4 +910,9 @@ export const EN: Record<string, string> = {
   "Prüfschlüssel defekt": "Verification key broken",
   "Lizenzschlüssel ist nicht echt": "License key is not genuine",
   "Schlüssel gehört nicht zu Minimal Library": "Key does not belong to Minimal Library",
+  "● spielt hier": "● playing here",
+  "Hier abspielen": "Play here",
+  "Ausgänge": "Outputs",
+  "Alle Ausgänge mit eigenem Klang – antippen zum Einstellen, „Hier abspielen“ zum Umschalten": "Every output with its own sound – click to adjust, “Play here” to switch",
+  "Weitere Ausgänge (Kopfhörer, USB, AirPlay) wählst du in den macOS-Einstellungen unter Ton.": "Other outputs (headphones, USB, AirPlay) are chosen in macOS Settings under Sound.",
 };

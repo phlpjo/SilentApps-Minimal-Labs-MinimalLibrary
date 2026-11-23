@@ -10,6 +10,9 @@ on:
   workflow_dispatch:
 
 env:
+  # Upload zur Website (Versionsverwaltung unter /admin/releases) – Secret selbst eintragen
+  RELEASE_UPLOAD_TOKEN: ${{ secrets.RELEASE_UPLOAD_TOKEN }}
+  RELEASE_SITE: https://silentapps-minimal-labs.com
   TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
   VERSION: 1.0.${{ github.run_number }}
@@ -163,7 +166,9 @@ jobs:
     steps:
       - name: Signatur vorhanden?
         id: key
-        run: echo "ok=$([ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && echo 1 || echo 0)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "ok=$([ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && echo 1 || echo 0)" >> "$GITHUB_OUTPUT"
+          echo "site=$([ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && [ -n "$RELEASE_UPLOAD_TOKEN" ] && echo 1 || echo 0)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@v4
         if: steps.key.outputs.ok == '1'
@@ -197,3 +202,48 @@ jobs:
             --notes "$(printf '%s' "$NOTES" | head -n 1)" \
             "$win" "$win.sig" "MinimalLibrary_${VERSION}_x64.msi" "MinimalLibrary_${VERSION}_portable.exe" \
             "MinimalLibrary_${VERSION}_universal.dmg" "$mac" "$mac.sig" latest.json
+
+      - name: Auf die Website hochladen (als neue Version, noch nicht aktiv)
+        if: steps.key.outputs.site == '1'
+        env:
+          NOTES: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          cd dl
+          api="$RELEASE_SITE/api/releases/minimal-library"
+          auth="Authorization: Bearer $RELEASE_UPLOAD_TOKEN"
+          files=(
+            "MinimalLibrary_${VERSION}_x64-setup.exe|windows|setup"
+            "MinimalLibrary_${VERSION}_x64.msi|windows|msi"
+            "MinimalLibrary_${VERSION}_portable.exe|windows|portable"
+            "MinimalLibrary_${VERSION}_universal.dmg|mac|dmg"
+            "MinimalLibrary_${VERSION}_universal.app.tar.gz|mac|updater"
+          )
+          list="[]"
+          for f in "${files[@]}"; do
+            IFS='|' read -r name platform kind <<< "$f"
+            rm -rf parts && mkdir parts
+            split -b 8m -d -a 4 "$name" parts/p
+            n=$(ls parts | wc -l)
+            i=0
+            for part in $(ls parts | sort); do
+              for try in 1 2 3 4; do
+                code=$(curl -sS -o /tmp/r.txt -w '%{http_code}' -X POST "$api/chunk" -H "$auth" \
+                  -H "X-Version: $VERSION" -H "X-File: $name" -H "X-Chunk: $i" -H "X-Chunks: $n" \
+                  -H "Content-Type: application/octet-stream" --data-binary "@parts/$part") || code=000
+                [ "$code" = "200" ] && break
+                echo "Teil $i von $name: HTTP $code – $(head -c 300 /tmp/r.txt)"; sleep $((try * 5))
+              done
+              [ "$code" = "200" ] || exit 1
+              i=$((i + 1))
+            done
+            sig=""; [ -f "$name.sig" ] && sig=$(cat "$name.sig")
+            list=$(jq -c --arg n "$name" --arg p "$platform" --arg k "$kind" --arg sha "$(sha256sum "$name" | cut -d' ' -f1)" \
+              --argjson size "$(stat -c %s "$name")" --arg sig "$sig" '. + [{name:$n, platform:$p, kind:$k, sha256:$sha, size:$size, signature:$sig}]' <<< "$list")
+          done
+          jq -n --arg v "$VERSION" --arg notes "$(printf '%s' "$NOTES" | head -n 1)" --arg commit "$GITHUB_SHA" \
+            --argjson run "$GITHUB_RUN_NUMBER" --argjson files "$list" \
+            '{version:$v, notes:$notes, commit:$commit, run:$run, files:$files}' > finish.json
+          code=$(curl -sS -o /tmp/r.txt -w '%{http_code}' -X POST "$api/finish" -H "$auth" -H "Content-Type: application/json" --data-binary @finish.json)
+          cat /tmp/r.txt; echo
+          [ "$code" = "200" ]

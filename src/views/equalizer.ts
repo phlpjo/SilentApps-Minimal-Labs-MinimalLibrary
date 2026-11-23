@@ -1,11 +1,11 @@
 import { api, type CastSound } from "../api";
 import { BAND_LABELS, PRESETS, eq, type EqSettings } from "../eq";
-import { cachedDevices, discoverIfStale, isFound, isSearching, labelsHidden, localOutputs, unlockLabels } from "../outputs";
+import { cachedDevices, discoverIfStale, isFound, isSearching, labelsHidden, localOutputs, selectCast, selectLocal, unlockLabels } from "../outputs";
 import type { CastDevice } from "../api";
 import { player } from "../player";
 import { store } from "../store";
 import { clear, h, toast } from "../ui";
-import { OS } from "../platform";
+import { IS_MAC, OS } from "../platform";
 import { L } from "../i18n";
 
 export function equalizerView(): { el: HTMLElement; destroy: () => void } {
@@ -22,18 +22,24 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
   const renderOutputs = async () => {
     const locals = await localOutputs();
     clear(outBox);
-    const item = (label: string, sub: string, on: boolean, click: () => void, dim = false) =>
-      h("div", { class: "out-item" + (on ? " on" : "") + (dim ? " dim" : ""), onclick: click }, h("span", {}, label), h("small", {}, sub));
-    const playing = (local: boolean, id: string) => (local ? !player.device && player.localSink === id : player.device?.id === id) ? L(" · spielt hier") : "";
+    const isPlaying = (local: boolean, id: string) => (local ? !player.device && player.localSink === id : player.device?.id === id);
+    // Zeile antippen = Klang einstellen; rechts „Hier abspielen“ schaltet die Wiedergabe um
+    const item = (label: string, sub: string, on: boolean, click: () => void, dim: boolean, local: boolean, play: () => void, id: string) =>
+      h("div", { class: "out-item" + (on ? " on" : "") + (dim ? " dim" : ""), onclick: click },
+        h("span", { class: "out-name" }, label, h("small", {}, sub)),
+        isPlaying(local, id)
+          ? h("span", { class: "out-live" }, L("● spielt hier"))
+          : h("button", { class: "btn small", onclick: async (e: Event) => { e.stopPropagation(); await play(); click(); } }, L("Hier abspielen")));
     outBox.append(
       h("div", { class: "out-group" }, h("h3", {}, L("Dieser PC")),
-        ...locals.map((o) => item(o.id === "default" ? L("Standard-Ausgabe") : o.label, (o.id === "default" ? L("wie in {0} eingestellt", OS) : L("Soundkarte")) + playing(true, o.id), !editing.cast && editing.sink === o.id, () => pick({ cast: null, sink: o.id }))),
+        ...locals.map((o) => item(o.id === "default" ? L("Standard-Ausgabe") : o.label, (o.id === "default" ? L("wie in {0} eingestellt", OS) : L("Soundkarte")), !editing.cast && editing.sink === o.id, () => pick({ cast: null, sink: o.id }), false, true, () => selectLocal(o.id), o.id)),
+        locals.length < 2 && IS_MAC ? h("div", { class: "note", style: { marginTop: "6px" } }, L("Weitere Ausgänge (Kopfhörer, USB, AirPlay) wählst du in den macOS-Einstellungen unter Ton.")) : "",
         labelsHidden() ? h("div", { class: "note", style: { marginTop: "6px" } }, L("Gerätenamen verborgen – "),
           h("a", { href: "#", style: { color: "inherit" }, onclick: (e: Event) => { e.preventDefault(); unlockLabels(); } }, L("Namen anzeigen")),
           L(" ({0} fragt einmalig nach dem Mikrofon, es wird nichts aufgenommen).", OS)) : "",
       ),
       h("div", { class: "out-group" }, h("h3", {}, L("Heimnetz"), isSearching() ? h("span", { class: "note" }, L("  · sucht …")) : ""),
-        ...cachedDevices().map((d) => item(d.name, `${d.kind === "sonos" ? "Sonos" : "DLNA"}${playing(false, d.id)}`, editing.cast?.id === d.id, () => pick({ cast: d, sink: editing.sink }), !isFound(d.id))),
+        ...cachedDevices().map((d) => item(d.name, `${d.kind === "sonos" ? "Sonos" : "DLNA"}`, editing.cast?.id === d.id, () => pick({ cast: d, sink: editing.sink }), !isFound(d.id), false, () => selectCast(d), d.id)),
         cachedDevices().length ? "" : h("div", { class: "note" }, isSearching() ? L("Suche Geräte …") : L("Keine Geräte gefunden.")),
         h("button", { class: "btn", style: { marginTop: "6px" }, onclick: () => discoverIfStale(true) }, L("Neu suchen")),
       ),
@@ -178,10 +184,10 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
   discoverIfStale();
 
   const el = h("div", { style: { display: "contents" } },
-    h("div", { class: "head" }, h("h1", {}, "Equalizer"), h("span", { class: "sub" }, L("Klang je Ausgabegerät – wo du hörst, wählst du unten am Lautstärkeregler"))),
+    h("div", { class: "head" }, h("h1", {}, "Equalizer"), h("span", { class: "sub" }, L("Alle Ausgänge mit eigenem Klang – antippen zum Einstellen, „Hier abspielen“ zum Umschalten"))),
     h("div", { class: "view-scroll" },
       h("div", { class: "eq-layout" },
-        h("div", { class: "card" }, h("h3", {}, L("Gerät zum Einstellen")), outBox),
+        h("div", { class: "card" }, h("h3", {}, L("Ausgänge")), outBox),
         h("div", { class: "card" }, eqBox),
       ),
     ),

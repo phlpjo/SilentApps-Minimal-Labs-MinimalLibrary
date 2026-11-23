@@ -422,6 +422,10 @@ body.is-dragging .pl-new-drop { display: block; }
 .out-item.on { background: var(--sel); color: var(--ink); box-shadow: inset 3px 0 0 var(--ink); }
 .out-item.dim { opacity: 0.55; }
 .out-item small { color: var(--weak); font-size: 11px; white-space: nowrap; }
+.out-item .out-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.out-item .out-name small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.out-item .out-live { color: var(--ink); font-size: 12px; white-space: nowrap; }
+.out-item .btn.small { flex: none; }
 .eq-bands { display: flex; justify-content: space-between; gap: 6px; padding: 10px 4px 4px; }
 .eq-band { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 1; }
 .eq-band .vwrap { height: 170px; width: 28px; display: flex; align-items: center; justify-content: center; }

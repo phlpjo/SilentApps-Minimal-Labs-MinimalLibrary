@@ -6,6 +6,7 @@ import { player } from "./player";
 import { store } from "./store";
 import { h, toast } from "./ui";
 import { L } from "./i18n";
+import { IS_MAC } from "./platform";
 import { phoneCmd, phonesNow } from "./remotectl";
 
 export interface LocalOut { id: string; label: string }
@@ -58,39 +59,78 @@ export function discoverIfStale(force = false) {
 }
 
 let localCache: LocalOut[] | null = null;
-export async function localOutputs(refresh = false): Promise<LocalOut[]> {
-  if (localCache && !refresh) return localCache;
-  const out: LocalOut[] = [{ id: "default", label: L("Dieser PC (Standard)") }];
+let hidden = false;
+let unlockTried = false;
+// Einmal gelesene Gerätenamen merken (IDs bleiben für die App gleich)
+const knownLabels: Record<string, string> = (() => {
+  try { return JSON.parse(localStorage.getItem("ml.outLabels") ?? "{}"); } catch { return {}; }
+})();
+
+async function readOutputs(): Promise<{ list: LocalOut[]; hidden: boolean }> {
+  const list: LocalOut[] = [{ id: "default", label: L("Dieser PC (Standard)") }];
+  let n = 0;
+  let anon = false;
   try {
     const devs = await navigator.mediaDevices.enumerateDevices();
-    let n = 0;
     for (const d of devs) {
-      if (d.kind !== "audiooutput" || d.deviceId === "default" || d.deviceId === "communications") continue;
+      if (d.kind !== "audiooutput") continue;
+      if (!d.deviceId) { anon = true; continue; } // ohne Freigabe: nur ein namenloser Eintrag
+      if (d.deviceId === "default" || d.deviceId === "communications") continue;
       n++;
-      out.push({ id: d.deviceId, label: d.label || L("Ausgang {0}", n) });
+      const label = d.label || knownLabels[d.deviceId] || "";
+      if (d.label && knownLabels[d.deviceId] !== d.label) knownLabels[d.deviceId] = d.label;
+      if (!label) anon = true;
+      list.push({ id: d.deviceId, label: label || L("Ausgang {0}", n) });
     }
   } catch {
     /* keine Geräteliste */
   }
-  localCache = out;
-  return out;
+  try { localStorage.setItem("ml.outLabels", JSON.stringify(knownLabels)); } catch { /* egal */ }
+  return { list, hidden: anon };
 }
 
-/** Gerätenamen sind erst nach einer Freigabe lesbar (Windows fragt einmal nach dem Mikrofon – es wird nichts aufgenommen). */
-export async function unlockLabels() {
+/** Alle Soundkarten dieses PCs (Standard-Ausgabe zuerst). Unter Windows werden fehlende Namen einmal pro Start automatisch freigeschaltet. */
+export async function localOutputs(refresh = false): Promise<LocalOut[]> {
+  if (localCache && !refresh) return localCache;
+  let r = await readOutputs();
+  if (r.hidden && !IS_MAC && !unlockTried) {
+    unlockTried = true;
+    if (await openAndClose()) r = await readOutputs();
+  }
+  localCache = r.list;
+  hidden = r.hidden;
+  return localCache;
+}
+
+/** Kurz Zugriff anfordern und sofort beenden – nur damit die Gerätenamen lesbar werden; es wird nichts aufgenommen */
+async function openAndClose(): Promise<boolean> {
   try {
     const s = await navigator.mediaDevices.getUserMedia({ audio: true });
     s.getTracks().forEach((t) => t.stop());
+    return true;
   } catch {
-    toast(L("Ohne Freigabe bleiben die Gerätenamen verborgen – die Auswahl funktioniert trotzdem."));
+    return false;
   }
+}
+
+/** Gerätenamen von Hand freigeben (falls die automatische Freigabe nicht ging) */
+export async function unlockLabels() {
+  if (!(await openAndClose())) toast(L("Ohne Freigabe bleiben die Gerätenamen verborgen – die Auswahl funktioniert trotzdem."));
   await localOutputs(true);
   store.emit("outputs");
 }
 
 export function labelsHidden() {
-  return !!localCache && localCache.length > 1 && localCache.slice(1).every((o) => /^Ausgang \d+$/.test(o.label));
+  return hidden && !IS_MAC;
 }
+
+// Kopfhörer/USB-Karte angesteckt oder entfernt → Liste neu
+try {
+  navigator.mediaDevices?.addEventListener("devicechange", async () => {
+    await localOutputs(true);
+    store.emit("outputs");
+  });
+} catch { /* egal */ }
 
 /** Netzwerkgerät wählen – falls es diese Sitzung noch nicht gefunden wurde, erst suchen */
 export async function selectCast(d: CastDevice) {

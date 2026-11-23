@@ -2766,6 +2766,16 @@ fn quit_app(app: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Windows: Gerätenamen der Soundkarten sind nur mit Mikrofon-Freigabe lesbar – ohne Rückfrage erlauben.
+        // Es wird nie aufgenommen: der Zugriff wird sofort wieder beendet (siehe outputs.ts).
+        .on_permission_request(|_, kind| {
+            #[cfg(windows)]
+            if matches!(kind, tauri::webview::PermissionKind::Microphone) {
+                return tauri::webview::PermissionResponse::Allow;
+            }
+            let _ = kind;
+            tauri::webview::PermissionResponse::Default
+        })
         // Nur ein Programm: ein zweiter Start (z. B. über den Freischalt-Link) holt das laufende Fenster nach vorn
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             let label = app.state::<Tabs>().active.lock().unwrap().clone();
@@ -2778,7 +2788,8 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        // Website bestimmt die aktive Version: auch eine ältere (Zurückrollen) wird angeboten
+        .plugin(tauri_plugin_updater::Builder::new().default_version_comparator(|cur, rel| rel.version != cur).build())
         .plugin(tauri_plugin_process::init())
         .on_window_event(|window, event| {
             // Schließen (X, Alt+F4) → in den Infobereich, Musik läuft weiter

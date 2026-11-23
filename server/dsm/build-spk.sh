@@ -2,7 +2,8 @@
 # Baut MinimalLibrary-<version>.spk für Synology DSM 7.2 (ein Paket für Intel/AMD und ARM64).
 # Aufruf: build-spk.sh <version> <server-x86_64> <server-aarch64> <web-ordner> <ausgabe-ordner>
 set -eu
-VER="$1"; X64="$2"; ARM="$3"; WEB="$4"; OUT="$5"
+VER="$1"; X64="$2"; ARM="$3"; WEB="$4"
+mkdir -p "$5"; OUT="$(cd "$5" && pwd)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="$(mktemp -d)"
 mkdir -p "$WORK/pkg/bin" "$WORK/spk" "$OUT"

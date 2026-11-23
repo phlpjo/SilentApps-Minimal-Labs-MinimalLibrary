@@ -155,6 +155,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); width: 1
 /* ---------- Titelliste ---------- */
 .list { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow-x: auto; overflow-y: hidden; }
 .list-inner { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.tcover { display: block; width: 36px; height: 36px; border-radius: 6px; background: var(--line-soft); overflow: hidden; }
+.tcover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .col-ghost { position: fixed; z-index: 1000; pointer-events: none; padding: 6px 10px; border-radius: 8px; background: var(--panel); color: var(--ink); font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
 .list-head .hcell.moving { opacity: 0.35; }
 .list-head .hcell.ins-before { box-shadow: inset 2px 0 0 var(--ink); }

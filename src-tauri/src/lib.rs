@@ -2230,7 +2230,7 @@ async fn cast_devices() -> R<Vec<cast::Device>> {
 }
 
 #[tauri::command]
-async fn cast_play(state: Tab, device: String, id: i64, start: f64) -> R<()> {
+async fn cast_play(state: Tab, device: String, id: i64, start: f64) -> R<String> {
     let db = state.db.clone();
     blocking(move || {
         let t = db::track(&db.lock().unwrap(), id)?

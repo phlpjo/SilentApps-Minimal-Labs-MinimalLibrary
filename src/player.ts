@@ -27,9 +27,14 @@ class Player {
   private onDemandTimer = 0;
   private shuffleBag: number[] = [];
   private history: number[] = [];
-  private remote = { playing: false, pos: 0, at: 0, dur: 0, poll: 0, startedAt: 0, seekUntil: 0, loading: false, pollTick: 0 };
+  /**
+   * Netzwerk-Wiedergabe: started = Gerät hat bestätigt, dass es unseren Titel an der gewünschten Stelle spielt.
+   * Bis dahin steht die Zeit still (sonst läuft Leiste/Songtext dem Lautsprecher davon).
+   */
+  private remote = { playing: false, started: false, pos: 0, at: 0, dur: 0, poll: 0, startedAt: 0, seekUntil: 0, target: 0, key: "", loading: false, pollTick: 0 };
   private volume: number;
   private volTimer = 0;
+  private endGuard = 0;
 
   constructor() {
     const vol = Number(localStorage.getItem("ml.volume") ?? "0.9");
@@ -101,7 +106,7 @@ class Player {
   get currentTime(): number {
     if (!this.isRemote) return this.audio.currentTime;
     const r = this.remote;
-    return r.playing ? r.pos + (performance.now() - r.at) / 1000 : r.pos;
+    return r.playing && r.started ? r.pos + (performance.now() - r.at) / 1000 : r.pos;
   }
 
   get volumeLevel() {
@@ -154,10 +159,12 @@ class Player {
       store.emit("player");
       try {
         const start = frac * (t.duration || 0);
-        await api.castPlay(this.device!.id, id, start);
+        this.remote.pos = start;
+        this.remote.started = false;
+        const key = await api.castPlay(this.device!.id, id, start);
         if (my !== this.token) return;
         claimAudio(this.device!.id);
-        this.remote = { ...this.remote, playing: true, pos: start, at: performance.now(), dur: t.duration, startedAt: performance.now(), seekUntil: 0, loading: false };
+        this.remote = { ...this.remote, playing: true, started: false, pos: start, target: start, key, at: performance.now(), dur: t.duration, startedAt: performance.now(), seekUntil: 0, loading: false };
         this.startPolling();
         this.loop();
       } catch (e) {
@@ -237,7 +244,10 @@ class Player {
       api.castSeek(this.device!.id, t).catch((e) => toast(String(e)));
       this.remote.pos = t;
       this.remote.at = performance.now();
-      this.remote.seekUntil = performance.now() + 2500; // Abfragen kurz ignorieren, bis das Gerät gesprungen ist
+      // bis das Gerät an der neuen Stelle spielt: Zeit anhalten, alte Positionsmeldungen ignorieren
+      this.remote.started = false;
+      this.remote.target = t;
+      this.remote.seekUntil = performance.now() + 1200;
     } else this.audio.currentTime = t;
     this.emitPos();
   }
@@ -258,6 +268,7 @@ class Player {
       if (this.remote.playing) {
         this.remote.pos = this.currentTime;
         this.remote.playing = false;
+        this.remote.started = true;
         api.castPause(dev).catch((e) => toast(String(e)));
       } else {
         this.remote.playing = true;
@@ -386,6 +397,16 @@ class Player {
 
   private startPolling() {
     clearInterval(this.remote.poll);
+    clearInterval(this.endGuard);
+    // Sicherheitsnetz: Meldet das Gerät das Ende nicht, nach Ablauf der Spielzeit selbst weiterschalten
+    this.endGuard = window.setInterval(() => {
+      const r = this.remote;
+      const dur = r.dur || this.current?.duration || 0;
+      if (this.device && r.playing && r.started && dur > 0 && this.currentTime > dur + 6) {
+        r.playing = false;
+        this.next(true);
+      }
+    }, 1000);
     this.remote.poll = window.setInterval(async () => {
       if (!this.device) return clearInterval(this.remote.poll);
       if (this.remote.loading) return; // Gerät schaltet gerade um – nicht zusätzlich abfragen
@@ -393,32 +414,66 @@ class Player {
       const left = (this.remote.dur || this.current?.duration || 0) - this.currentTime;
       if (left > 3 && (this.remote.pollTick = (this.remote.pollTick + 1) % 2) === 1) return;
       const st = await api.castStatus(this.device.id).catch(() => null);
-      if (!st) return;
+      if (!st || !this.device) return;
       const r = this.remote;
-      // Kurz nach dem Start melden Geräte oft noch STOPPED/TRANSITIONING
-      const settling = performance.now() - r.startedAt < 5000;
-      if (r.loading || performance.now() < r.seekUntil) return;
-      if (st.state === "PLAYING") {
-        if (!r.playing) {
-          r.playing = true;
-          this.loop();
-          store.emit("player");
-        }
-        r.pos = st.position;
-        r.at = performance.now();
-        if (st.duration > 0) r.dur = st.duration;
-      } else if (st.state === "PAUSED_PLAYBACK") {
-        if (r.playing) {
+      const now = performance.now();
+      if (r.loading || now < r.seekUntil) return;
+      // Spielt das Gerät (noch) nicht unsere Datei? Kurz nach dem Start normal – später hat jemand anderes übernommen
+      const ours = !r.key || !st.track || st.track === r.key;
+      if (!ours) {
+        if (now - r.startedAt > 10000 && st.state === "PLAYING" && r.playing) {
           r.playing = false;
           store.emit("player");
         }
+        return;
+      }
+      const dur = r.dur || this.current?.duration || 0;
+      if (st.duration > 0) r.dur = st.duration;
+      if (st.state === "PLAYING") {
+        if (!r.started) {
+          // erst übernehmen, wenn das Gerät an der gewünschten Stelle angekommen ist
+          if (st.position + 1 < r.target || st.position > r.target + 8) return;
+          r.started = true;
+          r.pos = Math.max(r.target, st.position);
+          r.at = now;
+          if (!r.playing) r.playing = true;
+          this.loop();
+          store.emit("player");
+          return;
+        }
+        if (!r.playing) {
+          r.playing = true;
+          r.pos = st.position;
+          r.at = now;
+          this.loop();
+          store.emit("player");
+          return;
+        }
+        // Geräte melden ganze Sekunden: nur bei echter Abweichung nachziehen → Leiste und Songtext laufen ruhig
+        const est = this.currentTime;
+        if (est < st.position - 0.3 || est > st.position + 1.6) {
+          r.pos = st.position + 0.5;
+          r.at = now;
+        }
+        return;
+      }
+      if (!r.playing || !r.started) return;
+      const est = this.currentTime;
+      const nearEnd = dur > 0 && (est >= dur - 8 || st.position >= dur - 3);
+      if (st.state === "STOPPED" || st.state === "NO_MEDIA_PRESENT" || (st.state === "PAUSED_PLAYBACK" && nearEnd)) {
+        if (nearEnd || dur <= 0) {
+          r.playing = false;
+          this.next(true);
+        } else if (st.state === "STOPPED") {
+          // am Gerät oder in der Sonos-App gestoppt
+          r.pos = est;
+          r.playing = false;
+          store.emit("player");
+        }
+      } else if (st.state === "PAUSED_PLAYBACK") {
         r.pos = st.position;
-      } else if (st.state === "STOPPED" && r.playing && !settling) {
         r.playing = false;
-        // Nur kurz vor Schluss ist es das Titelende – sonst wurde am Gerät/in der Sonos-App gestoppt
-        const dur = r.dur || this.current?.duration || 0;
-        if (!dur || this.currentTime >= dur - 8) this.next(true);
-        else store.emit("player");
+        store.emit("player");
       }
     }, 400);
   }

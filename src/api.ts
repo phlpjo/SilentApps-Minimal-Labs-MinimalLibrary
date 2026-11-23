@@ -102,7 +102,7 @@ export interface Candidate {
 export interface DirEntry { name: string; path: string; hasChildren: boolean; tracks: number }
 
 export interface CastDevice { id: string; name: string; kind: "sonos" | "dlna"; model: string }
-export interface CastStatus { state: string; position: number; duration: number; volume: number }
+export interface CastStatus { state: string; position: number; duration: number; volume: number; track: string }
 
 export interface ToolStatus { ytdlp: string | null; ffmpeg: boolean; dir: string }
 export interface RipEntry { index: number; artist: string; title: string; album: string | null; duration: number | null; source: string; site: string; inLibrary: [number, string] | null }
@@ -217,7 +217,7 @@ export const api = {
   castSound: (device: string) => invoke<CastSound>("cast_sound", { device }),
   castSetSound: (device: string, sound: CastSound) => invoke<void>("cast_set_sound", { device, sound }),
   castDevices: () => invoke<CastDevice[]>("cast_devices"),
-  castPlay: (device: string, id: number, start: number) => invoke<void>("cast_play", { device, id, start }),
+  castPlay: (device: string, id: number, start: number) => invoke<string>("cast_play", { device, id, start }),
   castPause: (device: string) => invoke<void>("cast_pause", { device }),
   castResume: (device: string) => invoke<void>("cast_resume", { device }),
   castStop: (device: string) => invoke<void>("cast_stop", { device }),

@@ -6,6 +6,7 @@ import { store } from "./store";
 import { basename, clear, ext, fmtSize, fmtTime, h, holdButton, keyLabel, qualityText, reportErrors, sheet, toast } from "./ui";
 import { SHOW_IN } from "./platform";
 import { pioneerOn, pioneerPanel } from "./pioneer";
+import { forgetThumb } from "./thumbs";
 import { L, pl, LOCALE, trMsg } from "./i18n";
 
 type FieldKey = keyof TagUpdate;
@@ -233,6 +234,7 @@ export class Inspector {
     if (release) {
       const errs = await api.mbCover(ids, release).catch((e) => [String(e)]);
       reportErrors(errs, L("Cover übernommen"));
+      forgetThumb(ids);
     }
     if (rename) {
       const r = await api.renameByPattern(ids, this.namePattern).catch((e) => ({ moved: 0, errors: [String(e)], batchId: 0 }));
@@ -249,12 +251,14 @@ export class Inspector {
     const file = await open({ multiple: false, filters: [{ name: L("Bilder"), extensions: ["jpg", "jpeg", "png"] }] });
     if (!file) return;
     reportErrors(await api.setCoverFile(this.ids, file as string), L("Cover gesetzt"));
+    forgetThumb(this.ids);
     await store.refreshTracks(this.ids);
     this.render(this.ids);
   }
 
   private async removeCover() {
     reportErrors(await api.removeCover(this.ids), L("Cover entfernt"));
+    forgetThumb(this.ids);
     await store.refreshTracks(this.ids);
     this.render(this.ids);
   }

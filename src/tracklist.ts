@@ -6,10 +6,11 @@ import { albumLink, artistLinks, camelot, fmtTime, h, keyLabel, keyOrder, ext, t
 import { renameFileDialog } from "./fileops";
 import { beginDrag, dropTarget } from "./dnd";
 import { L, LOCALE } from "./i18n";
+import { thumb } from "./thumbs";
 
 export type SortKey =
   | "pos" | "trackNo" | "title" | "artist" | "album" | "albumartist" | "genre" | "year" | "bpm" | "key" | "duration"
-  | "bitrate" | "quality" | "format" | "samplerate" | "size" | "added" | "comment" | "filename" | "path";
+  | "bitrate" | "quality" | "format" | "samplerate" | "size" | "added" | "comment" | "filename" | "path" | "cover";
 type ColKey = SortKey | "wave";
 
 interface Col { key: ColKey; label: string; width: string; render: (t: Track, pos: number) => Node | string; num?: boolean; hideBelow?: number }
@@ -20,6 +21,14 @@ const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 /** Alle wählbaren Spalten (Reihenfolge = Reihenfolge im Menü) */
 const COLUMNS: Col[] = [
   { key: "pos", label: "#", width: "34px", num: true, render: (_t, p) => String(p + 1) },
+  {
+    key: "cover", label: L("Cover"), width: "44px",
+    render: (t) => {
+      const box = h("span", { class: "tcover" });
+      if (t.hasCover) thumb(t.id, (u) => u && box.replaceChildren(h("img", { src: u, alt: "", draggable: "false" })));
+      return box;
+    },
+  },
   { key: "trackNo", label: L("Nr."), width: "44px", num: true, render: (t) => (t.trackNo ? (t.discNo && t.discNo > 1 ? `${t.discNo}-` : "") + t.trackNo : "") },
   {
     key: "title", label: L("Titel"), width: "minmax(150px, 2fr)",
@@ -49,9 +58,9 @@ const COLUMNS: Col[] = [
 ];
 
 const DEFAULTS: Record<string, ColKey[]> = {
-  library: ["title", "album", "genre", "bpm", "key", "duration", "wave"],
-  folders: ["trackNo", "title", "album", "bpm", "key", "duration", "wave"],
-  playlist: ["pos", "title", "album", "genre", "bpm", "key", "duration", "wave"],
+  library: ["cover", "title", "album", "genre", "bpm", "key", "duration", "wave"],
+  folders: ["trackNo", "cover", "title", "album", "bpm", "key", "duration", "wave"],
+  playlist: ["pos", "cover", "title", "album", "genre", "bpm", "key", "duration", "wave"],
 };
 
 interface ColConfig { visible: ColKey[]; widths: Partial<Record<ColKey, number>> }
@@ -135,7 +144,19 @@ export class TrackList {
   private loadConfig(): ColConfig {
     try {
       const c = JSON.parse(localStorage.getItem("ml.cols." + this.storageKey) ?? "null") as ColConfig | null;
-      if (c && Array.isArray(c.visible) && c.visible.length) return { visible: c.visible.filter((k) => COLUMNS.some((x) => x.key === k)), widths: c.widths ?? {} };
+      if (c && Array.isArray(c.visible) && c.visible.length) {
+        const visible = c.visible.filter((k) => COLUMNS.some((x) => x.key === k));
+        // neue Spalte „Cover“ einmalig vor dem Titel einblenden
+        const flag = "ml.colsCover." + this.storageKey;
+        if (!localStorage.getItem(flag)) {
+          localStorage.setItem(flag, "1");
+          if (!visible.includes("cover")) {
+            const i = visible.indexOf("title");
+            visible.splice(i < 0 ? 0 : i, 0, "cover");
+          }
+        }
+        return { visible, widths: c.widths ?? {} };
+      }
     } catch {
       /* Standard */
     }
@@ -311,6 +332,7 @@ export class TrackList {
       case "trackNo": return (t.discNo ?? 1) * 10000 + (t.trackNo ?? 9999);
       case "albumartist": return s(t.albumArtist ?? t.artist);
       case "bitrate": return t.bitrate ?? 0;
+      case "cover": return t.hasCover ? 1 : 0;
       case "quality": return (t.upscaled ? 0 : 100000) + (t.lossless && !t.upscaled ? 5000 : t.realKbps ?? 0);
       case "format": return ext(t.path);
       case "samplerate": return t.sampleRate ?? 0;

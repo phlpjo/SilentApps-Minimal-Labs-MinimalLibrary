@@ -40,6 +40,8 @@ pub struct Status {
     pub duration: f64,
     /// 0..100, -1 = unbekannt
     pub volume: i32,
+    /// Kennung der Datei, die das Gerät gerade spielt (aus unserer Adresse) – leer = etwas anderes
+    pub track: String,
 }
 
 /// Infos zum Titel für die Anzeige am Gerät
@@ -556,7 +558,8 @@ fn soap_retry(
     Err(last.unwrap_or_else(|| anyhow!("{action} fehlgeschlagen")))
 }
 
-pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<()> {
+/// Startet die Datei auf dem Gerät; gibt die Kennung zurück, unter der das Gerät sie lädt
+pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<String> {
     // Schnelles Weiterklicken: Aufträge nacheinander abarbeiten, überholte überspringen.
     // (Sonst liest ein zweiter Start „stumm“ als Ausgangszustand und der Lautsprecher bleibt stumm.)
     static LOCK: Mutex<()> = Mutex::new(());
@@ -564,7 +567,7 @@ pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<()> 
     let my = GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if GEN.load(std::sync::atomic::Ordering::SeqCst) != my {
-        return Ok(()); // inzwischen wurde ein anderer Titel gewählt
+        return Ok(String::new()); // inzwischen wurde ein anderer Titel gewählt
     }
     let d = device(device_id)?;
     let srv = server()?;
@@ -578,6 +581,7 @@ pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<()> 
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
     let url = format!("http://{}:{}/{key}.{ext}", d.local_ip, srv.port);
+    let key_out = key.clone();
     let art = meta.cover.map(|c| {
         let ck = format!("c{key}");
         srv.covers.lock().unwrap().insert(ck.clone(), c);
@@ -596,9 +600,14 @@ pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<()> 
         xml_escape(&url),
     );
     let sonos = d.kind == "sonos";
-    // Sonos nimmt eine neue Adresse auch während der Wiedergabe an – ein Stop vorher kostet nur Zeit.
-    // Andere Geräte (DLNA) brauchen ihn oft.
-    if !sonos {
+    // Sonos nimmt eine neue Adresse auch während der Wiedergabe an – ein Stop kostet nur Zeit.
+    // Kurz anhalten verhindert aber, dass der Rest des alten Puffers beim Umschalten kratzt.
+    // Andere Geräte (DLNA) brauchen einen Stop.
+    if sonos {
+        if transport_state(&d).as_deref() == Some("PLAYING") {
+            let _ = soap(&d.av_control, AVT, "Pause", &[("InstanceID", "0".into())]);
+        }
+    } else {
         let _ = soap(&d.av_control, AVT, "Stop", &[("InstanceID", "0".into())]);
     }
     soap_retry(
@@ -671,7 +680,7 @@ pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<()> 
             }
         });
     }
-    Ok(())
+    Ok(key_out)
 }
 
 fn active() -> &'static Mutex<Option<String>> {
@@ -927,6 +936,18 @@ pub fn status(device_id: &str) -> Result<Status> {
             .map(|t| parse_hms(&t))
             .unwrap_or(0.0),
         volume,
+        // …/<kennung>.<endung> → kennung
+        track: tag(&pi, "TrackURI")
+            .map(|u| {
+                u.rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .split('.')
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .unwrap_or_default(),
     })
 }
 

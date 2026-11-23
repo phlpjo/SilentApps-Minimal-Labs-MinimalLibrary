@@ -321,7 +321,10 @@ table.grid td.mono { font-family: var(--mono); font-size: 11px; word-break: brea
 .theme-toggle.on .knob .moon { display: block; }
 .q-up { color: var(--ink); font-weight: 600; text-decoration: underline dotted; text-underline-offset: 3px; }
 .brand { justify-content: space-between; }
-.brand .bl { display: flex; align-items: center; gap: 10px; }
+.brand .bl { display: flex; align-items: center; gap: 2px; }
+.brand .bl img { width: 24px; height: 24px; margin-right: 1px; }
+.brand .bl span { font-size: 19px; }
+#app.side-closed .brand .bl img { width: 28px; height: 28px; }
 .field input[type="checkbox"] { width: 15px; flex: none; }
 .field label.check { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 13px; color: var(--dim); }
 .field label.check:hover { color: var(--ink); }

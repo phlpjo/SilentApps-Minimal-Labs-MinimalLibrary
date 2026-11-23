@@ -188,10 +188,10 @@ export const api = {
   pioneerPreview: (options: PioneerOptions) => invoke<PioneerPreview>("pioneer_preview", { options }),
   pioneerExport: (options: PioneerOptions) => invoke<PioneerReport>("pioneer_export", { options }),
   pioneerXml: (playlists: number[], file: string) => invoke<void>("pioneer_xml", { playlists, file }),
-  dupCheck: (ids: number[], dir: string, tab?: string) => invoke<DupCheck[]>("dup_check", { ids, dir, tab: tab ?? null }),
+  dupCheck: (ids: number[], dir: string, tab?: string, from?: string) => invoke<DupCheck[]>("dup_check", { ids, dir, tab: tab ?? null, from: from ?? null }),
   tabRoots: (label: string) => invoke<string[]>("tab_roots", { label }),
-  transferToTab: (ids: number[], label: string, dir: string, copy: boolean, skip: number[]) =>
-    invoke<{ moved: number; errors: string[]; newIds: number[] }>("transfer_to_tab", { ids, label, dir, copy, skip }),
+  transferToTab: (ids: number[], label: string, dir: string, copy: boolean, skip: number[], from?: string) =>
+    invoke<{ moved: number; errors: string[]; newIds: number[] }>("transfer_to_tab", { ids, label, dir, copy, skip, from: from ?? null }),
   tabsList: () => invoke<{ label: string; name: string }[]>("tabs_list"),
   tabShow: (label: string) => invoke<void>("tab_show", { label }),
   tabCreate: () => invoke<string>("tab_create"),

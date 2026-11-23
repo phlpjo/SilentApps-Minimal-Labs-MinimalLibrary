@@ -12,7 +12,7 @@ import { player } from "./player";
 import { store } from "./store";
 import { albumLink, artistLinks, onAlbumClick, clear, contextMenu, fmtTime, h, onArtistClick, sheet, toast } from "./ui";
 import { drawWave, waveElement } from "./waveform";
-import { beginDrag, dragging, dropTarget } from "./dnd";
+import { beginDrag, dragging, dropTarget, externalDrag, type Payload } from "./dnd";
 import { duplicatesView } from "./views/duplicates";
 import { libraryView, trackMenu } from "./views/library";
 import { foldersView } from "./views/folders";
@@ -341,7 +341,8 @@ function renderSide() {
   const n = current?.name;
   if (!side.firstChild) {
     side.append(
-      h("div", { class: "brand" }, h("div", { class: "bl" }, h("img", { src: logo, alt: "" }), h("span", {}, "Minimal Library"))),
+      // Das Logo im Kreis ersetzt das „M“ von Minimal Library
+      h("div", { class: "brand", title: "Minimal Library" }, h("div", { class: "bl" }, h("img", { src: logo, alt: "M" }), h("span", {}, "inimal Library"))),
       h("div", { class: "nav", id: "mainnav" }),
       // eingeklappt: ein Punkt für alle Playlisten – öffnet sie als Ausklapp-Menü
       plFold(),
@@ -561,6 +562,12 @@ let changeTimer = 0;
 listen("playlists-changed", () => store.loadPlaylists());
 // Neue Musikquelle vom Handy angelegt
 listen("settings-changed", async () => { await store.loadSettings(); store.emit("settings"); });
+
+// Titel wurden aus einem anderen Tab hierher gezogen: Ordneransicht öffnen, dort auf einen Ordner ablegen
+listen<Payload>("tab-drag", (e) => {
+  nav("folders");
+  setTimeout(() => externalDrag(e.payload), 150);
+});
 
 listen<LibraryChange>("library-changed", (e) => {
   const c = e.payload;

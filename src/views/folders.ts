@@ -4,7 +4,8 @@ import { player } from "../player";
 import { store } from "../store";
 import { TrackList } from "../tracklist";
 import { basename, clear, contextMenu, dirname, fmtDuration, h, holdButton, reportErrors, sheet, toast, type MenuItem } from "../ui";
-import { moveTracksTo } from "../fileops";
+import { dupGate, moveTracksTo } from "../fileops";
+import { MY_TAB } from "../tabs";
 import { beginDrag, dragging, dropTarget } from "../dnd";
 import { analyzeIds, recordNav, setViewPath } from "../main";
 import { searchWords, textMatches, trackMenu } from "./library";
@@ -125,14 +126,25 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
   let hoverTimer = 0;
   function folderDrop(el: HTMLElement, path: string, onHover?: () => void) {
     dropTarget(el, {
-      accepts: (p) => p.kind === "ids" || (p.kind === "dir" && norm(p.path) !== norm(path) && !norm(path).startsWith(norm(p.path) + "\\")),
+      accepts: (p) => p.kind === "ids" || p.kind === "tab" || (p.kind === "dir" && norm(p.path) !== norm(path) && !norm(path).startsWith(norm(p.path) + "\\")),
       enter: () => {
         clearTimeout(hoverTimer);
         if (onHover) hoverTimer = window.setTimeout(onHover, 800); // aufklappen beim Drüberhalten
       },
       leave: () => clearTimeout(hoverTimer),
-      drop: async (p, { copy }) => {
+      drop: async (p, { copy, e }) => {
         clearTimeout(hoverTimer);
+        if (p.kind === "tab") {
+          // aus einem anderen Tab: verschieben oder kopieren?
+          const run = (cp: boolean) => fromOtherTab(p, path, cp);
+          contextMenu(e.clientX, e.clientY, [
+            { label: L("Hierher verschieben"), action: () => run(false) },
+            { label: L("Hierher kopieren"), action: () => run(true) },
+            { label: "", sep: true },
+            { label: L("Abbrechen"), action: () => {} },
+          ]);
+          return;
+        }
         if (p.kind === "dir") {
           const dir = p.path;
           try {
@@ -154,6 +166,23 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
         if (p.kind === "ids") await moveTracksTo(p.ids, path, copy);
       },
     });
+  }
+
+  /** Titel aus einem anderen Tab in diesen Ordner übernehmen (mit Duplikatprüfung) */
+  async function fromOtherTab(p: { from: string; fromName: string; ids: number[]; names: Record<number, string> }, path: string, copy: boolean) {
+    const ok = await dupGate(p.ids, path, MY_TAB, p.from, p.names);
+    if (!ok) return;
+    if (!ok.length) return toast(L("Nichts übertragen – alle Titel gibt es dort schon"));
+    const skip = p.ids.filter((i) => !ok.includes(i));
+    try {
+      const r = await api.transferToTab(p.ids, MY_TAB, path, copy, skip, p.from);
+      reportErrors(r.errors, L("{0} Titel {1} → „{2}“", r.moved, copy ? L("kopiert") : L("verschoben"), basename(path)));
+      await store.loadTracks();
+      await reloadAll();
+      showTracks();
+    } catch (err) {
+      toast(String(err));
+    }
   }
 
   // ---------- Ordner öffnen ----------

@@ -21,10 +21,11 @@ const REASON: Record<string, string> = { metadata: L("gleiche Tags"), filename: 
  * Vor dem Kopieren/Verschieben in einen anderen Musikordner (oder Tab): gibt es die Titel dort schon?
  * Bei Treffern immer nachfragen. Ergebnis: Titel, die übertragen werden sollen – oder null (abgebrochen).
  */
-export async function dupGate(ids: number[], dir: string, tab?: string): Promise<number[] | null> {
+/** from/names: Titel aus einem anderen Tab (Namen, weil sie hier nicht in der Bibliothek sind) */
+export async function dupGate(ids: number[], dir: string, tab?: string, from?: string, names?: Record<number, string>): Promise<number[] | null> {
   let hits: DupCheck[];
   try {
-    hits = await api.dupCheck(ids, dir, tab);
+    hits = await api.dupCheck(ids, dir, tab, from);
   } catch (e) {
     toast(String(e));
     return ids;
@@ -43,7 +44,7 @@ export async function dupGate(ids: number[], dir: string, tab?: string): Promise
       const t = store.tracks.get(x.trackId);
       const why = x.reasons.map((r) => REASON[r] ?? r).join(", ") + (x.audioSimilarity ? ` (${Math.round(x.audioSimilarity * 100)} %)` : "");
       return h("div", { class: "dup-hit" },
-        h("div", {}, t ? `${t.artist ?? "?"} – ${store.label(t)}` : L("Titel {0}", x.trackId)),
+        h("div", {}, names?.[x.trackId] ?? (t ? `${t.artist ?? "?"} – ${store.label(t)}` : L("Titel {0}", x.trackId))),
         ...x.matches.map((m) => h("div", { class: "note", style: { fontFamily: "var(--mono)", fontSize: "11px" } }, L("schon da: {0}", m.path))),
         h("div", { class: "note" }, why),
       );

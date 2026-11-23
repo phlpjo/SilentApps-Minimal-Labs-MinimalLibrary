@@ -1209,13 +1209,19 @@ async fn dup_check(
     ids: Vec<i64>,
     dir: String,
     tab: Option<String>,
+    from: Option<String>,
 ) -> R<Vec<DupCheck>> {
-    let src_db = state.db.clone();
+    // from: Titel stammen aus einem anderen Tab (dorthin gezogen)
+    let src = match &from {
+        Some(f) if *f != state.label => tab_state(&app, f).map_err(err)?,
+        _ => state.0.clone(),
+    };
+    let src_db = src.db.clone();
     let dst = match &tab {
         Some(l) if *l != state.label => tab_state(&app, l).map_err(err)?,
         _ => state.0.clone(),
     };
-    let other = !Arc::ptr_eq(&dst, &state.0);
+    let other = !Arc::ptr_eq(&dst, &src);
     blocking(move || {
         let (src, mut fps, ignored) = {
             let c = src_db.lock().unwrap();
@@ -1305,9 +1311,16 @@ async fn transfer_to_tab(
     dir: String,
     copy: bool,
     skip: Vec<i64>,
+    from: Option<String>,
 ) -> R<TransferReport> {
     let dst = tab_state(&app, &label).map_err(err)?;
-    let src_db = state.db.clone();
+    // from: im Ziel-Tab abgelegt – Quelle ist der andere Tab
+    let src = match &from {
+        Some(f) if *f != state.label => tab_state(&app, f).map_err(err)?,
+        _ => state.0.clone(),
+    };
+    let src_db = src.db.clone();
+    let src_label = src.label.clone();
     let prog = emitter(&app, &state.label, "organize");
     let _ = app.asset_protocol_scope().allow_directory(&dir, true);
     let app2 = app.clone();
@@ -1368,6 +1381,17 @@ async fn transfer_to_tab(
         }
         rep.new_ids = scanner::add_files(&dst.db, &done_paths)?;
         sync_playlists(&src_db.lock().unwrap());
+        if !copy && src_label != dst.label {
+            // Quell-Tab: Titel sind weg
+            let _ = app2.emit_to(
+                &src_label,
+                "library-changed",
+                watch::Change {
+                    removed: rep.moved,
+                    ..Default::default()
+                },
+            );
+        }
         let _ = app2.emit_to(
             &dst.label,
             "library-changed",

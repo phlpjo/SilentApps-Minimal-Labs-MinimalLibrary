@@ -54,7 +54,7 @@ class Player {
     a.addEventListener("ended", () => a === this.audio && this.next(true));
     a.addEventListener("play", () => {
       if (a !== this.audio) return;
-      claimAudio();
+      claimAudio("local:" + this.localSink);
       this.loop();
       store.emit("player");
     });
@@ -489,11 +489,14 @@ class Player {
   }
 
   /** Ein anderer Tab hat die Wiedergabe übernommen */
+  /** Ein anderer Tab spielt jetzt – nur weichen, wenn er denselben Ausgang nimmt (verschiedene Ausgänge laufen parallel) */
   private yieldToOtherTab(device: string) {
+    const mine = this.device ? this.device.id : "local:" + this.localSink;
+    const same = (a: string, b: string) => a === b || (a.startsWith("local:") && b === "local") || (b.startsWith("local:") && a === "local");
+    if (!same(device, mine)) return;
     if (this.isRemote) {
       clearInterval(this.remote.poll);
-      // Gleiches Gerät spielt jetzt den Titel des anderen Tabs – nicht stoppen; sonst unseres anhalten
-      if (this.remote.playing && device !== this.device!.id) api.castStop(this.device!.id).catch(() => {});
+      // Das Gerät spielt jetzt den Titel des anderen Tabs – nicht stoppen, nur loslassen
       this.remote.playing = false;
       this.remote.loading = false;
     } else if (!this.audio.paused) {

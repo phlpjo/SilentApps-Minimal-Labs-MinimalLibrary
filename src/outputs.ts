@@ -4,10 +4,10 @@
 import { api, type CastDevice } from "./api";
 import { player } from "./player";
 import { store } from "./store";
-import { h, toast } from "./ui";
+import { h, holdButton, toast } from "./ui";
 import { L } from "./i18n";
 import { IS_MAC } from "./platform";
-import { phoneCmd, phonesNow } from "./remotectl";
+import { MY_SESSION, busyBy, house, outNameOf, sessionCmd, takeOver, whoOf, type House, type Session } from "./remotectl";
 
 export interface LocalOut { id: string; label: string }
 
@@ -168,7 +168,7 @@ export function currentOutputLabel(): string {
   return localCache?.find((o) => o.id === player.localSink)?.label ?? L("Dieser PC");
 }
 
-/** Auswahl-Fenster am Player: lokale Ausgänge sofort, Heimnetz aus dem Gedächtnis + Live-Suche */
+/** Auswahl-Fenster am Player: oben was im Haus läuft (live, steuerbar), darunter jeder Ausgang genau einmal */
 export function outputPopup(anchor: HTMLElement) {
   document.querySelectorAll(".out-pop").forEach((m) => m.remove());
   const box = h("div", { class: "menu out-pop" });
@@ -179,50 +179,65 @@ export function outputPopup(anchor: HTMLElement) {
     box.style.left = Math.max(8, Math.min(r.right - b.width, window.innerWidth - b.width - 8)) + "px";
     box.style.top = Math.max(8, r.top - b.height - 8) + "px";
   };
-  const row = (label: string, on: boolean, hint: string, action: () => void, dim = false) =>
-    h("div", { class: "option" + (dim ? " dim" : ""), onclick: () => { close(); action(); } },
-      h("span", {}, (on ? "✓ " : "  ") + label), hint ? h("small", {}, hint) : "");
+  let hs: House = { computer: "", sessions: [], outputs: [] };
+  let arming = ""; // Ausgang, der zum Übernehmen bereitsteht
+  const fmt = (sec?: number) => (sec && sec > 0 ? `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, "0")}` : "");
+
+  // Ein Ausgang: frei → antippen; belegt → antippen zeigt „Übernehmen“ zum Gedrückthalten
+  const row = (id: string, label: string, on: boolean, hint: string, select: () => Promise<void> | void, dim = false) => {
+    const other = on ? undefined : busyBy(hs, id);
+    const sub = other ? L("belegt · {0}", whoOf(other, hs.computer)) : hint;
+    if (other && arming === id) {
+      return h("div", { class: "option armed" }, h("span", {}, "  " + label),
+        holdButton(L("Übernehmen"), () => { close(); takeOver(hs, id, select); }, L("halten · {0} pausiert", whoOf(other, hs.computer))));
+    }
+    return h("div", { class: "option" + (dim ? " dim" : "") + (other ? " busy" : ""), onclick: (e: Event) => {
+      if (other) { e.stopPropagation(); arming = id; render(); return; }
+      close(); select();
+    } }, h("span", {}, (on ? "✓ " : "  ") + label), sub ? h("small", {}, sub) : "");
+  };
+
+  // Läuft gerade woanders (andere Tabs, Handys): live mit Tasten
+  const card = (s: Session) => {
+    const btn = (label: string, title: string, cmd: Record<string, unknown>) =>
+      h("button", { class: "btn small", title, disabled: !s.controllable, onclick: (e: Event) => { e.stopPropagation(); sessionCmd(s.id, cmd); setTimeout(refresh, 700); } }, label);
+    const vol = typeof s.volume === "number" ? s.volume : 0.5;
+    const where = outNameOf(s);
+    return h("div", { class: "phone-now" },
+      h("div", {}, (s.kind === "phone" ? "📱 " : "🖥 ") + whoOf(s, hs.computer) + (where ? " → " + where : ""),
+        h("small", {}, s.title ? (s.playing ? " · " : L(" · pausiert · ")) + (s.artist ? s.artist + " – " : "") + s.title + (s.dur ? `  ${fmt(s.pos)} / ${fmt(s.dur)}` : "") : L(" · spielt nichts"))),
+      s.controllable
+        ? h("div", { class: "phone-ctl" },
+          btn("⏮", L("Zurück"), { cmd: "prev" }),
+          btn(s.playing ? "⏸" : "▶", L("Abspielen / Pause"), { cmd: "toggle" }),
+          btn("⏭", L("Weiter"), { cmd: "next" }),
+          btn("−", L("Leiser"), { cmd: "volume", vol: Math.max(0, vol - 0.1) }),
+          btn("+", L("Lauter"), { cmd: "volume", vol: Math.min(1, vol + 0.1) }))
+        : h("small", { class: "note" }, L("nur ansehen")),
+    );
+  };
+
   const render = async () => {
     const locals = await localOutputs();
+    const others = hs.sessions.filter((s) => s.id !== MY_SESSION && !s.self && (s.title || s.playing));
     box.replaceChildren(
-      h("div", { class: "pop-title" }, L("Dieser PC")),
-      ...locals.map((o) => row(o.id === "default" ? L("Dieser PC") : o.label, !player.device && player.localSink === o.id, o.id === "default" ? "Standard" : "", () => selectLocal(o.id))),
-      h("hr"),
+      ...(others.length ? [h("div", { class: "pop-title" }, L("Läuft gerade im Haus")), ...others.map(card), h("hr")] : []),
+      h("div", { class: "pop-title" }, L("Diese Wiedergabe spielt auf …")),
+      ...locals.map((o) => row("local:" + o.id, o.id === "default" ? L("Dieser PC") : o.label, !player.device && player.localSink === o.id, o.id === "default" ? L("Standard") : "", () => selectLocal(o.id))),
       h("div", { class: "pop-title" }, L("Heimnetz"), isSearching() ? h("span", { class: "searching" }, L("  sucht …")) : ""),
       ...cache.map((d) =>
-        row(d.name, player.device?.id === d.id, (player.device?.id === d.id ? L("streamt · ") : "") + (d.kind === "sonos" ? "Sonos" : "DLNA"), () => selectCast(d), !isFound(d.id) && isSearching()),
+        row(d.id, d.name, player.device?.id === d.id, (player.device?.id === d.id ? L("streamt · ") : "") + (d.kind === "sonos" ? "Sonos" : "DLNA"), () => selectCast(d), !isFound(d.id) && isSearching()),
       ),
       cache.length ? "" : h("div", { class: "option dim" }, isSearching() ? L("Suche Geräte …") : L("Keine Geräte gefunden")),
-      h("div", { class: "option small", onclick: () => discoverIfStale(true) }, h("span", {}, L("  Neu suchen"))),
-      phonesBox,
+      h("div", { class: "option small", onclick: (e: Event) => { e.stopPropagation(); discoverIfStale(true); } }, h("span", {}, L("  Neu suchen"))),
     );
     place();
   };
-  // Handys mit Minimal Player Connected: was dort läuft, und eingreifen
-  const phonesBox = h("div", {});
-  const renderPhones = async () => {
-    const phones = await phonesNow();
-    if (!document.body.contains(box)) return;
-    phonesBox.replaceChildren(...(phones.length ? [h("hr"), h("div", { class: "pop-title" }, L("Handys"))] : []),
-      ...phones.map((p) => {
-        const btn = (label: string, title: string, cmd: Record<string, unknown>) =>
-          h("button", { class: "btn small", title, onclick: (e: Event) => { e.stopPropagation(); phoneCmd(p.name, cmd); setTimeout(renderPhones, 2500); } }, label);
-        const vol = typeof p.volume === "number" ? p.volume : 0.5;
-        return h("div", { class: "phone-now" },
-          h("div", {}, "📱 " + p.name, h("small", {}, p.title ? (p.playing ? " · " : L(" · pausiert · ")) + (p.artist ? p.artist + " – " : "") + p.title : L(" · spielt nichts"))),
-          h("div", { class: "phone-ctl" },
-            btn("⏮", L("Zurück"), { cmd: "prev" }),
-            btn(p.playing ? "⏸" : "▶", L("Abspielen / Pause"), { cmd: "toggle" }),
-            btn("⏭", L("Weiter"), { cmd: "next" }),
-            btn("−", L("Leiser"), { cmd: "volume", vol: Math.max(0, vol - 0.1) }),
-            btn("+", L("Lauter"), { cmd: "volume", vol: Math.min(1, vol + 0.1) }),
-          ),
-        );
-      }));
-    place();
+  const refresh = async () => {
+    hs = await house();
+    if (document.body.contains(box)) render();
   };
-  const phoneTimer = window.setInterval(() => (document.body.contains(box) ? renderPhones() : clearInterval(phoneTimer)), 2000);
-  renderPhones();
+  const timer = window.setInterval(() => (document.body.contains(box) ? refresh() : clearInterval(timer)), 1500);
   const unsub = store.on("outputs", render);
   const unsub2 = store.on("player", render);
   const off = (e: Event) => {
@@ -231,6 +246,7 @@ export function outputPopup(anchor: HTMLElement) {
   const esc = (e: KeyboardEvent) => e.key === "Escape" && close();
   function close() {
     box.remove();
+    clearInterval(timer);
     unsub();
     unsub2();
     document.removeEventListener("pointerdown", off, true);
@@ -241,5 +257,6 @@ export function outputPopup(anchor: HTMLElement) {
     document.addEventListener("keydown", esc, true);
   });
   render();
+  refresh();
   discoverIfStale();
 }

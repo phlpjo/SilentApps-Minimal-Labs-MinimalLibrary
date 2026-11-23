@@ -509,6 +509,7 @@ async fn star_toggle(state: Tab, ids: Vec<i64>) -> R<bool> {
 // ---------- Bibliothek fürs Handy (Minimal Player Connected) ----------
 
 fn start_remote(app: &AppHandle, main: &AppState) {
+    load_remote_prefs(&main.db.lock().unwrap());
     let db = main.db.clone();
     let db_s = main.db.clone();
     let db_c = main.db.clone();
@@ -607,25 +608,114 @@ struct RemoteInfo {
     port: u16,
     paired: Vec<String>,
     name: String,
+    /// eigener Name (leer = Rechnername)
+    own_name: String,
+    /// Handys, die nur ansehen dürfen
+    view_only: Vec<String>,
 }
 
 /// Für die Einstellungen: Kopplungscode, gekoppelte Handys (nur Haupt-Bibliothek)
 #[tauri::command]
 async fn remote_info(app: AppHandle) -> R<RemoteInfo> {
     let st = tab_state(&app, "main").map_err(err)?;
-    let paired = remote::paired_names(&st.db.lock().unwrap());
+    let c = st.db.lock().unwrap();
+    let paired = remote::paired_names(&c);
     Ok(RemoteInfo {
         code: remote::code(),
         port: remote::port(),
         paired,
         name: remote::computer_name(),
+        own_name: db::get_setting(&c, "pc_name").ok().flatten().unwrap_or_default(),
+        view_only: view_only_list(&c),
     })
+}
+
+fn view_only_list(c: &rusqlite::Connection) -> Vec<String> {
+    db::get_setting(c, "remote_view_only")
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Windows: Die Namen der Soundkarten zeigt WebView2 nur mit Mikrofon-Freigabe. Die setzen wir für die
+/// eigene Oberfläche direkt auf „erlaubt“ – auch wenn früher einmal „Ablehnen“ geklickt wurde.
+#[cfg(windows)]
+fn allow_device_names(w: &tauri::WebviewWindow) {
+    let _ = w.with_webview(|wv| unsafe {
+        use webview2_com::Microsoft::Web::WebView2::Win32::*;
+        use windows_core::Interface;
+        let Ok(core) = wv.controller().CoreWebView2() else { return };
+        let Ok(core13) = core.cast::<ICoreWebView2_13>() else { return };
+        let Ok(profile) = core13.Profile() else { return };
+        let Ok(p4) = profile.cast::<ICoreWebView2Profile4>() else { return };
+        for origin in ["http://tauri.localhost", "https://tauri.localhost"] {
+            let o = windows_core::HSTRING::from(origin);
+            let _ = p4.SetPermissionState(
+                COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+                &o,
+                COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+                &webview2_com::SetPermissionStateCompletedHandler::create(Box::new(|_| Ok(()))),
+            );
+        }
+    });
+}
+
+/// Gespeicherten PC-Namen und Rechte beim Start in die Fernsteuerung übernehmen
+fn load_remote_prefs(c: &rusqlite::Connection) {
+    remote::set_pc_name(&db::get_setting(c, "pc_name").ok().flatten().unwrap_or_default());
+    remote::set_view_only(view_only_list(c));
+}
+
+/// Name dieses PCs (sehen die Handys und das Ausgabe-Menü)
+#[tauri::command]
+async fn pc_name_set(app: AppHandle, name: String) -> R<()> {
+    let st = tab_state(&app, "main").map_err(err)?;
+    let c = st.db.lock().unwrap();
+    db::set_setting(&c, "pc_name", name.trim()).map_err(err)?;
+    load_remote_prefs(&c);
+    Ok(())
+}
+
+/// Handy darf steuern (true) oder nur ansehen (false)
+#[tauri::command]
+async fn remote_allow_control(app: AppHandle, name: String, allow: bool) -> R<()> {
+    let st = tab_state(&app, "main").map_err(err)?;
+    let c = st.db.lock().unwrap();
+    let mut v = view_only_list(&c);
+    v.retain(|n| n != &name);
+    if !allow {
+        v.push(name);
+    }
+    db::set_setting(&c, "remote_view_only", &serde_json::to_string(&v).map_err(err)?).map_err(err)?;
+    load_remote_prefs(&c);
+    Ok(())
+}
+
+/// Alles, was im Haus läuft (alle Tabs und Handys) und alle Ausgänge
+#[tauri::command]
+fn house() -> serde_json::Value {
+    remote::house(None)
+}
+
+/// Befehl an eine beliebige Wiedergabe: "pc:<tab>" oder "phone:<name>"
+#[tauri::command]
+fn session_command(app: AppHandle, session: String, mut cmd: serde_json::Value) {
+    cmd["session"] = session.clone().into();
+    if cmd.get("by").is_none() {
+        cmd["by"] = remote::computer_name().into();
+    }
+    if let Some(name) = session.strip_prefix("phone:") {
+        remote::phone_command(name, cmd);
+    } else {
+        let _ = app.emit("remote-control", cmd);
+    }
 }
 
 /// Oberfläche meldet, was gerade läuft (für die Anzeige am Handy)
 #[tauri::command]
-fn now_report(state: serde_json::Value) {
-    remote::set_now(state);
+fn now_report(window: tauri::WebviewWindow, state: serde_json::Value) {
+    remote::set_now(window.label(), state);
 }
 
 /// Was die gekoppelten Handys gerade spielen
@@ -2686,6 +2776,7 @@ async fn tab_close(app: AppHandle, window: tauri::WebviewWindow, label: String) 
     if let Some(w) = app.get_webview_window(&label) {
         let _ = w.destroy();
     }
+    remote::drop_now(&label);
     if let Some(st) = tabs.map.lock().unwrap().remove(&label) {
         st.cancel_all();
         *st.watcher.lock().unwrap() = None;
@@ -2807,6 +2898,10 @@ pub fn run() {
         })
         .setup(|app| {
             setup_tray(app)?;
+            #[cfg(windows)]
+            if let Some(w) = app.get_webview_window("main") {
+                allow_device_names(&w);
+            }
             let dir = app.path().app_data_dir()?;
             app.manage(Tabs {
                 base: dir,
@@ -2861,6 +2956,10 @@ pub fn run() {
             analyze,
             analyze_quiet,
             now_report,
+            house,
+            session_command,
+            pc_name_set,
+            remote_allow_control,
             remote_phones,
             phone_command,
             license_status,

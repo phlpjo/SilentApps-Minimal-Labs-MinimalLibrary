@@ -1,5 +1,5 @@
 // Tabs: jede Registerkarte ist eine eigene, komplette Instanz (eigenes Fenster, eigene Bibliothek).
-// Abspielen geht immer nur in einem Tab – das Lautsprecher-Symbol zeigt, wo.
+// Jeder Tab ist eine eigene Wiedergabe; mehrere laufen parallel, solange sie verschiedene Ausgänge nutzen.
 import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "./api";
@@ -22,7 +22,7 @@ export function audioOwner(): string {
   }
 }
 
-/** Dieser Tab spielt jetzt – alle anderen hören auf */
+/** Dieser Tab spielt jetzt – Tabs auf demselben Ausgang hören auf */
 export function claimAudio(device = "local") {
   try {
     localStorage.setItem(OWNER, MY_TAB);
@@ -66,6 +66,11 @@ export function reportPlaying(playing: boolean) {
 }
 
 /** Ein anderer Tab hat übernommen → `stop` aufrufen */
+/** Name dieses Tabs */
+export function myTabName(): string {
+  return shown(tabs.find((t) => t.label === MY_TAB)?.name ?? L("Bibliothek"));
+}
+
 export function onOtherTabPlays(stop: (device: string) => void) {
   listen<{ label: string; device: string }>("audio-claim", (e) => {
     if (e.payload.label !== MY_TAB) stop(e.payload.device);

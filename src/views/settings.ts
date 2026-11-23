@@ -209,6 +209,12 @@ function phoneCard() {
               if (d) setDir(d as string);
             } }, L("Ordner ändern …")),
             own ? h("button", { class: "btn", onclick: () => setDir(null) }, L("Standard")) : "",
+            (() => {
+              // Geteilter Haushalt: Handy darf die Wiedergaben hier steuern oder nur sehen, was läuft
+              const c = h("input", { type: "checkbox", checked: !i.view_only.includes(n) }) as HTMLInputElement;
+              c.addEventListener("change", () => api.remoteAllowControl(n, c.checked).catch((e) => toast(String(e))));
+              return h("label", { class: "check", title: L("Aus: das Handy sieht nur, was hier läuft") }, c, L("darf steuern"));
+            })(),
             h("button", { class: "btn", onclick: async () => { await api.remoteUnpair(n); fill(); } }, L("Entkoppeln"))));
       }),
       i.port ? "" : h("div", { class: "err" }, L("Freigabe konnte nicht starten (Netzwerk blockiert?).")),
@@ -222,10 +228,16 @@ function phoneCard() {
   };
   box.addEventListener("change", async () => { await store.saveSettings({ remoteOff: !box.checked }); fill(); });
   fill();
+  // Name dieses PCs – so heißt er am Handy und im Ausgabe-Menü
+  const nameIn = h("input", { type: "text", placeholder: "", style: { width: "220px" } }) as HTMLInputElement;
+  api.remoteInfo().then((i) => { nameIn.value = i.own_name; nameIn.placeholder = i.name; }).catch(() => {});
+  let nameT = 0;
+  nameIn.addEventListener("input", () => { clearTimeout(nameT); nameT = window.setTimeout(() => api.pcNameSet(nameIn.value).catch(() => {}), 500); });
   // Code wechselt nach dem Koppeln → beim Offenhalten der Einstellungen nachziehen
   const t = window.setInterval(() => { if (!document.body.contains(body)) clearInterval(t); else if (box.checked) fill(); }, 5000);
   return h("div", { class: "card" }, h("h3", {}, L("Minimal Player Connected (Handy im WLAN)")),
     h("div", { class: "setting" }, h("label", { class: "check" }, box, L("Bibliothek fürs Handy freigeben, solange Minimal Library läuft")), h("span", {})),
+    h("div", { class: "setting" }, h("span", {}, L("Name dieses Computers"), h("div", { class: "note" }, L("So heißt er am Handy und unter „Läuft gerade im Haus“"))), nameIn),
     body,
     h("div", { class: "note" }, L("In Minimal Player Connected unter „Bibliothek“ diesen Computer wählen und einmal den Code eingeben. Danach siehst du am Handy alle Ordner und Playlisten, spielst direkt ab, bearbeitest Playlisten und machst Ordner oder Playlisten offline verfügbar. Neue Musik aus dem Hauptordner am Handy kommt automatisch hierher (je Handy eine eigene Musikquelle); sortierst du sie hier, zieht sie am Handy mit. Playlisten und Stern werden in beide Richtungen zusammengeführt. Nur im eigenen WLAN; Windows fragt beim ersten Mal evtl. nach der Firewall-Freigabe – bitte „Private Netzwerke“ erlauben.")),
   );

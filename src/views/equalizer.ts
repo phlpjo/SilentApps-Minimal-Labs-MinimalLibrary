@@ -4,7 +4,8 @@ import { cachedDevices, discoverIfStale, isFound, isSearching, labelsHidden, loc
 import type { CastDevice } from "../api";
 import { player } from "../player";
 import { store } from "../store";
-import { clear, h, toast } from "../ui";
+import { clear, h, holdButton, toast } from "../ui";
+import { busyBy, house, takeOver, whoOf } from "../remotectl";
 import { IS_MAC, OS } from "../platform";
 import { L } from "../i18n";
 
@@ -20,16 +21,23 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
   };
 
   const renderOutputs = async () => {
-    const locals = await localOutputs();
+    const [locals, hs] = await Promise.all([localOutputs(), house()]);
     clear(outBox);
     const isPlaying = (local: boolean, id: string) => (local ? !player.device && player.localSink === id : player.device?.id === id);
     // Zeile antippen = Klang einstellen; rechts „Hier abspielen“ schaltet die Wiedergabe um
-    const item = (label: string, sub: string, on: boolean, click: () => void, dim: boolean, local: boolean, play: () => void, id: string) =>
-      h("div", { class: "out-item" + (on ? " on" : "") + (dim ? " dim" : ""), onclick: click },
-        h("span", { class: "out-name" }, label, h("small", {}, sub)),
-        isPlaying(local, id)
-          ? h("span", { class: "out-live" }, L("● spielt hier"))
-          : h("button", { class: "btn small", onclick: async (e: Event) => { e.stopPropagation(); await play(); click(); } }, L("Hier abspielen")));
+    const item = (label: string, sub: string, on: boolean, click: () => void, dim: boolean, local: boolean, play: () => void, id: string) => {
+      const outId = local ? "local:" + id : id;
+      const other = isPlaying(local, id) ? undefined : busyBy(hs, outId);
+      const action = isPlaying(local, id)
+        ? h("span", { class: "out-live" }, L("● spielt hier"))
+        : other
+          // Belegt von einem anderen Tab oder Handy: übernehmen nur mit Gedrückthalten
+          ? h("span", { onclick: (e: Event) => e.stopPropagation() }, holdButton(L("Übernehmen"), async () => { await takeOver(hs, outId, play); click(); }, L("halten · {0} pausiert", whoOf(other, hs.computer))))
+          : h("button", { class: "btn small", onclick: async (e: Event) => { e.stopPropagation(); await play(); click(); } }, L("Hier abspielen"));
+      return h("div", { class: "out-item" + (on ? " on" : "") + (dim ? " dim" : ""), onclick: click },
+        h("span", { class: "out-name" }, label, h("small", {}, other ? L("belegt · {0}", whoOf(other, hs.computer)) : sub)),
+        action);
+    };
     outBox.append(
       h("div", { class: "out-group" }, h("h3", {}, L("Dieser PC")),
         ...locals.map((o) => item(o.id === "default" ? L("Standard-Ausgabe") : o.label, (o.id === "default" ? L("wie in {0} eingestellt", OS) : L("Soundkarte")), !editing.cast && editing.sink === o.id, () => pick({ cast: null, sink: o.id }), false, true, () => selectLocal(o.id), o.id)),

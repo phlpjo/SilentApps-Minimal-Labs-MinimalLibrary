@@ -30,3 +30,8 @@ tauri-plugin-deep-link = "2"
 
 [target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+[target.'cfg(windows)'.dependencies]
+# Mikrofon-Freigabe für die eigene Oberfläche setzen (nur für Soundkarten-Namen, es wird nie aufgenommen)
+webview2-com = "0.39"
+windows-core = "0.62"

@@ -53,8 +53,13 @@ pub enum Changed {
 
 // ───────── Fernsteuerung (wie bei Spotify: was läuft wo, eingreifen von überall) ─────────
 
-/// Was am PC gerade läuft (meldet die Oberfläche regelmäßig)
-static NOW: Mutex<Option<(serde_json::Value, std::time::Instant)>> = Mutex::new(None);
+/// Was am PC gerade läuft – pro Programm-Tab eine Wiedergabe (Tab-Kennung → Zustand, Zeitpunkt)
+static NOW: Mutex<Option<std::collections::BTreeMap<String, (serde_json::Value, std::time::Instant)>>> =
+    Mutex::new(None);
+/// Eigener Name dieses PCs (Einstellungen); leer = Rechnername
+static PC_NAME: Mutex<String> = Mutex::new(String::new());
+/// Handys, die nur ansehen, aber nicht steuern dürfen
+static VIEW_ONLY: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// Wiedergabe der Handys: Name → (Zustand, Zeitpunkt) und Befehle, die beim nächsten Melden abgeholt werden
 static PHONES: Mutex<
@@ -70,16 +75,101 @@ static PHONES: Mutex<
     >,
 > = Mutex::new(None);
 
-/// Zustand der PC-Wiedergabe setzen
-pub fn set_now(v: serde_json::Value) {
-    *NOW.lock().unwrap() = Some((v, std::time::Instant::now()));
+/// Zustand der Wiedergabe eines Tabs setzen
+pub fn set_now(tab: &str, v: serde_json::Value) {
+    NOW.lock()
+        .unwrap()
+        .get_or_insert_with(Default::default)
+        .insert(tab.to_string(), (v, std::time::Instant::now()));
 }
 
+/// Tab geschlossen → Wiedergabe vergessen
+pub fn drop_now(tab: &str) {
+    if let Some(m) = NOW.lock().unwrap().as_mut() {
+        m.remove(tab);
+    }
+}
+
+pub fn set_pc_name(name: &str) {
+    *PC_NAME.lock().unwrap() = name.trim().to_string();
+}
+
+pub fn set_view_only(names: Vec<String>) {
+    *VIEW_ONLY.lock().unwrap() = names;
+}
+
+fn may_control(client: &str) -> bool {
+    !VIEW_ONLY.lock().unwrap().iter().any(|n| n == client)
+}
+
+/// Aktuelle Wiedergaben der Tabs (Meldungen älter als 15 s: Tab hängt oder ist zu)
+fn tab_sessions() -> Vec<(String, serde_json::Value)> {
+    let g = NOW.lock().unwrap();
+    let Some(m) = g.as_ref() else { return vec![] };
+    m.iter()
+        .filter(|(_, (_, at))| at.elapsed().as_secs() < 15)
+        .map(|(k, (v, _))| (k.clone(), v.clone()))
+        .collect()
+}
+
+/// Für ältere Handy-Versionen: die Wiedergabe des Haupt-Tabs (bzw. die, die gerade spielt)
 fn now_json() -> serde_json::Value {
-    match &*NOW.lock().unwrap() {
-        // ältere Meldung als 15 s: Programm hängt oder spielt nichts mehr
-        Some((v, at)) if at.elapsed().as_secs() < 15 => v.clone(),
-        _ => serde_json::json!({ "playing": false }),
+    let t = tab_sessions();
+    t.iter()
+        .find(|(_, v)| v["playing"].as_bool() == Some(true))
+        .or_else(|| t.iter().find(|(k, _)| k == "main"))
+        .or(t.first())
+        .map(|(_, v)| v.clone())
+        .unwrap_or_else(|| serde_json::json!({ "playing": false }))
+}
+
+/// Alles, was im Haus läuft: jede Wiedergabe (PC-Tabs und Handys) und alle Ausgänge.
+/// `viewer` = fragendes Handy (None = der PC selbst)
+pub fn house(viewer: Option<&str>) -> serde_json::Value {
+    let pc = computer_name();
+    let viewer_may = viewer.map(may_control).unwrap_or(true);
+    let mut sessions = vec![];
+    let mut outputs: Vec<serde_json::Value> = vec![];
+    for (tab, v) in tab_sessions() {
+        let mut o = v.clone();
+        o["id"] = format!("pc:{tab}").into();
+        o["kind"] = "pc".into();
+        o["device"] = pc.clone().into();
+        o["controllable"] = viewer_may.into();
+        if let Some(obj) = o.as_object_mut() {
+            obj.remove("queue");
+            obj.remove("outputs");
+        }
+        sessions.push(o);
+        // Ausgänge kennt jeder Tab gleich – einmal reicht
+        if outputs.is_empty() {
+            if let Some(a) = v["outputs"].as_array() {
+                outputs = a.clone();
+            }
+        }
+    }
+    for p in phones_now() {
+        let name = p["name"].as_str().unwrap_or("").to_string();
+        let mut o = p.clone();
+        o["id"] = format!("phone:{name}").into();
+        o["kind"] = "phone".into();
+        o["device"] = name.clone().into();
+        o["self"] = (viewer == Some(name.as_str())).into();
+        let allows = p["remoteCtl"].as_bool().unwrap_or(true);
+        o["controllable"] = (viewer_may && allows && viewer != Some(name.as_str())).into();
+        sessions.push(o);
+    }
+    serde_json::json!({ "computer": pc, "sessions": sessions, "outputs": outputs })
+}
+
+/// Befehl an eine Wiedergabe: "pc:<tab>" → Oberfläche, "phone:<name>" → beim nächsten Melden des Handys.
+/// Ohne `session`: die Wiedergabe, die gerade am PC spielt (ältere Handy-Versionen).
+fn route(host: &Host, v: serde_json::Value) {
+    let session = v["session"].as_str().unwrap_or("").to_string();
+    if let Some(name) = session.strip_prefix("phone:") {
+        phone_command(name, v);
+    } else {
+        (host.changed)(Changed::Control(v));
     }
 }
 
@@ -323,9 +413,14 @@ fn handle(host: &Host, mut req: tiny_http::Request) -> std::io::Result<()> {
                 v["computer"] = serde_json::Value::String(computer_name());
                 Some((200, v.to_string()))
             }
+            (tiny_http::Method::Get, "/house") => Some((200, house(Some(&client)).to_string())),
             (tiny_http::Method::Post, "/ctl") => {
-                let v: serde_json::Value = serde_json::from_str(&body)?;
-                (host.changed)(Changed::Control(v));
+                if !may_control(&client) {
+                    return Ok(Some((403, "nur ansehen".into())));
+                }
+                let mut v: serde_json::Value = serde_json::from_str(&body)?;
+                v["by"] = client.clone().into();
+                route(host, v);
                 Some((200, "{}".into()))
             }
             (tiny_http::Method::Post, "/me") => {
@@ -592,6 +687,10 @@ fn library(c: &Connection, roots: &[String]) -> Result<String> {
 
 /// Name dieses Computers (zeigt das Handy an)
 pub fn computer_name() -> String {
+    let own = PC_NAME.lock().unwrap().clone();
+    if !own.is_empty() {
+        return own;
+    }
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .ok()

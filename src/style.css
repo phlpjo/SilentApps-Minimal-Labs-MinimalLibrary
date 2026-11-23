@@ -499,3 +499,6 @@ html.mac #titlebar { padding-left: 78px; }
 .lyr-time:focus, .lyr-text:focus { border-color: var(--line); outline: none; color: var(--ink); }
 .lyr-del { background: none; border: 0; color: var(--weak); cursor: pointer; padding: 2px 6px; opacity: 0; }
 .lyr-row:hover .lyr-del { opacity: 1; }
+/* Ausgabe-Menü: belegte Ausgänge (anderer Tab/Handy) – antippen, dann „Übernehmen“ gedrückt halten */
+.out-pop .option.busy small { color: var(--ink); opacity: 0.75; }
+.out-pop .option.armed { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

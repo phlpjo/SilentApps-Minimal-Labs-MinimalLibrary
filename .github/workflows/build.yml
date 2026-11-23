@@ -207,7 +207,7 @@ jobs:
           retention-days: 30
 
   release:
-    needs: [windows, macos, licenses, pioneer]
+    needs: [windows, macos, licenses, pioneer, dsm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -249,7 +249,7 @@ jobs:
           gh release create "v$VERSION" -R "$REPO" --target "$GITHUB_SHA" --title "Minimal Library $VERSION" \
             --notes "$(printf '%s' "$NOTES" | head -n 1)" \
             "$win" "$win.sig" "MinimalLibrary_${VERSION}_x64.msi" "MinimalLibrary_${VERSION}_portable.exe" \
-            "MinimalLibrary_${VERSION}_universal.dmg" "$mac" "$mac.sig" latest.json
+            "MinimalLibrary_${VERSION}_universal.dmg" "$mac" "$mac.sig" latest.json "MinimalLibrary-${VERSION}.spk"
 
       - name: Auf die Website hochladen (als neue Version, noch nicht aktiv)
         if: steps.key.outputs.site == '1'

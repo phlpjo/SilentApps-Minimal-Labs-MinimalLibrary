@@ -1,3 +1,4 @@
+import { IS_WEB } from "./platform";
 // Tabs: jede Registerkarte ist eine eigene, komplette Instanz (eigenes Fenster, eigene Bibliothek).
 // Jeder Tab ist eine eigene Wiedergabe; mehrere laufen parallel, solange sie verschiedene Ausgänge nutzen.
 import { emit, emitTo, listen } from "@tauri-apps/api/event";
@@ -142,7 +143,7 @@ function render() {
       });
       return el;
     }),
-    h("button", { class: "tab-add", title: L("Neuer Tab – eine zweite, leere Bibliothek"), onclick: () => api.tabCreate().catch((e) => toast(String(e))) }, "+"),
+    IS_WEB ? "" : h("button", { class: "tab-add", title: L("Neuer Tab – eine zweite, leere Bibliothek"), onclick: () => api.tabCreate().catch((e) => toast(String(e))) }, "+"),
   );
 }
 

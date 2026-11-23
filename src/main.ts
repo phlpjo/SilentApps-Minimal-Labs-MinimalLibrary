@@ -1,7 +1,7 @@
 import { lyricsPanelOpen, toggleLyricsPanel } from "./lyrics";
 import { isStarred, toggleStar } from "./star";
 import "./style.css";
-import { IS_MAC } from "./platform";
+import { IS_MAC, THIS_DEVICE } from "./platform";
 import { applyTheme, isLight } from "./theme";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -664,7 +664,7 @@ function buildPlayer() {
   vol.addEventListener("input", () => player.setVolume(Number(vol.value)));
   const shuffleBtn = h("button", { class: "ibtn", title: L("Zufallswiedergabe"), onclick: () => player.setShuffle(!player.shuffle) }, icon("shuffle"));
   const repeatBtn = h("button", { class: "ibtn", onclick: () => player.cycleRepeat() }, icon("repeat"));
-  const devBtn = h("button", { class: "btn dev", title: L("Ausgabegerät: dieser PC oder Lautsprecher im Heimnetz") }, L("Dieser PC"));
+  const devBtn = h("button", { class: "btn dev", title: L("Ausgabegerät: dieser PC oder Lautsprecher im Heimnetz") }, THIS_DEVICE());
   devBtn.addEventListener("click", () => outputPopup(devBtn));
   // Lautstärke: größere Fläche, Mausrad = ±5 %
   const volBox = h("div", { class: "vol-box", title: L("Lautstärke (Mausrad)") }, vol);

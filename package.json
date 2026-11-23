@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:web": "tsc --noEmit && vite build --mode web && mv dist-web/web.html dist-web/index.html",
     "tauri": "tauri"
   },
   "dependencies": {

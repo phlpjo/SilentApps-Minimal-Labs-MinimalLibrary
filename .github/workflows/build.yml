@@ -158,6 +158,53 @@ jobs:
           path: out/*
           retention-days: 30
 
+  dsm:
+    name: Synology DSM 7.2 (.spk für Intel/AMD + ARM64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Oberfläche für den Browser
+        run: npm run build:web
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: dsm
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - name: Server bauen (statisch, musl)
+        run: |
+          cross build --release -p mlserver --target x86_64-unknown-linux-musl
+          cross build --release -p mlserver --target aarch64-unknown-linux-musl
+      - name: "Kurztest Intel/AMD – startet, Anmeldung, Befehl"
+        run: |
+          mkdir -p "$RUNNER_TEMP/nas/music" "$RUNNER_TEMP/nas/data"
+          ML_DATA="$RUNNER_TEMP/nas/data" ML_MUSIC="$RUNNER_TEMP/nas/music" ML_WEB="$PWD/dist-web" \
+            target/x86_64-unknown-linux-musl/release/minimal-library-server & sleep 3
+          curl -sf localhost:8642/api/auth
+          curl -sf -c c.txt -X POST localhost:8642/api/login -d '{"password":"testtest"}'
+          curl -sf -b c.txt -X POST localhost:8642/api/invoke/get_settings -d '{}' | head -c 200
+          curl -sf localhost:8642/ | grep -q "Minimal Library"
+          kill %1 || true
+      - name: Paket packen
+        run: |
+          ./server/dsm/build-spk.sh "$VERSION" \
+            target/x86_64-unknown-linux-musl/release/minimal-library-server \
+            target/aarch64-unknown-linux-musl/release/minimal-library-server \
+            dist-web out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MinimalLibrary-Synology-${{ github.run_number }}
+          path: out/*.spk
+          retention-days: 30
+
   release:
     needs: [windows, macos, licenses, pioneer]
     runs-on: ubuntu-latest

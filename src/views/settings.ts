@@ -1,3 +1,4 @@
+import { IS_WEB } from "../platform";
 import { setStarMode, starMode, type StarMode } from "../stars";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -56,12 +57,13 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
 
     const tray = h("input", { type: "checkbox", checked: s.closeToTray !== false });
     tray.addEventListener("change", () => store.saveSettings({ closeToTray: tray.checked }));
-    const theme = h("select", {}, ...([["system", IS_MAC ? L("Wie macOS") : L("Wie Windows")], ["dark", L("Dunkel")], ["light", L("Hell")]] as const).map(([v, l]) => h("option", { value: v, selected: themeMode() === v }, l)));
+    const theme = h("select", {}, ...([["system", IS_WEB ? L("Wie System") : IS_MAC ? L("Wie macOS") : L("Wie Windows")], ["dark", L("Dunkel")], ["light", L("Hell")]] as const).map(([v, l]) => h("option", { value: v, selected: themeMode() === v }, l)));
     theme.addEventListener("change", () => applyTheme(theme.value as ThemeMode));
     const lang = h("select", {}, ...([["system", L("Wie System")], ["de", "Deutsch"], ["en", "English"]] as const).map(([v, l]) => h("option", { value: v, selected: langMode() === v }, l)));
     lang.addEventListener("change", () => setLangMode(lang.value as LangMode));
     body.append(
       licenseCard(),
+      IS_WEB ? nasCard() : "",
       h("div", { class: "card" }, h("h3", {}, L("Darstellung")), h("div", { class: "setting" }, h("span", {}, L("Farbschema")), theme),
         h("div", { class: "setting" }, h("span", {}, L("Sprache")), lang),
         h("div", { class: "setting" }, h("span", {}, L("Sternenhimmel hinter den Listen")), (() => {
@@ -69,7 +71,7 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
           sel.addEventListener("change", () => setStarMode(sel.value as StarMode));
           return sel;
         })()),
-        h("div", { class: "setting" }, h("label", { class: "check" }, tray, L("Schließen (X) legt die App in den Infobereich – Musik läuft weiter")), h("button", { class: "btn", onclick: () => api.quit() }, L("Jetzt beenden"))),
+        IS_WEB ? "" : h("div", { class: "setting" }, h("label", { class: "check" }, tray, L("Schließen (X) legt die App in den Infobereich – Musik läuft weiter")), h("button", { class: "btn", onclick: () => api.quit() }, L("Jetzt beenden"))),
         h("div", { class: "note" }, L("Der Schalter oben links wechselt direkt zwischen Hell und Dunkel."))),
       h("div", { class: "card" }, h("h3", {}, L("Musikordner")), roots,
         h("div", { class: "line" },
@@ -217,7 +219,7 @@ function phoneCard() {
             own ? h("button", { class: "btn", onclick: () => setDir(null) }, L("Standard")) : "",
             (() => {
               // Geteilter Haushalt: Handy darf die Wiedergaben hier steuern oder nur sehen, was läuft
-              const c = h("input", { type: "checkbox", checked: !i.view_only.includes(n) }) as HTMLInputElement;
+              const c = h("input", { type: "checkbox", checked: !(i.viewOnly ?? []).includes(n) }) as HTMLInputElement;
               c.addEventListener("change", () => api.remoteAllowControl(n, c.checked).catch((e) => toast(String(e))));
               return h("label", { class: "check", title: L("Aus: das Handy sieht nur, was hier läuft") }, c, L("darf steuern"));
             })(),
@@ -236,7 +238,7 @@ function phoneCard() {
   fill();
   // Name dieses PCs – so heißt er am Handy und im Ausgabe-Menü
   const nameIn = h("input", { type: "text", placeholder: "", style: { width: "220px" } }) as HTMLInputElement;
-  api.remoteInfo().then((i) => { nameIn.value = i.own_name; nameIn.placeholder = i.name; }).catch(() => {});
+  api.remoteInfo().then((i) => { nameIn.value = i.ownName ?? ""; nameIn.placeholder = i.name; }).catch(() => {});
   let nameT = 0;
   nameIn.addEventListener("input", () => { clearTimeout(nameT); nameT = window.setTimeout(() => api.pcNameSet(nameIn.value).catch(() => {}), 500); });
   // Code wechselt nach dem Koppeln → beim Offenhalten der Einstellungen nachziehen
@@ -267,5 +269,22 @@ function pioneerCard() {
       L("im Inspektor lassen sich Grid und Cues korrigieren, Playlisten kommen per Rechtsklick „Für Pioneer-Player exportieren …“ auf den Stick. "),
       L("Dazu gibt es einen rekordbox-XML-Export. Alles andere in der App bleibt unverändert.")),
     on ? h("div", { class: "line" }, h("button", { class: "btn", onclick: () => analyzeIds(null) }, L("Fehlende Pioneer-Analysen nachholen"))) : "",
+  );
+}
+
+/** NAS (Synology): Anmeldung im Browser – Passwort ändern, abmelden */
+function nasCard() {
+  const old = h("input", { type: "password", placeholder: L("Altes Passwort"), autocomplete: "current-password" }) as HTMLInputElement;
+  const neu = h("input", { type: "password", placeholder: L("Neues Passwort"), autocomplete: "new-password" }) as HTMLInputElement;
+  const change = async () => {
+    const r = await fetch("/api/password", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ old: old.value, new: neu.value }) });
+    const b = await r.json().catch(() => ({}));
+    toast(r.ok ? L("Passwort geändert") : b.error ?? L("Ging nicht"));
+    if (r.ok) { old.value = ""; neu.value = ""; }
+  };
+  return h("div", { class: "card" }, h("h3", {}, L("Synology NAS")),
+    h("div", { class: "note" }, L("Minimal Library läuft auf deinem NAS. Musikordner wählst du aus den Freigaben – das Paket braucht dafür Lese-/Schreibrechte (Systemsteuerung → Gemeinsamer Ordner → Berechtigungen → Systeminterner Benutzer „MinimalLibrary“).")),
+    h("div", { class: "setting" }, h("span", {}, L("Passwort ändern")), h("span", { style: { display: "flex", gap: "8px" } }, old, neu, h("button", { class: "btn", onclick: change }, L("Ändern")))),
+    h("div", { class: "setting" }, h("span", {}, L("Abmelden (dieser Browser)")), h("button", { class: "btn", onclick: async () => { await fetch("/api/logout", { credentials: "same-origin" }); location.reload(); } }, L("Abmelden"))),
   );
 }

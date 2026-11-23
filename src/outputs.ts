@@ -7,7 +7,7 @@ import { store } from "./store";
 import { h, toast } from "./ui";
 import { icon } from "./icons";
 import { L } from "./i18n";
-import { IS_MAC } from "./platform";
+import { IS_MAC, THIS_DEVICE } from "./platform";
 import { MY_SESSION, busyBy, house, outNameOf, sessionCmd, takeOver, whoOf, type House, type Session } from "./remotectl";
 
 export interface LocalOut { id: string; label: string }
@@ -165,8 +165,8 @@ export async function restoreOutput() {
 
 export function currentOutputLabel(): string {
   if (player.device) return player.device.name;
-  if (player.localSink === "default") return L("Dieser PC");
-  return localCache?.find((o) => o.id === player.localSink)?.label ?? L("Dieser PC");
+  if (player.localSink === "default") return THIS_DEVICE();
+  return localCache?.find((o) => o.id === player.localSink)?.label ?? THIS_DEVICE();
 }
 
 /**
@@ -218,7 +218,7 @@ export function outputPopup(anchor: HTMLElement) {
       h("div", { class: "out-head" }, h("span", {}, L("Abspielen auf")),
         h("button", { class: "ibtn" + (isSearching() ? " spin" : ""), title: L("Lautsprecher neu suchen"), onclick: (e: Event) => { e.stopPropagation(); discoverIfStale(true); } }, icon("refresh", 15))),
       ...locals.map((o) => row("local:" + o.id, o.id === "default" ? "laptop" : /kopfh|headph|airpod|buds/i.test(o.label) ? "headphones" : "speaker",
-        o.id === "default" ? L("Dieser PC") : o.label, !player.device && player.localSink === o.id, () => selectLocal(o.id))),
+        o.id === "default" ? THIS_DEVICE() : o.label, !player.device && player.localSink === o.id, () => selectLocal(o.id))),
       ...cache.map((d) => row(d.id, "speaker", d.name, player.device?.id === d.id, () => selectCast(d), !isFound(d.id) && isSearching())),
       !cache.length && isSearching() ? h("div", { class: "out-note" }, L("Suche Lautsprecher …")) : "",
       ...(busyOthers.length

@@ -1,3 +1,4 @@
+import { THIS_DEVICE } from "./platform";
 // Wiedergaben im ganzen Haus: jeder Tab dieses PCs und jedes gekoppelte Handy ist eine eigene Wiedergabe.
 // Jede meldet, was sie wo spielt; jede kann (mit Erlaubnis) die anderen steuern.
 import { invoke } from "@tauri-apps/api/core";
@@ -49,7 +50,7 @@ async function report() {
   if (!t && MY_TAB !== audioOwner() && MY_TAB !== "main") return;
   const locals = await localOutputs();
   const outputs = [
-    ...locals.map((o) => ({ id: "local:" + o.id, name: o.id === "default" ? L("Dieser PC") : o.label, kind: "pc" })),
+    ...locals.map((o) => ({ id: "local:" + o.id, name: o.id === "default" ? THIS_DEVICE() : o.label, kind: "pc" })),
     ...cachedDevices().map((d) => ({ id: d.id, name: d.name, kind: d.kind })),
   ];
   const st = {

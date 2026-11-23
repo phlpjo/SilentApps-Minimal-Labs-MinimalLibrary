@@ -1,0 +1,52 @@
+#!/bin/sh
+# Minimal Library für Synology DSM 7.2 – Server starten/stoppen
+PKG="MinimalLibrary"
+DIR="/var/packages/$PKG/target"
+VAR="${SYNOPKG_PKGVAR:-/var/packages/$PKG/var}"
+PID="$VAR/server.pid"
+LOG="$VAR/server.log"
+case "$(uname -m)" in
+  aarch64|arm64|armv8*) BIN="$DIR/bin/minimal-library-server-aarch64" ;;
+  *) BIN="$DIR/bin/minimal-library-server-x86_64" ;;
+esac
+
+running() {
+  [ -f "$PID" ] && kill -0 "$(cat "$PID")" 2>/dev/null
+}
+
+case "$1" in
+  start)
+    running && exit 0
+    mkdir -p "$VAR"
+    # Log klein halten
+    [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 2000000 ] && mv "$LOG" "$LOG.1"
+    cd "$VAR" || exit 1
+    HOME="$VAR" XDG_DATA_HOME="$VAR/share" ML_DATA="$VAR" ML_WEB="$DIR/web" \
+      nohup "$BIN" >> "$LOG" 2>&1 &
+    echo $! > "$PID"
+    sleep 1
+    running || exit 1
+    exit 0
+    ;;
+  stop)
+    if running; then
+      kill "$(cat "$PID")" 2>/dev/null
+      i=0
+      while running && [ $i -lt 10 ]; do sleep 1; i=$((i + 1)); done
+      running && kill -9 "$(cat "$PID")" 2>/dev/null
+    fi
+    rm -f "$PID"
+    exit 0
+    ;;
+  status)
+    running && exit 0
+    exit 3
+    ;;
+  log)
+    echo "$LOG"
+    exit 0
+    ;;
+  *)
+    exit 1
+    ;;
+esac

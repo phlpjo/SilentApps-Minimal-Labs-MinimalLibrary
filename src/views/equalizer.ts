@@ -6,7 +6,7 @@ import { player } from "../player";
 import { store } from "../store";
 import { clear, h, toast } from "../ui";
 import { busyBy, house, takeOver, whoOf } from "../remotectl";
-import { IS_MAC, OS } from "../platform";
+import { IS_MAC, OS, THIS_DEVICE } from "../platform";
 import { L } from "../i18n";
 
 export function equalizerView(): { el: HTMLElement; destroy: () => void } {
@@ -39,7 +39,7 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
         action);
     };
     outBox.append(
-      h("div", { class: "out-group" }, h("h3", {}, L("Dieser PC")),
+      h("div", { class: "out-group" }, h("h3", {}, THIS_DEVICE()),
         ...locals.map((o) => item(o.id === "default" ? L("Standard-Ausgabe") : o.label, (o.id === "default" ? L("wie in {0} eingestellt", OS) : L("Soundkarte")), !editing.cast && editing.sink === o.id, () => pick({ cast: null, sink: o.id }), false, true, () => selectLocal(o.id), o.id)),
         locals.length < 2 && IS_MAC ? h("div", { class: "note", style: { marginTop: "6px" } }, L("Weitere Ausgänge (Kopfhörer, USB, AirPlay) wählst du in den macOS-Einstellungen unter Ton.")) : "",
         labelsHidden() ? h("div", { class: "note", style: { marginTop: "6px" } }, L("Gerätenamen verborgen – "),

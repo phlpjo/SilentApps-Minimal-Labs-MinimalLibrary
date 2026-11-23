@@ -1,0 +1,16 @@
+{
+  ".url": {
+    "SYNO.SDS._ThirdParty.App.MinimalLibrary": {
+      "type": "url",
+      "allUsers": true,
+      "title": "Minimal Library",
+      "desc": "Musikbibliothek",
+      "icon": "images/icon_{0}.png",
+      "protocol": "http",
+      "port": "8642",
+      "url": "/",
+      "grantPrivilege": "all",
+      "advanceGrantPrivilege": true
+    }
+  }
+}

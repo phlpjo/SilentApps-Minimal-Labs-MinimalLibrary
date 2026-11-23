@@ -175,6 +175,47 @@ pub fn install(tools: &Path, progress: Progress) -> Result<ToolStatus> {
         }
         return Ok(status(tools));
     }
+    // Linux (z. B. Synology NAS): eigenständige Programme von den Projektseiten
+    #[cfg(target_os = "linux")]
+    {
+        let arm = cfg!(target_arch = "aarch64");
+        if find(tools, YTDLP).is_none() {
+            let url = if arm {
+                "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64"
+            } else {
+                "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
+            };
+            let data = download(url, progress, "yt-dlp")?;
+            let p = tools.join(YTDLP);
+            std::fs::write(&p, data)?;
+            make_executable(&p)?;
+        }
+        if find(tools, FFMPEG).is_none() {
+            let url = format!(
+                "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-{}-gpl.tar.xz",
+                if arm { "linuxarm64" } else { "linux64" }
+            );
+            let data = download(&url, progress, "ffmpeg")?;
+            let mut tar_data = Vec::new();
+            lzma_rs::xz_decompress(&mut std::io::BufReader::new(std::io::Cursor::new(data)), &mut tar_data)
+                .map_err(|e| anyhow::anyhow!("ffmpeg-Archiv: {e:?}"))?;
+            let mut ar = tar::Archive::new(std::io::Cursor::new(tar_data));
+            for e in ar.entries()? {
+                let mut e = e?;
+                let name = e.path()?.to_string_lossy().to_string();
+                let file = name.rsplit('/').next().unwrap_or("").to_string();
+                if name.contains("/bin/") && (file == "ffmpeg" || file == "ffprobe") {
+                    let mut out = Vec::new();
+                    e.read_to_end(&mut out)?;
+                    let p = tools.join(&file);
+                    std::fs::write(&p, out)?;
+                    make_executable(&p)?;
+                }
+            }
+        }
+        return Ok(status(tools));
+    }
+    #[allow(unreachable_code)]
     if !cfg!(windows) {
         let st = status(tools);
         if st.ytdlp.is_none() || !st.ffmpeg {

@@ -235,12 +235,13 @@ jobs:
             n=$(ls parts | wc -l)
             i=0
             for part in $(ls parts | sort); do
-              for try in 1 2 3 4; do
+              # Der Server lässt Verbindungen ab und zu kurz nicht zu – geduldig wiederholen
+              for try in 1 2 3 4 5 6 7 8; do
                 code=$(curl -4 -sS --connect-timeout 20 --max-time 300 -o /tmp/r.txt -w '%{http_code}' -X POST "$api/chunk" -H "$auth" \
                   -H "X-Version: $VERSION" -H "X-File: $name" -H "X-Chunk: $i" -H "X-Chunks: $n" \
                   -H "Content-Type: application/octet-stream" --data-binary "@parts/$part") || code=000
                 [ "$code" = "200" ] && break
-                echo "Teil $i von $name: HTTP $code – $(head -c 300 /tmp/r.txt)"; sleep $((try * 5))
+                echo "Teil $i von $name: HTTP $code – $(head -c 300 /tmp/r.txt)"; rm -f /tmp/r.txt; sleep $(( try * 10 > 60 ? 60 : try * 10 ))
               done
               [ "$code" = "200" ] || exit 1
               i=$((i + 1))

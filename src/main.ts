@@ -22,6 +22,7 @@ import { syncView, startSyncWatch, syncReadyCount } from "./views/sync";
 import { equalizerView } from "./views/equalizer";
 import { searchView } from "./views/search";
 import { startUpdater, updater } from "./updater";
+import { loadLicense, requireLicense, unlocked, type Feature } from "./license";
 import { icon, navIcon } from "./icons";
 import { MY_TAB, audioOwner, reportPlaying, tabStrip } from "./tabs";
 import { pioneerExportDialog, pioneerOn, xmlDialog } from "./pioneer";
@@ -150,6 +151,8 @@ export function goBack() {
 }
 
 export function nav(name: ViewName, arg?: number[], path?: string, fromBack = false) {
+  const gate = GATED[name];
+  if (gate && !requireLicense(gate)) return;
   if (current && !fromBack && !(current.name === name && JSON.stringify(current.arg ?? null) === JSON.stringify(arg ?? null) && !path)) recordNav();
   current?.destroy();
   clear(main);
@@ -233,11 +236,15 @@ function springLoaded(el: HTMLElement, view: ViewName) {
   return el;
 }
 
-function navItem(ico: string, label: string, active: boolean, onclick: (e: MouseEvent) => void, count?: string) {
-  return h("div", { class: "nav-item" + (active ? " active" : ""), title: label, onclick },
+function navItem(ico: string, label: string, active: boolean, onclick: (e: MouseEvent) => void, count?: string, locked = false) {
+  return h("div", { class: "nav-item" + (active ? " active" : "") + (locked ? " locked" : ""), title: locked ? label + " · " + L("Vollversion") : label, onclick },
     h("span", { class: "ni" }, navIcon(ico), h("span", { class: "nl" }, label)),
-    count ? h("span", { class: "count" }, count) : null);
+    locked ? h("span", { class: "count lock" }, icon("lock", 12)) : count ? h("span", { class: "count" }, count) : null);
 }
+
+/** Ansichten der Vollversion (nach der Testphase gesperrt) */
+const GATED: Partial<Record<ViewName, Feature>> = { search: "search", sync: "sync", ripper: "ripper", organize: "organize" };
+const isLocked = (v: ViewName) => !!GATED[v] && !unlocked();
 
 // ---------- Seitenleisten ein-/ausklappen ----------
 const SIDE_KEY = "ml.sideClosed";
@@ -372,12 +379,12 @@ function renderSide() {
   const mainnav = side.querySelector("#mainnav")!;
   mainnav.replaceChildren(
     navItem("library", L("Bibliothek"), n === "library", () => nav("library"), store.tracks.size.toLocaleString(LOCALE)),
-    navItem("search", L("Erweiterte Suche"), n === "search", () => nav("search")),
+    navItem("search", L("Erweiterte Suche"), n === "search", () => nav("search"), undefined, isLocked("search")),
     springLoaded(navItem("folders", L("Ordner"), n === "folders", () => nav("folders")), "folders"),
-    navItem("sync", "Sync", n === "sync", () => nav("sync"), syncBadge()),
+    navItem("sync", "Sync", n === "sync", () => nav("sync"), syncBadge(), isLocked("sync")),
     navItem("equalizer", "Equalizer", n === "equalizer", () => nav("equalizer")),
-    navItem("ripper", "Ripper", n === "ripper", () => nav("ripper")),
-    navItem("organize", L("Sortieren"), n === "organize", () => nav("organize", n === "library" ? [...store.selection] : undefined)),
+    navItem("ripper", "Ripper", n === "ripper", () => nav("ripper"), undefined, isLocked("ripper")),
+    navItem("organize", L("Sortieren"), n === "organize", () => nav("organize", n === "library" ? [...store.selection] : undefined), undefined, isLocked("organize")),
     navItem("duplicates", L("Duplikate"), n === "duplicates", () => nav("duplicates")),
     navItem("history", L("Verlauf"), n === "history", () => nav("history")),
     navItem("settings", L("Einstellungen"), n === "settings", () => nav("settings"), updater.state === "available" ? L("● Update") : undefined),
@@ -755,6 +762,8 @@ store.on("tracks", renderSide);
 
 async function start() {
   buildPlayer();
+  await loadLicense();
+  store.on("license", () => renderSide());
   await store.loadSettings();
   await store.loadTracks();
   await store.loadPlaylists();

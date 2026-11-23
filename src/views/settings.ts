@@ -8,6 +8,7 @@ import { applyTheme, themeMode, type ThemeMode } from "../theme";
 import { IS_MAC, FILE_MANAGER } from "../platform";
 import { autoInstall, checkUpdate, installUpdate, updater } from "../updater";
 import { L, trMsg, langMode, setLangMode, type LangMode } from "../i18n";
+import { BUY_URL, FEATURE_NAME, license, licenseSheet, setLicense, unlocked, type Feature } from "../license";
 
 export function settingsView(): { el: HTMLElement; destroy: () => void } {
   const body = h("div", { class: "view-scroll" });
@@ -59,6 +60,7 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
     const lang = h("select", {}, ...([["system", L("Wie System")], ["de", "Deutsch"], ["en", "English"]] as const).map(([v, l]) => h("option", { value: v, selected: langMode() === v }, l)));
     lang.addEventListener("change", () => setLangMode(lang.value as LangMode));
     body.append(
+      licenseCard(),
       h("div", { class: "card" }, h("h3", {}, L("Darstellung")), h("div", { class: "setting" }, h("span", {}, L("Farbschema")), theme),
         h("div", { class: "setting" }, h("span", {}, L("Sprache")), lang),
         h("div", { class: "setting" }, h("label", { class: "check" }, tray, L("Schließen (X) legt die App in den Infobereich – Musik läuft weiter")), h("button", { class: "btn", onclick: () => api.quit() }, L("Jetzt beenden"))),
@@ -141,10 +143,50 @@ function updateCard(version: string) {
 }
 
 /** Minimal Player Connected: Bibliothek im WLAN freigeben (wie Spotify aufs Handy) */
+/** Lizenz: Testphase / lizenziert / abgelaufen, Schlüssel eintragen, Kauf-Link */
+function licenseCard() {
+  const box = h("div", {});
+  const fill = () => {
+    const l = license;
+    const status =
+      l.state === "licensed" ? L("Lizenziert für {0}", l.name || "–") + (l.kind === "free" ? L(" (geschenkt)") : "")
+      : l.state === "trial" ? L("Testphase: noch {0} Tage – alle Funktionen frei", l.daysLeft)
+      : l.state === "revoked" ? L("Dieser Schlüssel wurde gesperrt.")
+      : L("Testphase vorbei – die Funktionen der Vollversion sind gesperrt.");
+    const input = h("input", { type: "text", placeholder: "MLIB-…", style: { flex: "1", minWidth: "220px", fontFamily: "var(--mono)", fontSize: "12px" } }) as HTMLInputElement;
+    const msg = h("div", { class: "note" });
+    box.replaceChildren(
+      h("div", { class: "setting" }, h("span", {}, h("b", {}, status), l.email ? h("div", { class: "note" }, l.email) : ""),
+        l.state === "licensed" ? holdButton(L("Lizenz entfernen"), async () => { await api.licenseRemove().then((s) => { setLicense(s); }).catch((e) => toast(String(e))); }, L("halten")) : ""),
+      l.state !== "licensed"
+        ? h("div", { class: "setting", style: { gap: "8px", flexWrap: "wrap" } }, input,
+            h("button", { class: "btn primary", onclick: async () => {
+              try { setLicense(await api.licenseActivate(input.value)); } catch (e) { msg.textContent = trMsg(String(e)); }
+            } }, L("Freischalten")))
+        : "",
+      msg,
+      h("div", { class: "setting" },
+        h("span", { class: "note" }, L("Vollversion: {0}. Alles andere bleibt kostenlos.", (["connect", "organize", "smart", "search", "sync", "ripper"] as Feature[]).map((f) => FEATURE_NAME[f]()).join(", "))),
+        l.state !== "licensed" ? h("button", { class: "btn", onclick: () => openUrl(BUY_URL()).catch(() => {}) }, L("Lizenz kaufen …")) : ""),
+    );
+  };
+  fill();
+  const off = store.on("license", fill);
+  const card = h("div", { class: "card" }, h("h3", {}, L("Lizenz")), box);
+  // beim Verlassen der Einstellungen abmelden
+  const t = window.setInterval(() => { if (!document.body.contains(card)) { off(); clearInterval(t); } }, 5000);
+  return card;
+}
+
 function phoneCard() {
   const box = h("input", { type: "checkbox", checked: !store.settings.remoteOff }) as HTMLInputElement;
   const body = h("div", {});
   const fill = async () => {
+    if (!unlocked()) {
+      box.disabled = true;
+      return body.replaceChildren(h("div", { class: "setting" }, h("span", { class: "note" }, L("Gehört zur Vollversion – die Testphase ist vorbei.")), h("button", { class: "btn", onclick: () => licenseSheet("connect") }, L("Freischalten …"))));
+    }
+    box.disabled = false;
     if (!box.checked) return body.replaceChildren();
     const i = await api.remoteInfo().catch(() => null);
     if (!i) return;
@@ -200,7 +242,7 @@ function pioneerCard() {
       analyzeIds(null);
     }
   });
-  return h("div", { class: "card" }, h("h3", {}, L("Export für Pioneer DJ / AlphaTheta-Player (OneLibrary)")),
+  return h("div", { class: "card" }, h("h3", {}, L("Export für Pioneer DJ / AlphaTheta-Player (OneLibrary)"), h("span", { class: "chip-exp" }, L("experimentell"))),
     h("div", { class: "setting" }, h("label", { class: "check" }, box, L("Einschalten")), h("span", {})),
     h("div", { class: "note" },
       L("Für CDJ-3000, CDJ-3000X, XDJ-AZ, OPUS-QUAD, OMNIS-DUO und weitere OneLibrary-Geräte. Eingeschaltet berechnet die Analyse zusätzlich Beatgrid und die Wellenformen der Player; "),

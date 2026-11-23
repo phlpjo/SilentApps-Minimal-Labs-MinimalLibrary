@@ -7,6 +7,7 @@ import { clear, fmtDuration, fmtSize, h, holdButton, reportErrors, sheet, toast 
 import { nav } from "../main";
 import { trackMenu } from "./library";
 import { pioneerExportDialog, pioneerOn } from "../pioneer";
+import { requireLicense } from "../license";
 import { L, pl, shown } from "../i18n";
 
 export function playlistView(id: number): { el: HTMLElement; destroy: () => void } {
@@ -141,6 +142,7 @@ export function renderRuleRows(box: HTMLElement, list: Rule[], onChange: () => v
 }
 
 export function smartEditor(p?: Playlist) {
+  if (!requireLicense("smart")) return;
   const rules: SmartRules = p?.rules ? structuredClone(p.rules) : { all: true, rules: [{ field: "genre", op: "contains", value: "", value2: "" }], sort: "artist", desc: false, limit: null };
   const name = h("input", { type: "text", value: p?.name ?? "Neue smarte Playlist", style: { width: "100%" } });
   const allSel = h("select", {}, h("option", { value: "1", selected: rules.all }, L("alle Regeln")), h("option", { value: "0", selected: !rules.all }, L("mindestens eine Regel")));

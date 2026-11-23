@@ -102,6 +102,7 @@ export interface Candidate {
 export interface DirEntry { name: string; path: string; hasChildren: boolean; tracks: number }
 
 export interface CastDevice { id: string; name: string; kind: "sonos" | "dlna"; model: string }
+export interface LicenseStatus { state: "trial" | "licensed" | "expired" | "revoked"; daysLeft: number; name: string; email: string; kind: string; trialStart: number }
 export interface CastStatus { state: string; position: number; duration: number; volume: number; track: string }
 
 export interface ToolStatus { ytdlp: string | null; ffmpeg: boolean; dir: string }
@@ -131,6 +132,9 @@ export const api = {
   analyze: (ids: number[] | null, explicit = false) => invoke<number>("analyze", { ids, explicit }),
   analyzeQuiet: (ids: number[]) => invoke<number>("analyze_quiet", { ids }),
   setLang: (lang: string) => invoke<void>("set_lang", { lang }),
+  licenseStatus: () => invoke<LicenseStatus>("license_status"),
+  licenseActivate: (key: string) => invoke<LicenseStatus>("license_activate", { key }),
+  licenseRemove: () => invoke<LicenseStatus>("license_remove"),
   onDemandRoots: () => invoke<string[]>("on_demand_roots"),
   cancel: () => invoke<void>("cancel_task"),
   removeFromLibrary: (ids: number[]) => invoke<void>("remove_from_library", { ids }),

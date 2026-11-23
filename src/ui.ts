@@ -75,7 +75,11 @@ export function ext(p: string): string {
 
 // ---------- Toast ----------
 let toastBox: HTMLElement | null = null;
+/** Wird von license.ts gesetzt: Meldung „LICENSE:…“ öffnet den Lizenz-Hinweis */
+export const toastHooks: { license?: (msg: string) => boolean } = {};
+
 export function toast(msg: string, ms = 3500) {
+  if (toastHooks.license?.(msg)) return;
   if (!toastBox) {
     toastBox = h("div", { class: "toasts" });
     document.body.appendChild(toastBox);

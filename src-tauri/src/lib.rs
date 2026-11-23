@@ -1,7 +1,7 @@
 use base64::Engine;
 use musiccore::{
-    acoustid, analysis, cast, db, dirs, duplicates, export, history, musicbrainz, organize,
-    pioneer, playlists, remote, ripper, scanner, sync, tags, watch,
+    acoustid, analysis, cast, db, dirs, duplicates, export, history, license, musicbrainz,
+    organize, pioneer, playlists, remote, ripper, scanner, sync, tags, watch,
 };
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -528,7 +528,8 @@ fn start_remote(app: &AppHandle, main: &AppState) {
                 roots: s.roots,
                 pattern: s.pattern,
                 organize_target: s.organize_target,
-                enabled: !s.remote_off,
+                // Handy-Verbindung gehört zur Vollversion
+                enabled: !s.remote_off && musiccore::license::unlocked(),
                 phone_dir: s
                     .phone_dir
                     .filter(|d| !d.is_empty())
@@ -621,6 +622,174 @@ async fn remote_info(app: AppHandle) -> R<RemoteInfo> {
 async fn remote_unpair(app: AppHandle, name: String) -> R<()> {
     let st = tab_state(&app, "main").map_err(err)?;
     remote::unpair(&st.db.lock().unwrap(), &name).map_err(err)
+}
+
+// ---------- Lizenz ----------
+
+/// Zweiter Speicherort für den Beginn der Testphase (überlebt Neuinstallation der App-Daten)
+fn trial_file(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .home_dir()
+        .ok()
+        .map(|h| h.join(".minimal-library"))
+}
+
+fn license_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Lizenzzustand berechnen (Testbeginn an zwei Stellen gemerkt, der frühere zählt)
+fn license_compute(app: &AppHandle) -> anyhow::Result<license::Status> {
+    let st = tab_state(app, "main")?;
+    let c = st.db.lock().unwrap();
+    let from_db = db::get_setting(&c, "first_start")?.and_then(|v| v.parse::<i64>().ok());
+    let file = trial_file(app);
+    let from_file = file
+        .as_ref()
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|s| s.lines().next().and_then(|l| l.trim().parse::<i64>().ok()));
+    let start = [from_db, from_file]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or_else(license_now);
+    if from_db != Some(start) {
+        db::set_setting(&c, "first_start", &start.to_string())?;
+    }
+    if from_file != Some(start)
+        && let Some(f) = &file
+    {
+        let _ = std::fs::write(f, format!("{start}\n"));
+    }
+    let key = db::get_setting(&c, "license_key")?;
+    let revoked: Vec<String> = db::get_setting(&c, "revoked_ids")?
+        .and_then(|j| serde_json::from_str(&j).ok())
+        .unwrap_or_default();
+    let s = license::status(start, key.as_deref(), &revoked, license_now());
+    license::set_unlocked(s.unlocked());
+    Ok(s)
+}
+
+/// Gesperrte Schlüssel höchstens einmal pro Woche abholen (ohne Internet: alles bleibt, wie es ist)
+fn license_check_revoked(app: &AppHandle) {
+    let Ok(st) = tab_state(app, "main") else {
+        return;
+    };
+    let last = db::get_setting(&st.db.lock().unwrap(), "revoked_checked")
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
+    if license_now() - last < 7 * 86400 {
+        return;
+    }
+    let Ok(list) = license::fetch_revoked() else {
+        return;
+    };
+    let c = st.db.lock().unwrap();
+    let _ = db::set_setting(
+        &c,
+        "revoked_ids",
+        &serde_json::to_string(&list).unwrap_or_default(),
+    );
+    let _ = db::set_setting(&c, "revoked_checked", &license_now().to_string());
+}
+
+/// Ohne Lizenz (nach der Testphase) gesperrte Funktion
+fn need_license(what: &str) -> R<()> {
+    if license::unlocked() {
+        Ok(())
+    } else {
+        Err(format!("LICENSE:{what}"))
+    }
+}
+
+#[tauri::command]
+async fn license_status(app: AppHandle) -> R<license::Status> {
+    blocking(move || license_compute(&app)).await
+}
+
+/// Schlüssel eintragen (aus den Einstellungen oder dem Freischalt-Link)
+#[tauri::command]
+async fn license_activate(app: AppHandle, key: String) -> R<license::Status> {
+    blocking(move || {
+        license::verify(&key)?;
+        {
+            let st = tab_state(&app, "main")?;
+            db::set_setting(&st.db.lock().unwrap(), "license_key", key.trim())?;
+        }
+        let s = license_compute(&app)?;
+        let _ = app.emit("license-changed", &s);
+        Ok(s)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn license_remove(app: AppHandle) -> R<license::Status> {
+    blocking(move || {
+        {
+            let st = tab_state(&app, "main")?;
+            st.db
+                .lock()
+                .unwrap()
+                .execute("DELETE FROM settings WHERE key = 'license_key'", [])?;
+        }
+        let s = license_compute(&app)?;
+        let _ = app.emit("license-changed", &s);
+        Ok(s)
+    })
+    .await
+}
+
+/// minimallibrary://activate?key=… (Link aus der Kauf-E-Mail)
+fn handle_deep_link(app: &AppHandle, url: &str) {
+    let Some(rest) = url.strip_prefix("minimallibrary://") else {
+        return;
+    };
+    let rest = rest.trim_start_matches('/');
+    if !rest.starts_with("activate") {
+        return;
+    }
+    let key = rest
+        .split_once("key=")
+        .map(|(_, k)| k.split('&').next().unwrap_or("").to_string())
+        .unwrap_or_default();
+    // %2B etc. – Schlüssel sind base64url, aber Mailprogramme kodieren gern um
+    let key = key
+        .replace("%2D", "-")
+        .replace("%2d", "-")
+        .replace("%2E", ".")
+        .replace("%2e", ".")
+        .replace("%5F", "_")
+        .replace("%5f", "_");
+    if let Some(w) = app.get_webview_window(&app.state::<Tabs>().active.lock().unwrap().clone()) {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+    let app2 = app.clone();
+    std::thread::spawn(move || {
+        let r = license::verify(&key)
+            .map_err(|e| e.to_string())
+            .and_then(|_| {
+                let st = tab_state(&app2, "main").map_err(|e| e.to_string())?;
+                db::set_setting(&st.db.lock().unwrap(), "license_key", key.trim())
+                    .map_err(|e| e.to_string())?;
+                license_compute(&app2).map_err(|e| e.to_string())
+            });
+        match r {
+            Ok(s) => {
+                let _ = app2.emit("license-changed", &s);
+            }
+            Err(e) => {
+                let _ = app2.emit("license-error", e);
+            }
+        }
+    });
 }
 
 // ---------- Bibliothek ----------
@@ -1450,6 +1619,7 @@ async fn organize_apply(
     copy: bool,
     description: String,
 ) -> R<organize::ApplyReport> {
+    need_license("organize")?;
     let db = state.db.clone();
     let prog = emitter(&app, &state.label, "organize");
     blocking(move || {
@@ -1505,6 +1675,9 @@ async fn playlist_create(
     rules: Option<playlists::SmartRules>,
     ids: Option<Vec<i64>>,
 ) -> R<i64> {
+    if rules.is_some() {
+        need_license("smart")?;
+    }
     let mut c = state.db.lock().unwrap();
     let id = playlists::create(&c, &name, rules.as_ref()).map_err(err)?;
     if let Some(ids) = ids {
@@ -1530,6 +1703,9 @@ async fn playlist_update(
     name: String,
     rules: Option<playlists::SmartRules>,
 ) -> R<()> {
+    if rules.is_some() {
+        need_license("smart")?;
+    }
     let c = state.db.lock().unwrap();
     let old = playlists::name(&c, id).map_err(err)?;
     if old != name {
@@ -2063,6 +2239,7 @@ async fn sync_preview(state: Tab, id: i64) -> R<sync::Preview> {
 
 #[tauri::command]
 async fn sync_run(app: AppHandle, state: Tab, id: i64, force: Option<bool>) -> R<sync::Report> {
+    need_license("sync")?;
     let db = state.db.clone();
     let cancel = state.task();
     let prog = emitter(&app, &state.label, "sync");
@@ -2150,6 +2327,7 @@ async fn rip_download(
     dir: String,
     format: ripper::Format,
 ) -> R<RipReport> {
+    need_license("ripper")?;
     let tools = tools_dir(&app);
     let db = state.db.clone();
     let cancel = state.task();
@@ -2566,6 +2744,16 @@ fn quit_app(app: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Nur ein Programm: ein zweiter Start (z. B. über den Freischalt-Link) holt das laufende Fenster nach vorn
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            let label = app.state::<Tabs>().active.lock().unwrap().clone();
+            if let Some(w) = app.get_webview_window(&label) {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -2593,7 +2781,39 @@ pub fn run() {
                 active: Mutex::new("main".into()),
             });
             let main = tab_state(app.handle(), "main")?;
+            // Lizenz vor dem Start der Handy-Freigabe prüfen; Sperrliste und Ablauf der Testphase im Hintergrund
+            let _ = license_compute(app.handle());
             start_remote(app.handle(), &main);
+            {
+                let h = app.handle().clone();
+                std::thread::spawn(move || {
+                    loop {
+                        license_check_revoked(&h);
+                        let before = musiccore::license::unlocked();
+                        if let Ok(s) = license_compute(&h)
+                            && s.unlocked() != before
+                        {
+                            let _ = h.emit("license-changed", &s);
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(3600));
+                    }
+                });
+            }
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let h = app.handle().clone();
+                app.deep_link().on_open_url(move |e| {
+                    for u in e.urls() {
+                        handle_deep_link(&h, u.as_str());
+                    }
+                });
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    for u in urls {
+                        handle_deep_link(app.handle(), u.as_str());
+                    }
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -2607,6 +2827,9 @@ pub fn run() {
             allow_play,
             analyze,
             analyze_quiet,
+            license_status,
+            license_activate,
+            license_remove,
             playlist_order,
             batch_items,
             set_lang,

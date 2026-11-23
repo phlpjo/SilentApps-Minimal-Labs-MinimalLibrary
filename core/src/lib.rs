@@ -9,6 +9,7 @@ pub mod dirs;
 pub mod duplicates;
 pub mod export;
 pub mod history;
+pub mod license;
 pub mod lyrics;
 pub mod musicbrainz;
 pub mod organize;

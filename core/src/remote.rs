@@ -137,7 +137,10 @@ pub fn house(viewer: Option<&str>) -> serde_json::Value {
         o["device"] = pc.clone().into();
         o["controllable"] = viewer_may.into();
         if let Some(obj) = o.as_object_mut() {
-            obj.remove("queue");
+            // Warteschlange nur vom Haupt-Tab (dessen Titel kennt das Handy) – für „zurück aufs Handy“
+            if tab != "main" {
+                obj.remove("queue");
+            }
             obj.remove("outputs");
         }
         sessions.push(o);

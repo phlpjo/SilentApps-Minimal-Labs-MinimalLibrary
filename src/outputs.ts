@@ -6,6 +6,7 @@ import { player } from "./player";
 import { store } from "./store";
 import { h, toast } from "./ui";
 import { L } from "./i18n";
+import { phoneCmd, phonesNow } from "./remotectl";
 
 export interface LocalOut { id: string; label: string }
 
@@ -153,9 +154,35 @@ export function outputPopup(anchor: HTMLElement) {
       ),
       cache.length ? "" : h("div", { class: "option dim" }, isSearching() ? L("Suche Geräte …") : L("Keine Geräte gefunden")),
       h("div", { class: "option small", onclick: () => discoverIfStale(true) }, h("span", {}, L("  Neu suchen"))),
+      phonesBox,
     );
     place();
   };
+  // Handys mit Minimal Player Connected: was dort läuft, und eingreifen
+  const phonesBox = h("div", {});
+  const renderPhones = async () => {
+    const phones = await phonesNow();
+    if (!document.body.contains(box)) return;
+    phonesBox.replaceChildren(...(phones.length ? [h("hr"), h("div", { class: "pop-title" }, L("Handys"))] : []),
+      ...phones.map((p) => {
+        const btn = (label: string, title: string, cmd: Record<string, unknown>) =>
+          h("button", { class: "btn small", title, onclick: (e: Event) => { e.stopPropagation(); phoneCmd(p.name, cmd); setTimeout(renderPhones, 2500); } }, label);
+        const vol = typeof p.volume === "number" ? p.volume : 0.5;
+        return h("div", { class: "phone-now" },
+          h("div", {}, "📱 " + p.name, h("small", {}, p.title ? (p.playing ? " · " : L(" · pausiert · ")) + (p.artist ? p.artist + " – " : "") + p.title : L(" · spielt nichts"))),
+          h("div", { class: "phone-ctl" },
+            btn("⏮", L("Zurück"), { cmd: "prev" }),
+            btn(p.playing ? "⏸" : "▶", L("Abspielen / Pause"), { cmd: "toggle" }),
+            btn("⏭", L("Weiter"), { cmd: "next" }),
+            btn("−", L("Leiser"), { cmd: "volume", vol: Math.max(0, vol - 0.1) }),
+            btn("+", L("Lauter"), { cmd: "volume", vol: Math.min(1, vol + 0.1) }),
+          ),
+        );
+      }));
+    place();
+  };
+  const phoneTimer = window.setInterval(() => (document.body.contains(box) ? renderPhones() : clearInterval(phoneTimer)), 2000);
+  renderPhones();
   const unsub = store.on("outputs", render);
   const unsub2 = store.on("player", render);
   const off = (e: Event) => {

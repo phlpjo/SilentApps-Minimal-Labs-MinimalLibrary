@@ -544,6 +544,10 @@ fn start_remote(app: &AppHandle, main: &AppState) {
             }
         }),
         changed: Box::new(move |c| match c {
+            remote::Changed::Control(v) => {
+                // Fernsteuerung vom Handy → an die Fenster (der Tab, der gerade spielt, führt aus)
+                let _ = app.emit("remote-control", v);
+            }
             remote::Changed::Playlists => {
                 sync_playlists(&db_c.lock().unwrap());
                 let _ = app.emit_to("main", "playlists-changed", ());
@@ -616,6 +620,24 @@ async fn remote_info(app: AppHandle) -> R<RemoteInfo> {
         paired,
         name: remote::computer_name(),
     })
+}
+
+/// Oberfläche meldet, was gerade läuft (für die Anzeige am Handy)
+#[tauri::command]
+fn now_report(state: serde_json::Value) {
+    remote::set_now(state);
+}
+
+/// Was die gekoppelten Handys gerade spielen
+#[tauri::command]
+fn remote_phones() -> Vec<serde_json::Value> {
+    remote::phones_now()
+}
+
+/// Befehl an ein Handy (Abspielen/Pause, Weiter, Lautstärke …)
+#[tauri::command]
+fn phone_command(name: String, cmd: serde_json::Value) {
+    remote::phone_command(&name, cmd);
 }
 
 #[tauri::command]
@@ -2827,6 +2849,9 @@ pub fn run() {
             allow_play,
             analyze,
             analyze_quiet,
+            now_report,
+            remote_phones,
+            phone_command,
             license_status,
             license_activate,
             license_remove,

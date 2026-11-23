@@ -47,6 +47,65 @@ pub enum Changed {
     Added(i64),
     /// Neuer Ordner für ein Handy → als Musikquelle aufnehmen (falls noch nicht enthalten)
     Root(PathBuf),
+    /// Fernsteuerung vom Handy: {"cmd": "toggle"|"play"|"pause"|"next"|"prev"|"seek"|"volume"|"output"|"queue", …}
+    Control(serde_json::Value),
+}
+
+// ───────── Fernsteuerung (wie bei Spotify: was läuft wo, eingreifen von überall) ─────────
+
+/// Was am PC gerade läuft (meldet die Oberfläche regelmäßig)
+static NOW: Mutex<Option<(serde_json::Value, std::time::Instant)>> = Mutex::new(None);
+
+/// Wiedergabe der Handys: Name → (Zustand, Zeitpunkt) und Befehle, die beim nächsten Melden abgeholt werden
+static PHONES: Mutex<
+    Option<
+        std::collections::HashMap<
+            String,
+            (
+                serde_json::Value,
+                std::time::Instant,
+                Vec<serde_json::Value>,
+            ),
+        >,
+    >,
+> = Mutex::new(None);
+
+/// Zustand der PC-Wiedergabe setzen
+pub fn set_now(v: serde_json::Value) {
+    *NOW.lock().unwrap() = Some((v, std::time::Instant::now()));
+}
+
+fn now_json() -> serde_json::Value {
+    match &*NOW.lock().unwrap() {
+        // ältere Meldung als 15 s: Programm hängt oder spielt nichts mehr
+        Some((v, at)) if at.elapsed().as_secs() < 15 => v.clone(),
+        _ => serde_json::json!({ "playing": false }),
+    }
+}
+
+/// Handys, die in den letzten 20 s ihren Zustand gemeldet haben
+pub fn phones_now() -> Vec<serde_json::Value> {
+    let g = PHONES.lock().unwrap();
+    let Some(m) = g.as_ref() else { return vec![] };
+    let mut v: Vec<_> = m
+        .iter()
+        .filter(|(_, (_, at, _))| at.elapsed().as_secs() < 20)
+        .map(|(name, (st, _, _))| {
+            let mut o = st.clone();
+            o["name"] = serde_json::Value::String(name.clone());
+            o
+        })
+        .collect();
+    v.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    v
+}
+
+/// Befehl an ein Handy (wird beim nächsten Melden, spätestens nach ~2 s, ausgeführt)
+pub fn phone_command(name: &str, cmd: serde_json::Value) {
+    let mut g = PHONES.lock().unwrap();
+    if let Some((_, _, q)) = g.get_or_insert_with(Default::default).get_mut(name) {
+        q.push(cmd);
+    }
 }
 
 static CODE: Mutex<String> = Mutex::new(String::new());
@@ -259,6 +318,29 @@ fn handle(host: &Host, mut req: tiny_http::Request) -> std::io::Result<()> {
             }
             (tiny_http::Method::Get | tiny_http::Method::Head, p) if p.starts_with("/a/") => None,
             (tiny_http::Method::Get, p) if p.starts_with("/c/") || p.starts_with("/l/") => None,
+            (tiny_http::Method::Get, "/now") => {
+                let mut v = now_json();
+                v["computer"] = serde_json::Value::String(computer_name());
+                Some((200, v.to_string()))
+            }
+            (tiny_http::Method::Post, "/ctl") => {
+                let v: serde_json::Value = serde_json::from_str(&body)?;
+                (host.changed)(Changed::Control(v));
+                Some((200, "{}".into()))
+            }
+            (tiny_http::Method::Post, "/me") => {
+                // Handy meldet seine Wiedergabe und holt Befehle vom PC ab
+                let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+                let mut g = PHONES.lock().unwrap();
+                let m = g.get_or_insert_with(Default::default);
+                let e = m.entry(client.clone()).or_insert_with(|| {
+                    (serde_json::Value::Null, std::time::Instant::now(), vec![])
+                });
+                e.0 = v;
+                e.1 = std::time::Instant::now();
+                let cmds = std::mem::take(&mut e.2);
+                Some((200, serde_json::Value::Array(cmds).to_string()))
+            }
             (tiny_http::Method::Post, "/have") => Some((
                 200,
                 have(&host.db.lock().unwrap(), &s.roots, &body)?.to_string(),

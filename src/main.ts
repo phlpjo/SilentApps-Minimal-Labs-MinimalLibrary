@@ -22,6 +22,7 @@ import { syncView, startSyncWatch, syncReadyCount } from "./views/sync";
 import { equalizerView } from "./views/equalizer";
 import { searchView } from "./views/search";
 import { startUpdater, updater } from "./updater";
+import { startRemoteControl } from "./remotectl";
 import { loadLicense, requireLicense, unlocked, type Feature } from "./license";
 import { icon, navIcon } from "./icons";
 import { MY_TAB, audioOwner, reportPlaying, tabStrip } from "./tabs";
@@ -778,6 +779,7 @@ async function start() {
   if (store.settings.playlistDir) store.saveSettings({ playlistDir: null });
   startSyncWatch();
   if (MY_TAB === "main") startUpdater();
+  startRemoteControl();
   restoreOutput();
 }
 start();

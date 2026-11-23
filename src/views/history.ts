@@ -2,9 +2,9 @@ import { api, type Batch } from "../api";
 import { store } from "../store";
 import { clear, h, holdButton, reportErrors, toast } from "../ui";
 import { analyzeIds } from "../main";
-import { L, LOCALE } from "../i18n";
+import { L, LOCALE, trMsg } from "../i18n";
 
-const KIND: Record<Batch["kind"], string> = { move: L("Dateien"), tags: L("Tags"), trash: L("Papierkorb"), dir: L("Ordner"), grid: L("Beatgrid / Cues") };
+const KIND: Record<Batch["kind"], string> = { move: L("Dateien"), tags: L("Tags"), trash: L("Papierkorb"), dir: L("Ordner"), grid: L("Beatgrid / Cues"), playlist: L("Playlist") };
 
 /** Einen Eintrag rückgängig machen (oder den letzten, wenn id = null). */
 export async function undo(id: number | null) {
@@ -33,14 +33,27 @@ export function historyList(filter?: Batch["kind"][]): { el: HTMLElement; reload
       return;
     }
     for (const b of list) {
+      // Aufklappen: betroffene Dateien / Playlist-Stand
+      const details = h("div", { class: "hist-items" });
+      let open = false;
+      const caret = h("span", { class: "caret" }, "›");
+      const toggle = async () => {
+        open = !open;
+        caret.classList.toggle("open", open);
+        if (!open) return details.replaceChildren();
+        details.replaceChildren(h("div", { class: "note" }, L("Lädt …")));
+        const items = await api.batchItems(b.id).catch(() => [] as string[]);
+        details.replaceChildren(...(items.length ? items.map((x) => h("div", { class: "hist-item" }, trMsg(x))) : [h("div", { class: "note" }, L("– keine –"))]));
+      };
       el.append(
-        h("div", { class: "setting" + (b.undone ? " undone" : "") },
-          h("div", { style: { minWidth: "0" } },
-            h("div", { class: "t1" }, b.description),
+        h("div", { class: "setting hist-row" + (b.undone ? " undone" : "") },
+          h("div", { style: { minWidth: "0", cursor: "pointer", flex: "1" }, onclick: toggle },
+            h("div", { class: "t1" }, caret, trMsg(b.description)),
             h("div", { class: "note" }, `${KIND[b.kind] ?? b.kind} · ${new Date(b.created * 1000).toLocaleString(LOCALE)}${b.count > 1 ? ` · ${b.count}` : ""}`),
           ),
           b.undone ? h("span", { class: "sub" }, L("rückgängig gemacht")) : holdButton(L("Rückgängig"), () => undo(b.id), L("halten")),
         ),
+        details,
       );
     }
   };
@@ -55,7 +68,7 @@ export function historyView(): { el: HTMLElement; destroy: () => void } {
     h("div", { class: "head" }, h("h1", {}, L("Verlauf")), h("span", { class: "sub" }, L("Strg+Z macht die letzte Änderung rückgängig"))),
     h("div", { class: "view-scroll" },
       h("div", { class: "note", style: { marginBottom: "12px" } },
-        L("Jede Änderung an Dateien wird gemerkt: Tags und Cover, Verschieben, Umbenennen, Ordner, Papierkorb. Rückgängig stellt den vorherigen Stand wieder her – auch einzeln und nicht nur in Reihenfolge. Aus dem Papierkorb geholte Titel kommen zurück in ihre Playlisten."),
+        L("Jede Änderung wird gemerkt: Tags und Cover, Verschieben, Umbenennen, Ordner, Papierkorb, Playlisten (auch vom Handy). Rückgängig stellt den vorherigen Stand wieder her – auch einzeln und nicht nur in Reihenfolge. Aus dem Papierkorb geholte Titel kommen zurück in ihre Playlisten. Einträge anklicken zeigt, was betroffen war."),
       ),
       h("div", { class: "card" }, list),
     ),

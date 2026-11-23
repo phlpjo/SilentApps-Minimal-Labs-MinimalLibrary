@@ -138,7 +138,13 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
         for path in existing.keys() {
             let inside = roots.iter().any(|r| Path::new(path).starts_with(r));
             if inside && !found.contains(path) {
-                tx.execute("DELETE FROM tracks WHERE path = ?1", [path])?;
+                // gemerkt: taucht die Datei woanders auf, behält sie ID und Playlist-Plätze
+                let ids: Vec<i64> = {
+                    let mut st = tx.prepare("SELECT id FROM tracks WHERE path = ?1")?;
+                    st.query_map([path], |r| r.get(0))?
+                        .collect::<rusqlite::Result<_>>()?
+                };
+                crate::db::forget_tracks(&tx, &ids)?;
                 report.removed += 1;
             }
         }

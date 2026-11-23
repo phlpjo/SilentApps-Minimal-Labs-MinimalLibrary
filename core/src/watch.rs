@@ -95,7 +95,11 @@ fn adopt_or_add(conn: &Mutex<Connection>, files: Vec<PathBuf>, ch: &mut Change) 
                         ch.moved += 1;
                     }
                 }
-                None => new.push(f),
+                None => match crate::db::revive_lost(&c, &f, size, mtime) {
+                    // früher verschwundener Titel (z. B. über Laufwerke verschoben): alte ID + Playlisten zurück
+                    Ok(Some(_)) => ch.moved += 1,
+                    _ => new.push(f),
+                },
             }
         }
     }
@@ -162,10 +166,15 @@ fn sync_path(conn: &Mutex<Connection>, p: &Path, ch: &mut Change) {
         let c = conn.lock().unwrap();
         let s = p.to_string_lossy().to_string();
         let pre = format!("{s}{MAIN_SEPARATOR}");
-        if let Ok(n) = c.execute(
-            "DELETE FROM tracks WHERE path = ?1 OR substr(path, 1, ?3) = ?2",
-            params![s, pre, pre.chars().count() as i64],
-        ) {
+        let ids: Vec<i64> = c
+            .prepare("SELECT id FROM tracks WHERE path = ?1 OR substr(path, 1, ?3) = ?2")
+            .and_then(|mut st| {
+                st.query_map(params![s, pre, pre.chars().count() as i64], |r| r.get(0))?
+                    .collect::<rusqlite::Result<Vec<i64>>>()
+            })
+            .unwrap_or_default();
+        // gemerkt statt endgültig gelöscht: Verschieben über Laufwerke/Musikordner = Löschen + Neu
+        if let Ok(n) = crate::db::forget_tracks(&c, &ids) {
             ch.removed += n;
         }
     }

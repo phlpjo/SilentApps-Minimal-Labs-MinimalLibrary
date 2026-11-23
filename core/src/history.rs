@@ -33,6 +33,24 @@ pub fn finish(conn: &Connection, batch: i64, count: usize) -> Result<()> {
     Ok(())
 }
 
+/// Playlist-Änderung beginnen: sichert die betroffenen Playlisten (nach der Änderung `finish(…, 1)` aufrufen).
+/// Neu angelegte Playlisten danach mit `playlists::backup` vermerken (sie existierten vorher nicht).
+pub fn begin_playlist(conn: &Connection, description: &str, ids: &[i64]) -> Result<i64> {
+    let b = begin(conn, "playlist", description)?;
+    for id in ids {
+        crate::playlists::backup(conn, b, *id)?;
+    }
+    Ok(b)
+}
+
+/// Reihenfolge der Playlisten ändern – mit Rückgängig
+pub fn playlist_order(conn: &Connection, ids: &[i64]) -> Result<()> {
+    let b = begin(conn, "playlist", "Playlisten umsortiert")?;
+    crate::playlists::backup_order(conn, b)?;
+    crate::playlists::set_order(conn, ids)?;
+    finish(conn, b, 1)
+}
+
 /// Stand der Tags vor einer Änderung
 #[derive(Debug, Serialize, Deserialize)]
 struct Snapshot {
@@ -156,6 +174,7 @@ pub fn undo(conn: &Mutex<Connection>, batch: i64, stop_dirs: &[PathBuf]) -> Resu
         "tags" => undo_tags(conn, batch)?,
         "trash" => undo_trash(conn, batch)?,
         "dir" => undo_dir(conn, batch)?,
+        "playlist" => undo_playlist(conn, batch)?,
         "grid" => UndoReport {
             restored: crate::pioneer::undo(&conn.lock().unwrap(), batch)?,
             ..Default::default()
@@ -166,6 +185,131 @@ pub fn undo(conn: &Mutex<Connection>, batch: i64, stop_dirs: &[PathBuf]) -> Resu
         .unwrap()
         .execute("UPDATE move_batches SET undone = 1 WHERE id = ?1", [batch])?;
     Ok(report)
+}
+
+fn undo_playlist(conn: &Mutex<Connection>, batch: i64) -> Result<UndoReport> {
+    let mut c = conn.lock().unwrap();
+    type Row = (i64, i64, String, Option<String>, String, i64);
+    let rows: Vec<Row> = {
+        let mut st = c.prepare("SELECT playlist_id, existed, name, rules, items, pos FROM playlist_backups WHERE batch_id = ?1 ORDER BY rowid DESC")?;
+        st.query_map([batch], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<_>>()?
+    };
+    let mut n = 0;
+    for (id, existed, name, rules, items, pos) in rows {
+        let items: Vec<i64> = serde_json::from_str(&items).unwrap_or_default();
+        if id == 0 {
+            crate::playlists::set_order(&c, &items)?;
+        } else if existed == 0 {
+            c.execute("DELETE FROM playlists WHERE id = ?1", [id])?;
+        } else {
+            let exists: bool =
+                c.query_row("SELECT COUNT(*) FROM playlists WHERE id = ?1", [id], |r| {
+                    r.get::<_, i64>(0)
+                })? > 0;
+            if exists {
+                c.execute(
+                    "UPDATE playlists SET name = ?2, rules = ?3, pos = ?4 WHERE id = ?1",
+                    params![id, name, rules, pos],
+                )?;
+            } else {
+                c.execute(
+                    "INSERT INTO playlists(id, name, rules, created, pos) VALUES(?1, ?2, ?3, ?4, ?5)",
+                    params![id, name, rules, now(), pos],
+                )?;
+            }
+            if rules.is_none() {
+                // nur Titel, die es noch gibt
+                let keep: Vec<i64> = items
+                    .into_iter()
+                    .filter(|t| {
+                        c.query_row("SELECT COUNT(*) FROM tracks WHERE id = ?1", [t], |r| {
+                            r.get::<_, i64>(0)
+                        })
+                        .unwrap_or(0)
+                            > 0
+                    })
+                    .collect();
+                crate::playlists::set_items(&mut c, id, &keep)?;
+            }
+        }
+        n += 1;
+    }
+    Ok(UndoReport {
+        restored: n,
+        ..Default::default()
+    })
+}
+
+/// Was ein Verlaufseintrag betroffen hat (zum Aufklappen in der Liste)
+pub fn items(conn: &Connection, batch: i64) -> Result<Vec<String>> {
+    let kind: String = conn.query_row(
+        "SELECT kind FROM move_batches WHERE id = ?1",
+        [batch],
+        |r| r.get(0),
+    )?;
+    let q = |sql: &str| -> Result<Vec<String>> {
+        let mut st = conn.prepare(sql)?;
+        let v = st
+            .query_map([batch], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(v)
+    };
+    Ok(match kind.as_str() {
+        "move" | "dir" => q(
+            "SELECT src || '  →  ' || dst FROM moves WHERE batch_id = ?1 ORDER BY rowid LIMIT 1000",
+        )?,
+        "trash" => {
+            q("SELECT path FROM trash_backups WHERE batch_id = ?1 ORDER BY rowid LIMIT 1000")?
+        }
+        "tags" => q(
+            "SELECT COALESCE(t.path, '#' || b.track_id) FROM tag_backups b LEFT JOIN tracks t ON t.id = b.track_id WHERE b.batch_id = ?1 ORDER BY b.rowid LIMIT 1000",
+        )?,
+        "grid" => q(
+            "SELECT COALESCE(t.path, '#' || b.track_id) FROM grid_backups b LEFT JOIN tracks t ON t.id = b.track_id WHERE b.batch_id = ?1 LIMIT 1000",
+        )?,
+        "playlist" => {
+            let mut st = conn.prepare("SELECT playlist_id, existed, name, items FROM playlist_backups WHERE batch_id = ?1 ORDER BY rowid")?;
+            let rows: Vec<(i64, i64, String, String)> = st
+                .query_map([batch], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+                })?
+                .collect::<rusqlite::Result<_>>()?;
+            let mut out = Vec::new();
+            for (id, existed, name, items) in rows {
+                let ids: Vec<i64> = serde_json::from_str(&items).unwrap_or_default();
+                if id == 0 {
+                    out.push(format!("Reihenfolge vorher: {} Playlisten", ids.len()));
+                    continue;
+                }
+                if existed == 0 {
+                    out.push(format!(
+                        "„{}“ neu angelegt",
+                        crate::playlists::name(conn, id).unwrap_or_default()
+                    ));
+                    continue;
+                }
+                out.push(format!("„{name}“ vorher: {} Titel", ids.len()));
+                let mut st = conn.prepare("SELECT path FROM tracks WHERE id = ?1")?;
+                for t in ids.iter().take(200) {
+                    if let Ok(p) = st.query_row([t], |r| r.get::<_, String>(0)) {
+                        out.push(format!("   {p}"));
+                    }
+                }
+            }
+            out
+        }
+        _ => vec![],
+    })
 }
 
 fn undo_tags(conn: &Mutex<Connection>, batch: i64) -> Result<UndoReport> {
@@ -418,5 +562,56 @@ mod tests {
         assert_eq!(d.title.as_deref(), Some("Original"));
         assert_eq!(d.genre, None);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn playlist_undo() {
+        let f = std::env::temp_dir().join(format!("mlplh{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&f);
+        let conn = Mutex::new(db::open(&f).unwrap());
+        let (pl, a, b) = {
+            let mut c = conn.lock().unwrap();
+            c.execute(
+                "INSERT INTO tracks(path, size, mtime, added) VALUES('/a.mp3', 1, 1, 0)",
+                [],
+            )
+            .unwrap();
+            let a = c.last_insert_rowid();
+            c.execute(
+                "INSERT INTO tracks(path, size, mtime, added) VALUES('/b.mp3', 1, 1, 0)",
+                [],
+            )
+            .unwrap();
+            let b = c.last_insert_rowid();
+            let pl = crate::playlists::create(&c, "P", None).unwrap();
+            crate::playlists::set_items(&mut c, pl, &[a, b]).unwrap();
+            (pl, a, b)
+        };
+        // Titel entfernt → rückgängig
+        let batch = {
+            let mut c = conn.lock().unwrap();
+            let x = begin_playlist(&c, "t", &[pl]).unwrap();
+            crate::playlists::set_items(&mut c, pl, &[b]).unwrap();
+            finish(&c, x, 1).unwrap();
+            x
+        };
+        undo(&conn, batch, &[]).unwrap();
+        assert_eq!(
+            crate::playlists::track_ids(&conn.lock().unwrap(), pl).unwrap(),
+            vec![a, b]
+        );
+        // gelöscht → rückgängig
+        let batch = {
+            let c = conn.lock().unwrap();
+            let x = begin_playlist(&c, "d", &[pl]).unwrap();
+            crate::playlists::delete(&c, pl).unwrap();
+            finish(&c, x, 1).unwrap();
+            x
+        };
+        undo(&conn, batch, &[]).unwrap();
+        let c = conn.lock().unwrap();
+        assert_eq!(crate::playlists::name(&c, pl).unwrap(), "P");
+        assert_eq!(crate::playlists::track_ids(&c, pl).unwrap(), vec![a, b]);
+        assert!(!items(&c, batch).unwrap().is_empty());
     }
 }

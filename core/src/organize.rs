@@ -255,6 +255,19 @@ pub fn apply(
     stop_dirs: &[PathBuf],
     progress: Progress,
 ) -> Result<ApplyReport> {
+    apply_opts(conn, plan, copy, description, stop_dirs, progress, true)
+}
+
+/// Wie `apply`; `cleanup = false`: leer gewordene Ordner bleiben stehen (Verschieben, Umbenennen)
+pub fn apply_opts(
+    conn: &std::sync::Mutex<Connection>,
+    plan: &[PlannedMove],
+    copy: bool,
+    description: &str,
+    stop_dirs: &[PathBuf],
+    progress: Progress,
+    cleanup: bool,
+) -> Result<ApplyReport> {
     let batch_id = {
         let c = conn.lock().unwrap();
         c.execute(
@@ -321,7 +334,7 @@ pub fn apply(
                     params![batch_id, tid, m.from, m.to, copy as i64],
                 )?;
                 report.moved += 1;
-                if !copy {
+                if !copy && cleanup {
                     if let Some(d) = from.parent() {
                         paths::remove_empty_dirs(d.to_path_buf(), stop_dirs);
                     }

@@ -3,7 +3,7 @@
 import { copyKey } from "./platform";
 import { L } from "./i18n";
 
-export type Payload = { kind: "ids"; ids: number[] } | { kind: "dir"; path: string };
+export type Payload = { kind: "ids"; ids: number[] } | { kind: "dir"; path: string } | { kind: "pl"; id: number; name: string };
 
 export interface DropTarget {
   accepts: (p: Payload) => boolean;
@@ -43,6 +43,7 @@ function findTarget(x: number, y: number): [HTMLElement | null, DropTarget | nul
 
 function label(p: Payload): string {
   if (p.kind === "dir") return L("Ordner: ") + (p.path.split(/[\\/]/).pop() ?? p.path);
+  if (p.kind === "pl") return p.name;
   return p.ids.length === 1 ? L("1 Titel") : L("{0} Titel", p.ids.length);
 }
 

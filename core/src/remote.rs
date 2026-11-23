@@ -280,6 +280,13 @@ fn handle(host: &Host, mut req: tiny_http::Request) -> std::io::Result<()> {
                         let ids: Vec<i64> = items.iter().filter_map(|x| x.as_i64()).collect();
                         playlists::set_items(&mut c, id, &ids)?;
                     }
+                    let b = crate::history::begin(
+                        &c,
+                        "playlist",
+                        &format!("Handy: Playlist „{}“ angelegt", playlists::name(&c, id)?),
+                    )?;
+                    c.execute("INSERT INTO playlist_backups(batch_id, playlist_id, existed) VALUES(?1, ?2, 0)", rusqlite::params![b, id])?;
+                    crate::history::finish(&c, b, 1)?;
                     id
                 };
                 (host.changed)(Changed::Playlists);
@@ -295,6 +302,12 @@ fn handle(host: &Host, mut req: tiny_http::Request) -> std::io::Result<()> {
                         .find(|x| x.id == id)
                         .ok_or_else(|| anyhow!("Playlist gibt es nicht mehr"))?
                         .rules;
+                    let b = crate::history::begin_playlist(
+                        &c,
+                        &format!("Handy: Playlist „{}“ bearbeitet", playlists::name(&c, id)?),
+                        &[id],
+                    )?;
+                    crate::history::finish(&c, b, 1)?;
                     if let Some(name) = v["name"].as_str().filter(|n| !n.trim().is_empty()) {
                         playlists::update(&c, id, name.trim(), smart.as_ref())?;
                     }
@@ -313,7 +326,16 @@ fn handle(host: &Host, mut req: tiny_http::Request) -> std::io::Result<()> {
             }
             (tiny_http::Method::Delete, p) if p.starts_with("/pl/") => {
                 let id = id_of(p).ok_or_else(|| anyhow!("Playlist?"))?;
-                playlists::delete(&host.db.lock().unwrap(), id)?;
+                {
+                    let c = host.db.lock().unwrap();
+                    let b = crate::history::begin_playlist(
+                        &c,
+                        &format!("Handy: Playlist „{}“ gelöscht", playlists::name(&c, id)?),
+                        &[id],
+                    )?;
+                    playlists::delete(&c, id)?;
+                    crate::history::finish(&c, b, 1)?;
+                }
                 (host.changed)(Changed::Playlists);
                 Some((200, "{}".into()))
             }

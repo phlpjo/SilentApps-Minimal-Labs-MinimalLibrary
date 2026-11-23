@@ -151,7 +151,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
           }
           return;
         }
-        await moveTracksTo(p.ids, path, copy);
+        if (p.kind === "ids") await moveTracksTo(p.ids, path, copy);
       },
     });
   }

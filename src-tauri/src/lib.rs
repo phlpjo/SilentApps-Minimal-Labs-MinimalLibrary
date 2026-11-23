@@ -482,6 +482,17 @@ async fn star_toggle(state: Tab, ids: Vec<i64>) -> R<bool> {
     let id = playlists::star(&c, true).map_err(err)?.ok_or("Stern")?;
     let cur = playlists::track_ids(&c, id).map_err(err)?;
     let all = ids.iter().all(|i| cur.contains(i));
+    let b = history::begin_playlist(
+        &c,
+        if all {
+            "Stern entfernt"
+        } else {
+            "Stern gesetzt"
+        },
+        &[id],
+    )
+    .map_err(err)?;
+    let _ = history::finish(&c, b, ids.len());
     if all {
         let rest: Vec<i64> = cur.into_iter().filter(|i| !ids.contains(i)).collect();
         playlists::set_items(&mut c, id, &rest).map_err(err)?;
@@ -1306,7 +1317,7 @@ async fn transfer_to_tab(
             .filter(|t| !skip.contains(&t.id))
             .collect();
         let plan = organize::plan_to_folder(&tracks, Path::new(&dir), None);
-        let stops = stop_dirs(&src_db.lock().unwrap());
+
         let mut rep = TransferReport::default();
         let mut done_paths = Vec::new();
         for (i, m) in plan.iter().enumerate() {
@@ -1336,9 +1347,7 @@ async fn transfer_to_tab(
                             "DELETE FROM playlist_items WHERE track_id = ?1",
                             [m.track_id],
                         )?;
-                        if let Some(d) = from.parent() {
-                            musiccore::paths::remove_empty_dirs(d.to_path_buf(), &stops);
-                        }
+                        // leer gewordene Ordner bleiben stehen
                     }
                     done_paths.push(to.to_path_buf());
                     rep.moved += 1;
@@ -1468,6 +1477,15 @@ async fn playlist_create(
     if let Some(ids) = ids {
         playlists::set_items(&mut c, id, &ids).map_err(err)?;
     }
+    let shown = playlists::name(&c, id).unwrap_or_default();
+    if let Ok(b) = history::begin(&c, "playlist", &format!("Playlist „{shown}“ angelegt")) {
+        // „neu“ vermerken: Sicherung mit existed = 0 über eine nicht vorhandene ID wäre falsch – direkt eintragen
+        let _ = c.execute(
+            "INSERT INTO playlist_backups(batch_id, playlist_id, existed) VALUES(?1, ?2, 0)",
+            rusqlite::params![b, id],
+        );
+        let _ = history::finish(&c, b, 1);
+    }
     sync_playlists(&c);
     Ok(id)
 }
@@ -1484,7 +1502,14 @@ async fn playlist_update(
     if old != name {
         delete_playlist_file(&c, &old);
     }
+    let desc = if old != name {
+        format!("Playlist „{old}“ → „{name}“")
+    } else {
+        format!("Playlist „{old}“ geändert")
+    };
+    let b = history::begin_playlist(&c, &desc, &[id]).map_err(err)?;
     playlists::update(&c, id, &name, rules.as_ref()).map_err(err)?;
+    let _ = history::finish(&c, b, 1);
     sync_playlists(&c);
     Ok(())
 }
@@ -1492,10 +1517,11 @@ async fn playlist_update(
 #[tauri::command]
 async fn playlist_delete(state: Tab, id: i64) -> R<()> {
     let c = state.db.lock().unwrap();
-    if let Ok(n) = playlists::name(&c, id) {
-        delete_playlist_file(&c, &n);
-    }
-    playlists::delete(&c, id).map_err(err)
+    let n = playlists::name(&c, id).unwrap_or_default();
+    delete_playlist_file(&c, &n);
+    let b = history::begin_playlist(&c, &format!("Playlist „{n}“ gelöscht"), &[id]).map_err(err)?;
+    playlists::delete(&c, id).map_err(err)?;
+    history::finish(&c, b, 1).map_err(err)
 }
 
 #[tauri::command]
@@ -1506,15 +1532,39 @@ async fn playlist_items(state: Tab, id: i64) -> R<Vec<i64>> {
 #[tauri::command]
 async fn playlist_set_items(state: Tab, id: i64, ids: Vec<i64>) -> R<()> {
     let mut c = state.db.lock().unwrap();
+    let n = playlists::name(&c, id).unwrap_or_default();
+    let b =
+        history::begin_playlist(&c, &format!("Playlist „{n}“ bearbeitet"), &[id]).map_err(err)?;
     playlists::set_items(&mut c, id, &ids).map_err(err)?;
+    let _ = history::finish(&c, b, 1);
     sync_playlists(&c);
     Ok(())
+}
+
+/// Eigene Reihenfolge der Playlisten (Ziehen in der Seitenleiste)
+#[tauri::command]
+async fn playlist_order(state: Tab, ids: Vec<i64>) -> R<()> {
+    history::playlist_order(&state.db.lock().unwrap(), &ids).map_err(err)
+}
+
+/// Einzelheiten eines Verlaufseintrags (Dateien, Pfade, Playlist-Stand)
+#[tauri::command]
+async fn batch_items(state: Tab, id: i64) -> R<Vec<String>> {
+    history::items(&state.db.lock().unwrap(), id).map_err(err)
 }
 
 #[tauri::command]
 async fn playlist_add_items(state: Tab, id: i64, ids: Vec<i64>) -> R<()> {
     let mut c = state.db.lock().unwrap();
+    let n = playlists::name(&c, id).unwrap_or_default();
+    let b = history::begin_playlist(
+        &c,
+        &format!("Playlist „{n}“: {} Titel hinzugefügt", ids.len()),
+        &[id],
+    )
+    .map_err(err)?;
     playlists::add_items(&mut c, id, &ids).map_err(err)?;
+    let _ = history::finish(&c, b, ids.len());
     sync_playlists(&c);
     Ok(())
 }
@@ -1542,6 +1592,12 @@ async fn playlist_import(state: Tab, file: String) -> R<(i64, usize)> {
         let mut c = db.lock().unwrap();
         let id = playlists::create(&c, &name, None)?;
         playlists::set_items(&mut c, id, &ids)?;
+        let b = history::begin(&c, "playlist", &format!("Playlist „{name}“ importiert"))?;
+        c.execute(
+            "INSERT INTO playlist_backups(batch_id, playlist_id, existed) VALUES(?1, ?2, 0)",
+            rusqlite::params![b, id],
+        )?;
+        history::finish(&c, b, 1)?;
         sync_playlists(&c);
         Ok((id, ids.len()))
     })
@@ -1842,7 +1898,7 @@ async fn move_tracks_to(
             tracks.len(),
             if tracks.len() == 1 { "" } else { "en" }
         );
-        let r = organize::apply(&db, &plan, copy, &desc, &stops, &prog)?;
+        let r = organize::apply_opts(&db, &plan, copy, &desc, &stops, &prog, false)?;
         sync_playlists(&db.lock().unwrap());
         Ok(r)
     })
@@ -1863,13 +1919,14 @@ async fn rename_track(state: Tab, id: i64, name: String) -> R<organize::ApplyRep
             .map(Path::to_path_buf)
             .unwrap_or_default();
         let plan = organize::plan_to_folder(&tracks, &dir, Some(&[name.clone()]));
-        let r = organize::apply(
+        let r = organize::apply_opts(
             &db,
             &plan,
             false,
             &format!("Umbenannt: {name}"),
             &[],
             &|_, _, _| {},
+            false,
         )?;
         sync_playlists(&db.lock().unwrap());
         Ok(r)
@@ -1923,7 +1980,7 @@ async fn rename_by_pattern(state: Tab, ids: Vec<i64>, pattern: String) -> R<orga
             plan.extend(organize::plan_to_folder(&ts, &dir, Some(&names)));
         }
         let n = plan.iter().filter(|m| !m.unchanged).count();
-        let r = organize::apply(
+        let r = organize::apply_opts(
             &db,
             &plan,
             false,
@@ -1933,6 +1990,7 @@ async fn rename_by_pattern(state: Tab, ids: Vec<i64>, pattern: String) -> R<orga
             ),
             &[],
             &|_, _, _| {},
+            false,
         )?;
         sync_playlists(&db.lock().unwrap());
         Ok(r)
@@ -2516,6 +2574,8 @@ pub fn run() {
             allow_play,
             analyze,
             analyze_quiet,
+            playlist_order,
+            batch_items,
             set_lang,
             on_demand_roots,
             cancel_task,

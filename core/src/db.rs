@@ -114,6 +114,48 @@ fn migrate(conn: &Connection) -> Result<()> {
         conn.execute("UPDATE tracks SET cutoff = NULL", [])?;
         set_setting(conn, "cutoff_algo", CUTOFF_ALGO)?;
     }
+    // Playlisten: eigene Reihenfolge (bisher alphabetisch → so übernehmen)
+    if !has("playlists", "pos") {
+        conn.execute_batch(
+            "ALTER TABLE playlists ADD COLUMN pos INTEGER NOT NULL DEFAULT 0;
+             UPDATE playlists SET pos = (SELECT COUNT(*) FROM playlists p2 WHERE p2.name COLLATE NOCASE < playlists.name COLLATE NOCASE OR (p2.name COLLATE NOCASE = playlists.name COLLATE NOCASE AND p2.id < playlists.id));",
+        )?;
+    }
+    // Rückgängig für Playlist-Änderungen
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS playlist_backups (
+            batch_id INTEGER NOT NULL REFERENCES move_batches(id) ON DELETE CASCADE,
+            playlist_id INTEGER NOT NULL,
+            existed INTEGER NOT NULL,
+            name TEXT NOT NULL DEFAULT '',
+            rules TEXT,
+            items TEXT NOT NULL DEFAULT '[]',
+            pos INTEGER NOT NULL DEFAULT 0
+        );",
+    )?;
+    // Titel, deren Datei verschwunden ist (z. B. im Explorer verschoben): kurz merken, damit sie beim
+    // Wiederauftauchen ihre ID, Analyse und Playlist-Plätze behalten
+    if !has("lost_tracks", "id") {
+        conn.execute_batch("CREATE TABLE lost_tracks AS SELECT * FROM tracks WHERE 0;")?;
+    }
+    {
+        let cols = |t: &str| -> Result<Vec<String>> {
+            let mut st = conn.prepare(&format!("PRAGMA table_info({t})"))?;
+            let v = st
+                .query_map([], |r| r.get::<_, String>(1))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(v)
+        };
+        let have = cols("lost_tracks")?;
+        for c in cols("tracks")? {
+            if !have.contains(&c) {
+                conn.execute_batch(&format!("ALTER TABLE lost_tracks ADD COLUMN {c}"))?;
+            }
+        }
+        if !have.iter().any(|c| c == "lost_at") {
+            conn.execute_batch("ALTER TABLE lost_tracks ADD COLUMN lost_at INTEGER NOT NULL DEFAULT 0; ALTER TABLE lost_tracks ADD COLUMN lost_playlists TEXT NOT NULL DEFAULT '';")?;
+        }
+    }
     if !has("move_batches", "kind") {
         conn.execute_batch(
             "ALTER TABLE move_batches ADD COLUMN kind TEXT NOT NULL DEFAULT 'move'",
@@ -395,5 +437,141 @@ mod quality_tests {
             quality("a.mp3", Some(320), Some(44100), None),
             (None, false, false)
         );
+    }
+}
+
+/// Spalten der Titel-Tabelle (für das Merken verschwundener Titel)
+fn track_columns(conn: &Connection) -> Result<String> {
+    let mut st = conn.prepare("PRAGMA table_info(tracks)")?;
+    let v = st
+        .query_map([], |r| r.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(v.join(", "))
+}
+
+/// Titel aus der Bibliothek nehmen, weil die Datei weg ist – aber eine Woche lang merken (mit Playlist-Plätzen).
+/// Taucht die Datei woanders wieder auf (gleiche Größe + Zeit oder gleicher Name + Größe), bekommt sie alles zurück.
+pub fn forget_tracks(conn: &Connection, ids: &[i64]) -> Result<usize> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let cols = track_columns(conn)?;
+    conn.execute(
+        "DELETE FROM lost_tracks WHERE lost_at < ?1",
+        [crate::now() - 7 * 86400],
+    )?;
+    let mut n = 0;
+    for id in ids {
+        conn.execute("DELETE FROM lost_tracks WHERE id = ?1", [id])?;
+        conn.execute(
+            &format!(
+                "INSERT INTO lost_tracks({cols}, lost_at, lost_playlists) SELECT {cols}, ?2,
+                   COALESCE((SELECT group_concat(playlist_id || ':' || pos) FROM playlist_items WHERE track_id = ?1), '')
+                 FROM tracks WHERE id = ?1"
+            ),
+            params![id, crate::now()],
+        )?;
+        n += conn.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
+    }
+    Ok(n)
+}
+
+/// Neue Datei = früher verschwundener Titel? Dann mit alter ID, Analyse und Playlist-Plätzen zurückholen.
+pub fn revive_lost(conn: &Connection, path: &Path, size: i64, mtime: i64) -> Result<Option<i64>> {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let sep = std::path::MAIN_SEPARATOR.to_string();
+    let found: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM lost_tracks WHERE size = ?1 AND (mtime = ?2 OR path LIKE '%' || ?3 || ?4)
+             ORDER BY (mtime = ?2) DESC, lost_at DESC LIMIT 1",
+            params![size, mtime, sep, name],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(id) = found else { return Ok(None) };
+    let taken: bool = conn.query_row("SELECT COUNT(*) FROM tracks WHERE id = ?1", [id], |r| {
+        r.get::<_, i64>(0)
+    })? > 0;
+    if taken {
+        conn.execute("DELETE FROM lost_tracks WHERE id = ?1", [id])?;
+        return Ok(None);
+    }
+    let cols = track_columns(conn)?;
+    conn.execute(
+        &format!("INSERT INTO tracks({cols}) SELECT {cols} FROM lost_tracks WHERE id = ?1"),
+        [id],
+    )?;
+    conn.execute(
+        "UPDATE tracks SET path = ?2, mtime = ?3 WHERE id = ?1",
+        params![id, path.to_string_lossy(), mtime],
+    )?;
+    let pls: String = conn.query_row(
+        "SELECT lost_playlists FROM lost_tracks WHERE id = ?1",
+        [id],
+        |r| r.get(0),
+    )?;
+    for part in pls.split(',').filter(|s| !s.is_empty()) {
+        let Some((pl, pos)) = part.split_once(':') else {
+            continue;
+        };
+        let (Ok(pl), Ok(pos)) = (pl.parse::<i64>(), pos.parse::<i64>()) else {
+            continue;
+        };
+        let exists: bool =
+            conn.query_row("SELECT COUNT(*) FROM playlists WHERE id = ?1", [pl], |r| {
+                r.get::<_, i64>(0)
+            })? > 0;
+        if !exists {
+            continue;
+        }
+        conn.execute(
+            "UPDATE playlist_items SET pos = pos + 1 WHERE playlist_id = ?1 AND pos >= ?2",
+            params![pl, pos],
+        )?;
+        conn.execute(
+            "INSERT INTO playlist_items(playlist_id, pos, track_id) VALUES(?1, ?2, ?3)",
+            params![pl, pos, id],
+        )?;
+    }
+    conn.execute("DELETE FROM lost_tracks WHERE id = ?1", [id])?;
+    Ok(Some(id))
+}
+
+#[cfg(test)]
+mod lost_tests {
+    use super::*;
+    #[test]
+    fn forget_and_revive_keeps_id_and_playlist() {
+        let f = std::env::temp_dir().join(format!("mllost{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&f);
+        let c = open(&f).unwrap();
+        c.execute(
+            "INSERT INTO tracks(path, size, mtime, added) VALUES('/a/x.mp3', 100, 5, 0)",
+            [],
+        )
+        .unwrap();
+        let id = c.last_insert_rowid();
+        let pl = crate::playlists::create(&c, "P", None).unwrap();
+        c.execute(
+            "INSERT INTO playlist_items(playlist_id, pos, track_id) VALUES(?1, 0, ?2)",
+            params![pl, id],
+        )
+        .unwrap();
+        forget_tracks(&c, &[id]).unwrap();
+        assert_eq!(
+            c.query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        let got = revive_lost(&c, Path::new("/b/x.mp3"), 100, 9).unwrap();
+        assert_eq!(got, Some(id));
+        let p: String = c
+            .query_row("SELECT path FROM tracks WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(p, "/b/x.mp3");
+        assert_eq!(crate::playlists::track_ids(&c, pl).unwrap(), vec![id]);
     }
 }

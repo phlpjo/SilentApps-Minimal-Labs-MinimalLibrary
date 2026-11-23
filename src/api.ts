@@ -85,7 +85,7 @@ export interface DupGroup { trackIds: number[]; reasons: string[]; audioSimilari
 
 export interface PlannedMove { trackId: number; from: string; to: string; renamed: boolean; unchanged: boolean }
 export interface ApplyReport { batchId: number; moved: number; errors: string[] }
-export interface Batch { id: number; kind: "move" | "tags" | "trash" | "dir" | "grid"; created: number; description: string; count: number; undone: boolean }
+export interface Batch { id: number; kind: "move" | "tags" | "trash" | "dir" | "grid" | "playlist"; created: number; description: string; count: number; undone: boolean }
 export interface UndoReport { restored: number; errors: string[]; newIds: number[] }
 export interface LibraryChange { added: number[]; updated: number; moved: number; removed: number }
 
@@ -150,6 +150,8 @@ export const api = {
   organizeApply: (plan: PlannedMove[], copy: boolean, description: string) => invoke<ApplyReport>("organize_apply", { plan, copy, description }),
   moveBatches: () => invoke<Batch[]>("move_batches"),
   undoBatch: (id: number | null) => invoke<UndoReport>("undo_batch", { id }),
+  batchItems: (id: number) => invoke<string[]>("batch_items", { id }),
+  playlistOrder: (ids: number[]) => invoke<void>("playlist_order", { ids }),
   playlists: () => invoke<Playlist[]>("playlists_list"),
   playlistCreate: (name: string, rules: SmartRules | null, ids: number[] | null) => invoke<number>("playlist_create", { name, rules, ids }),
   playlistUpdate: (id: number, name: string, rules: SmartRules | null) => invoke<void>("playlist_update", { id, name, rules }),

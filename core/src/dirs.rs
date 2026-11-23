@@ -188,15 +188,11 @@ pub fn prune_outside(conn: &Connection, roots: &[PathBuf]) -> Result<usize> {
         return Ok(0);
     }
     conn.execute_batch("BEGIN")?;
-    {
-        let mut del = conn.prepare("DELETE FROM tracks WHERE id = ?1")?;
-        let mut del_items = conn.prepare("DELETE FROM playlist_items WHERE track_id = ?1")?;
-        for id in &gone {
-            del.execute([id])?;
-            del_items.execute([id])?;
-        }
-    }
-    conn.execute_batch("COMMIT")?;
+    // gemerkt: kommt der Musikordner zurück, behalten die Titel ID und Playlist-Plätze
+    crate::db::forget_tracks(conn, &gone)?;
+    conn.execute_batch(
+        "DELETE FROM playlist_items WHERE track_id NOT IN (SELECT id FROM tracks); COMMIT",
+    )?;
     Ok(gone.len())
 }
 

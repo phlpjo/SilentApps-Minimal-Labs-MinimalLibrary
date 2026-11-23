@@ -73,17 +73,28 @@ input, select, textarea, button { font: inherit; color: inherit; }
 /* Seitenleisten ein-/ausklappen (langsam auf und zu) */
 #app.no-insp, #app.insp-closed { --insp-w: 0px; }
 #app.side-closed { --side-w: 62px; }
-#app.side-closed.side-peek { --side-w: 230px; }
-#inspector { transition: opacity 0.3s; }
-#app.no-insp #inspector, #app.insp-closed #inspector { opacity: 0; pointer-events: none; padding-left: 0; padding-right: 0; border-left-color: transparent; }
 #side { overflow: hidden; }
 #side .nl, #side .count, .brand span { transition: opacity 0.25s; }
-#app.side-closed:not(.side-peek) #side :is(.nl, .count, .brand span, .pl-sec, .pl-list, .pl-new-drop, .status) { opacity: 0; pointer-events: none; }
-#app.side-closed:not(.side-peek) #side :is(.pl-sec, .pl-list, .pl-new-drop) { display: none; }
-#app.side-closed:not(.side-peek) .brand { padding-left: 17px; }
-#app.side-closed:not(.side-peek) .nav-item { justify-content: flex-start; }
+#app.side-closed #mainnav :is(.nl, .count), #app.side-closed .pl-fold :is(.nl, .count), #app.side-closed .brand span, #app.side-closed #side > .status { opacity: 0; pointer-events: none; }
+#app.side-closed .brand { padding-left: 17px; }
+#app.side-closed #mainnav .nav-item, #app.side-closed .pl-fold .nav-item { justify-content: flex-start; }
+.pl-box { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .pl-fold { display: none; }
-#app.side-closed:not(.side-peek) .pl-fold { display: block; margin-top: 10px; border-top: 1px solid var(--line-soft); padding-top: 10px; }
+#app.side-closed .pl-fold { display: block; margin-top: 10px; border-top: 1px solid var(--line-soft); padding-top: 10px; }
+#app.side-closed .pl-box { display: none; }
+/* eingeklappt: Playlisten als Ausklapp-Menü neben dem Symbol */
+#app.side-closed.pl-fly .pl-box {
+  display: flex; position: fixed; z-index: 55; left: 66px; top: var(--fly-top, 120px); width: 260px;
+  max-height: calc(100vh - var(--fly-top, 120px) - 110px); min-height: 0; overflow: hidden;
+  background: var(--panel); border: 1px solid var(--line-soft); border-radius: 14px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+  animation: flyIn 0.22s ease-out;
+}
+#app.side-closed.pl-fly .pl-box .pl-sec:first-child { padding-top: 12px; }
+#app.side-closed.pl-fly .pl-box .pl-list { padding-bottom: 8px; }
+#app.side-closed.pl-fly .pl-fold .nav-item { background: var(--sel); color: var(--ink); }
+@keyframes flyIn { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+.nav-item.ins-before { box-shadow: inset 0 2px 0 var(--ink); outline: none !important; background: transparent !important; }
+.nav-item.ins-after { box-shadow: inset 0 -2px 0 var(--ink); outline: none !important; background: transparent !important; }
 #side.drop { outline: none; }
 .nav-item .ni { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .nav-item .nl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -223,6 +234,10 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12p
 /* Kontextmenü */
 .menu { position: fixed; z-index: 60; background: var(--panel); border: 1px solid var(--line-soft); border-radius: 14px; padding: 6px; min-width: 220px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4); }
 .menu .option { padding: 7px 12px; }
+.hist-row .caret { display: inline-block; width: 14px; color: var(--weak); transition: transform 0.2s; }
+.hist-row .caret.open { transform: rotate(90deg); }
+.hist-items:not(:empty) { padding: 6px 0 12px 14px; border-bottom: 1px solid var(--line-soft); max-height: 340px; overflow: auto; }
+.hist-item { font-family: var(--mono); font-size: 11px; color: var(--dim); padding: 2px 0; white-space: pre; }
 .menu .option.hold { position: relative; overflow: hidden; }
 .menu .option.hold::before { content: ""; position: absolute; inset: 0; width: 0; background: var(--sel); transition: width 0.25s ease; z-index: 0; }
 .menu .option.hold.holding::before { width: 100%; transition: width 1.2s linear; }

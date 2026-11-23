@@ -244,7 +244,7 @@ const SIDE_KEY = "ml.sideClosed";
 const INSP_KEY = "ml.inspClosed";
 function setSideClosed(closed: boolean) {
   app.classList.toggle("side-closed", closed);
-  app.classList.remove("side-peek");
+  setFly(false);
   try { localStorage.setItem(SIDE_KEY, closed ? "1" : ""); } catch {}
 }
 function setInspClosed(closed: boolean) {
@@ -255,21 +255,24 @@ try {
   if (localStorage.getItem(SIDE_KEY)) app.classList.add("side-closed");
   if (localStorage.getItem(INSP_KEY)) app.classList.add("insp-closed");
 } catch {}
-/** Eingeklappt: beim Ziehen kurz über der Leiste halten → klappt auf (bis zum Loslassen) */
-let peekTimer = 0;
-dropTarget(side, {
-  accepts: () => app.classList.contains("side-closed"),
-  enter: () => {
-    clearTimeout(peekTimer);
-    peekTimer = window.setTimeout(() => app.classList.add("side-peek"), 350);
-  },
-  leave: () => clearTimeout(peekTimer),
-  drop: () => {},
-});
+/** Eingeklappt: Playlisten als Ausklapp-Menü neben dem Symbol (Klick oder beim Ziehen kurz darüber halten) */
+let flyTimer = 0;
+let flyByDrag = false;
+function setFly(open: boolean, anchor?: HTMLElement) {
+  // Platz nach unten zu knapp → Menü weiter oben öffnen (bis ca. 440 px hoch)
+  if (open && anchor) app.style.setProperty("--fly-top", Math.max(44, Math.min(anchor.getBoundingClientRect().top - 8, window.innerHeight - 110 - 440)) + "px");
+  app.classList.toggle("pl-fly", open);
+  if (!open) flyByDrag = false;
+}
+document.addEventListener("pointerdown", (e) => {
+  if (!app.classList.contains("pl-fly")) return;
+  const t = e.target as HTMLElement;
+  if (!t.closest(".pl-box") && !t.closest(".pl-fold") && !t.closest(".menu") && !t.closest(".sheet-bg")) setFly(false);
+}, true);
 new MutationObserver(() => {
-  if (!document.body.classList.contains("is-dragging") && app.classList.contains("side-peek")) {
-    clearTimeout(peekTimer);
-    setTimeout(() => app.classList.remove("side-peek"), 250);
+  if (!document.body.classList.contains("is-dragging")) {
+    clearTimeout(flyTimer);
+    if (flyByDrag) setTimeout(() => setFly(false), 250);
   }
 }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
 
@@ -308,22 +311,50 @@ function playlistMenu(e: MouseEvent, p: Playlist) {
       ]);
 }
 
+function plFold() {
+  const box = h("div", { class: "nav pl-fold" });
+  const it = navItem("playlists", L("Playlisten"), false, () => setFly(!app.classList.contains("pl-fly"), it));
+  box.append(it);
+  dropTarget(it, {
+    accepts: (p) => p.kind === "ids" && app.classList.contains("side-closed"),
+    enter: () => {
+      clearTimeout(flyTimer);
+      flyTimer = window.setTimeout(() => { flyByDrag = true; setFly(true, it); }, 350);
+    },
+    leave: () => clearTimeout(flyTimer),
+    drop: () => {},
+  });
+  return box;
+}
+
+/** Playlist an neue Stelle ziehen (eigene Reihenfolge) */
+async function movePlaylist(id: number, target: number, after: boolean) {
+  const ids = store.playlists.map((p) => p.id).filter((x) => x !== id);
+  const at = ids.indexOf(target);
+  if (at < 0) return;
+  ids.splice(after ? at + 1 : at, 0, id);
+  await api.playlistOrder(ids);
+  await store.loadPlaylists();
+}
+
 function renderSide() {
   const n = current?.name;
   if (!side.firstChild) {
     side.append(
       h("div", { class: "brand" }, h("div", { class: "bl" }, h("img", { src: logo, alt: "" }), h("span", {}, "Minimal Library"))),
       h("div", { class: "nav", id: "mainnav" }),
-      // eingeklappt: ein Punkt für alle Playlisten (klappt die Leiste auf)
-      h("div", { class: "nav pl-fold" }, navItem("playlists", L("Playlisten"), false, () => setSideClosed(false))),
-      h("div", { class: "section pl-sec" }, L("Playlisten")),
-      h("div", { class: "section pl-sec", style: { padding: "0 20px 8px", justifyContent: "flex-start", gap: "14px" } },
-        newDrop(h("span", { class: "act", title: L("Neue Playlist (Titel hierher ziehen = direkt hinein)"), onclick: () => newPlaylistFromIds([]) }, L("+ Neu"))),
-        h("span", { class: "act", title: L("Smarte Playlist aus Regeln"), onclick: () => smartEditor() }, L("+ Smart")),
-        h("span", { class: "act", title: L("M3U/M3U8 importieren"), onclick: importPlaylist }, L("+ Import")),
+      // eingeklappt: ein Punkt für alle Playlisten – öffnet sie als Ausklapp-Menü
+      plFold(),
+      h("div", { class: "pl-box" },
+        h("div", { class: "section pl-sec" }, L("Playlisten")),
+        h("div", { class: "section pl-sec", style: { padding: "0 20px 8px", justifyContent: "flex-start", gap: "14px" } },
+          newDrop(h("span", { class: "act", title: L("Neue Playlist (Titel hierher ziehen = direkt hinein)"), onclick: () => newPlaylistFromIds([]) }, L("+ Neu"))),
+          h("span", { class: "act", title: L("Smarte Playlist aus Regeln"), onclick: () => smartEditor() }, L("+ Smart")),
+          h("span", { class: "act", title: L("M3U/M3U8 importieren"), onclick: importPlaylist }, L("+ Import")),
+        ),
+        plList,
+        newDrop(h("div", { class: "pl-new-drop" }, L("+ Neue Playlist mit diesen Titeln"))),
       ),
-      plList,
-      newDrop(h("div", { class: "pl-new-drop" }, L("+ Neue Playlist mit diesen Titeln"))),
       status,
     );
   }
@@ -345,6 +376,7 @@ function renderSide() {
     ...store.playlists.map((p, i) => {
       const star = p.name === "Stern" && !p.rules;
       const it = navItem(p.rules ? "smart" : star ? "star" : "playlist", shown(p.name), n === "playlist" && current?.arg?.[0] === p.id, (e) => {
+        if (dragging) return;
         if (e.ctrlKey || e.metaKey) {
           if (plSel.has(p.id)) plSel.delete(p.id); else plSel.add(p.id);
           plAnchor = i;
@@ -361,13 +393,26 @@ function renderSide() {
         plSel.clear();
         plSel.add(p.id);
         plAnchor = i;
+        if (app.classList.contains("pl-fly")) setFly(false);
         nav("playlist", [p.id]);
       }, String(p.count));
+      // Ziehen: Playlist umsortieren
+      it.addEventListener("pointerdown", (e) => beginDrag(e, () => ({ kind: "pl", id: p.id, name: shown(p.name) })));
       if (plSel.size > 1 && plSel.has(p.id)) it.classList.add("multi");
       // Titel auf die Playlist ziehen → hinzufügen (smarte Playlisten füllen sich selbst)
+      let after = false;
       dropTarget(it, {
-        accepts: (pl) => pl.kind === "ids" && !p.rules,
+        accepts: (pl) => (pl.kind === "ids" && !p.rules) || (pl.kind === "pl" && pl.id !== p.id),
+        over: (pl, e) => {
+          if (pl.kind !== "pl") return;
+          const r = it.getBoundingClientRect();
+          after = e.clientY > r.top + r.height / 2;
+          it.classList.toggle("ins-before", !after);
+          it.classList.toggle("ins-after", after);
+        },
+        leave: () => it.classList.remove("ins-before", "ins-after"),
         drop: async (pl) => {
+          if (pl.kind === "pl") return movePlaylist(pl.id, p.id, after);
           if (pl.kind !== "ids") return;
           await api.playlistAddItems(p.id, pl.ids);
           await store.loadPlaylists();

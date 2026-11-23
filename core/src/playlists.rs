@@ -168,7 +168,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Playlist>> {
     let all = db::all_tracks(conn)?;
     let dur: std::collections::HashMap<i64, f64> = all.iter().map(|t| (t.id, t.duration)).collect();
     let mut st =
-        conn.prepare("SELECT id, name, rules FROM playlists ORDER BY name COLLATE NOCASE")?;
+        conn.prepare("SELECT id, name, rules FROM playlists ORDER BY pos, name COLLATE NOCASE")?;
     let rows: Vec<(i64, String, Option<String>)> = st
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
         .collect::<rusqlite::Result<_>>()?;
@@ -253,7 +253,7 @@ pub fn create(conn: &Connection, name: &str, rules: Option<&SmartRules>) -> Resu
     let name = &unique_name(conn, name, None)?;
     let rules = rules.map(serde_json::to_string).transpose()?;
     conn.execute(
-        "INSERT INTO playlists(name, rules, created) VALUES(?1, ?2, ?3)",
+        "INSERT INTO playlists(name, rules, created, pos) VALUES(?1, ?2, ?3, (SELECT COALESCE(MAX(pos), -1) + 1 FROM playlists))",
         params![name, rules, now()],
     )?;
     Ok(conn.last_insert_rowid())
@@ -293,6 +293,51 @@ pub fn star(conn: &Connection, create: bool) -> Result<Option<i64>> {
 
 fn create_plain(conn: &Connection, name: &str) -> Result<i64> {
     create(conn, name, None)
+}
+
+/// Eigene Reihenfolge der Playlisten setzen
+pub fn set_order(conn: &Connection, ids: &[i64]) -> Result<()> {
+    for (i, id) in ids.iter().enumerate() {
+        conn.execute(
+            "UPDATE playlists SET pos = ?2 WHERE id = ?1",
+            params![id, i as i64],
+        )?;
+    }
+    Ok(())
+}
+
+/// Stand einer Playlist für „Rückgängig“ sichern (gibt es sie nicht, wird „neu angelegt“ vermerkt)
+pub fn backup(conn: &Connection, batch: i64, id: i64) -> Result<()> {
+    let row: Option<(String, Option<String>, i64)> = conn
+        .query_row(
+            "SELECT name, rules, pos FROM playlists WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let (existed, name, rules, pos) = match row {
+        Some((n, r, p)) => (1, n, r, p),
+        None => (0, String::new(), None, 0),
+    };
+    let items = serde_json::to_string(&item_ids(conn, id)?)?;
+    conn.execute(
+        "INSERT INTO playlist_backups(batch_id, playlist_id, existed, name, rules, items, pos) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![batch, id, existed, name, rules, items, pos],
+    )?;
+    Ok(())
+}
+
+/// Reihenfolge aller Playlisten sichern (playlist_id 0)
+pub fn backup_order(conn: &Connection, batch: i64) -> Result<()> {
+    let mut st = conn.prepare("SELECT id FROM playlists ORDER BY pos, name COLLATE NOCASE")?;
+    let ids: Vec<i64> = st
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    conn.execute(
+        "INSERT INTO playlist_backups(batch_id, playlist_id, existed, items) VALUES(?1, 0, 1, ?2)",
+        params![batch, serde_json::to_string(&ids)?],
+    )?;
+    Ok(())
 }
 
 pub fn delete(conn: &Connection, id: i64) -> Result<()> {
@@ -445,8 +490,9 @@ fn amp(s: &str) -> String {
 mod unique_tests {
     #[test]
     fn numbers() {
-        let c = rusqlite::Connection::open_in_memory().unwrap();
-        c.execute_batch(crate::db::SCHEMA).unwrap();
+        let f = std::env::temp_dir().join(format!("mlpl{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&f);
+        let c = crate::db::open(&f).unwrap();
         let a = super::create(&c, "Party", None).unwrap();
         let b = super::create(&c, "Party", None).unwrap();
         let d = super::create(&c, "party", None).unwrap();

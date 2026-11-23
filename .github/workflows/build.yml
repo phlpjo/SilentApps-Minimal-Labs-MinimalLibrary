@@ -181,13 +181,14 @@ jobs:
           tool: cross
       - name: Server bauen (statisch, musl)
         run: |
-          cross build --release -p mlserver --target x86_64-unknown-linux-musl
-          cross build --release -p mlserver --target aarch64-unknown-linux-musl
+          # getrennte Ordner: die Bau-Container haben unterschiedliche glibc (Build-Skripte nicht teilen)
+          cross build --release -p mlserver --target x86_64-unknown-linux-musl --target-dir target/dsm-x64
+          cross build --release -p mlserver --target aarch64-unknown-linux-musl --target-dir target/dsm-arm
       - name: "Kurztest Intel/AMD – startet, Anmeldung, Befehl"
         run: |
           mkdir -p "$RUNNER_TEMP/nas/music" "$RUNNER_TEMP/nas/data"
           ML_DATA="$RUNNER_TEMP/nas/data" ML_MUSIC="$RUNNER_TEMP/nas/music" ML_WEB="$PWD/dist-web" \
-            target/x86_64-unknown-linux-musl/release/minimal-library-server & sleep 3
+            target/dsm-x64/x86_64-unknown-linux-musl/release/minimal-library-server & sleep 3
           curl -sf localhost:8642/api/auth
           curl -sf -c c.txt -X POST localhost:8642/api/login -d '{"password":"testtest"}'
           curl -sf -b c.txt -X POST localhost:8642/api/invoke/get_settings -d '{}' | head -c 200
@@ -196,8 +197,8 @@ jobs:
       - name: Paket packen
         run: |
           ./server/dsm/build-spk.sh "$VERSION" \
-            target/x86_64-unknown-linux-musl/release/minimal-library-server \
-            target/aarch64-unknown-linux-musl/release/minimal-library-server \
+            target/dsm-x64/x86_64-unknown-linux-musl/release/minimal-library-server \
+            target/dsm-arm/aarch64-unknown-linux-musl/release/minimal-library-server \
             dist-web out
       - uses: actions/upload-artifact@v4
         with:

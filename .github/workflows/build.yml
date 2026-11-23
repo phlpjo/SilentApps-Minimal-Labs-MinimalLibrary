@@ -205,6 +205,8 @@ jobs:
 
       - name: Auf die Website hochladen (als neue Version, noch nicht aktiv)
         if: steps.key.outputs.site == '1'
+        # Website nicht erreichbar → Build bleibt trotzdem grün (Hinweis im Log)
+        continue-on-error: true
         env:
           NOTES: ${{ github.event.head_commit.message }}
         run: |
@@ -212,6 +214,12 @@ jobs:
           cd dl
           api="$RELEASE_SITE/api/releases/minimal-library"
           auth="Authorization: Bearer $RELEASE_UPLOAD_TOKEN"
+          # Erst prüfen, ob die Website von GitHub aus erreichbar ist und den Upload kennt
+          probe=$(curl -4 -sS -o /tmp/p.txt -w '%{http_code}' --connect-timeout 20 -X POST "$api/finish" -H "$auth" -H "Content-Type: application/json" --data '{}' || echo 000)
+          echo "Website-Test: HTTP $probe – $(head -c 200 /tmp/p.txt 2>/dev/null)"
+          if [ "$probe" = "000" ]; then echo "::warning::Website $RELEASE_SITE von GitHub aus nicht erreichbar (Verbindung abgelehnt/Zeitüberschreitung)"; exit 1; fi
+          if [ "$probe" = "404" ]; then echo "::warning::Upload-Adresse $api/finish gibt es auf der Website noch nicht"; exit 1; fi
+          if [ "$probe" = "401" ]; then echo "::warning::Upload-Token passt nicht zur Website"; exit 1; fi
           files=(
             "MinimalLibrary_${VERSION}_x64-setup.exe|windows|setup"
             "MinimalLibrary_${VERSION}_x64.msi|windows|msi"
@@ -228,7 +236,7 @@ jobs:
             i=0
             for part in $(ls parts | sort); do
               for try in 1 2 3 4; do
-                code=$(curl -sS -o /tmp/r.txt -w '%{http_code}' -X POST "$api/chunk" -H "$auth" \
+                code=$(curl -4 -sS --connect-timeout 20 --max-time 300 -o /tmp/r.txt -w '%{http_code}' -X POST "$api/chunk" -H "$auth" \
                   -H "X-Version: $VERSION" -H "X-File: $name" -H "X-Chunk: $i" -H "X-Chunks: $n" \
                   -H "Content-Type: application/octet-stream" --data-binary "@parts/$part") || code=000
                 [ "$code" = "200" ] && break
@@ -244,6 +252,6 @@ jobs:
           jq -n --arg v "$VERSION" --arg notes "$(printf '%s' "$NOTES" | head -n 1)" --arg commit "$GITHUB_SHA" \
             --argjson run "$GITHUB_RUN_NUMBER" --argjson files "$list" \
             '{version:$v, notes:$notes, commit:$commit, run:$run, files:$files}' > finish.json
-          code=$(curl -sS -o /tmp/r.txt -w '%{http_code}' -X POST "$api/finish" -H "$auth" -H "Content-Type: application/json" --data-binary @finish.json)
+          code=$(curl -4 -sS --connect-timeout 20 --max-time 600 -o /tmp/r.txt -w '%{http_code}' -X POST "$api/finish" -H "$auth" -H "Content-Type: application/json" --data-binary @finish.json)
           cat /tmp/r.txt; echo
           [ "$code" = "200" ]

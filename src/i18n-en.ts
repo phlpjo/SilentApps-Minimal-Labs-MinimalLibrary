@@ -877,4 +877,10 @@ export const EN: Record<string, string> = {
   "Wird beim nächsten Start installiert": "Will be installed at the next start",
   "Nein – beim nächsten Start": "No – at next start",
   "Jetzt installieren": "Install now",
+  "Ordner: {0}": "Folder: {0}",
+  "Ordner: {0} (Standard)": "Folder: {0} (default)",
+  "Ordner für neue Musik von diesem Handy": "Folder for new music from this phone",
+  "Ordner ändern …": "Change folder …",
+  "Standard": "Default",
+  " › <Gerätename> – wird als eigene Musikquelle angelegt (je Handy änderbar)": " › <device name> – added as its own music source (changeable per phone)",
 };

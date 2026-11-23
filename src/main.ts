@@ -311,6 +311,16 @@ function playlistMenu(e: MouseEvent, p: Playlist) {
       ]);
 }
 
+/** Logo-Zeichen ohne Kreis als „M“ im Schriftzug */
+function logoM() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "45.5 44 18 20");
+  svg.setAttribute("class", "logo-m");
+  svg.setAttribute("aria-label", "M");
+  svg.innerHTML = '<g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M47.5,46 V62"/><path d="M53,46 V62"/><path d="M57.5,47.5 L61.5,61.5"/></g>';
+  return svg;
+}
+
 function plFold() {
   const box = h("div", { class: "nav pl-fold" });
   const it = navItem("playlists", L("Playlisten"), false, () => setFly(!app.classList.contains("pl-fly"), it));
@@ -341,8 +351,8 @@ function renderSide() {
   const n = current?.name;
   if (!side.firstChild) {
     side.append(
-      // Das Logo im Kreis ersetzt das „M“ von Minimal Library
-      h("div", { class: "brand", title: "Minimal Library" }, h("div", { class: "bl" }, h("img", { src: logo, alt: "M" }), h("span", {}, "inimal Library"))),
+      // Logo wie gehabt; im Schriftzug ersetzt das Logo-Zeichen (ohne Kreis) das „M“
+      h("div", { class: "brand", title: "Minimal Library" }, h("div", { class: "bl" }, h("img", { src: logo, alt: "" }), h("span", { class: "wordmark" }, logoM(), "inimal Library"))),
       h("div", { class: "nav", id: "mainnav" }),
       // eingeklappt: ein Punkt für alle Playlisten – öffnet sie als Ausklapp-Menü
       plFold(),
@@ -564,7 +574,9 @@ listen("playlists-changed", () => store.loadPlaylists());
 listen("settings-changed", async () => { await store.loadSettings(); store.emit("settings"); });
 
 // Titel wurden aus einem anderen Tab hierher gezogen: Ordneransicht öffnen, dort auf einen Ordner ablegen
-listen<Payload>("tab-drag", (e) => {
+listen<Payload & { to?: string }>("tab-drag", (e) => {
+  // Ereignisse gehen an alle Fenster – nur der Ziel-Tab übernimmt
+  if (e.payload.kind !== "tab" || e.payload.to !== MY_TAB) return;
   nav("folders");
   setTimeout(() => externalDrag(e.payload), 150);
 });

@@ -150,11 +150,28 @@ function phoneCard() {
     if (!i) return;
     body.replaceChildren(
       h("div", { class: "setting" }, h("span", {}, L("Kopplungscode")), h("b", { style: { fontSize: "20px", letterSpacing: "3px" } }, i.code.replace(/(\d{3})(\d{3})/, "$1 $2"))),
-      ...i.paired.map((n) => h("div", { class: "setting" }, h("span", {}, "📱 " + n),
-        h("button", { class: "btn", onclick: async () => { await api.remoteUnpair(n); fill(); } }, L("Entkoppeln")))),
+      ...i.paired.map((n) => {
+        // Ordner, in den neue Musik von diesem Handy kommt (Standard: Ablage › Gerätename)
+        const own = store.settings.deviceDirs?.[n];
+        const setDir = async (d: string | null) => {
+          const m = { ...(store.settings.deviceDirs ?? {}) };
+          if (d) m[n] = d; else delete m[n];
+          await store.saveSettings({ deviceDirs: m });
+          fill();
+        };
+        return h("div", { class: "setting", style: { flexWrap: "wrap", gap: "6px 12px" } },
+          h("span", {}, "📱 " + n, h("div", { class: "note" }, own ? L("Ordner: {0}", own) : L("Ordner: {0} (Standard)", (store.settings.phoneDir || L("Musik › Minimal Library")) + " › " + n))),
+          h("span", { style: { display: "flex", gap: "8px" } },
+            h("button", { class: "btn", title: L("Ordner für neue Musik von diesem Handy"), onclick: async () => {
+              const d = await open({ directory: true, defaultPath: own });
+              if (d) setDir(d as string);
+            } }, L("Ordner ändern …")),
+            own ? h("button", { class: "btn", onclick: () => setDir(null) }, L("Standard")) : "",
+            h("button", { class: "btn", onclick: async () => { await api.remoteUnpair(n); fill(); } }, L("Entkoppeln"))));
+      }),
       i.port ? "" : h("div", { class: "err" }, L("Freigabe konnte nicht starten (Netzwerk blockiert?).")),
       h("div", { class: "setting" },
-        h("span", {}, L("Ablage für Musik vom Handy"), h("div", { class: "note" }, (store.settings.phoneDir || L("Musik › Minimal Library")) + L(" › <Gerätename> – wird als eigene Musikquelle angelegt"))),
+        h("span", {}, L("Ablage für Musik vom Handy"), h("div", { class: "note" }, (store.settings.phoneDir || L("Musik › Minimal Library")) + L(" › <Gerätename> – wird als eigene Musikquelle angelegt (je Handy änderbar)"))),
         h("button", { class: "btn", onclick: async () => {
           const d = await open({ directory: true });
           if (d) { await store.saveSettings({ phoneDir: d as string }); fill(); }

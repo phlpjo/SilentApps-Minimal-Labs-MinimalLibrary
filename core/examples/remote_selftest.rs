@@ -28,6 +28,7 @@ fn main() {
             organize_target: None,
             enabled: true,
             phone_dir: std::path::Path::new(&root).join("Handys"),
+            device_dirs: Default::default(),
         }),
         changed: Box::new(|c| println!("geändert: {c:?}")),
     });

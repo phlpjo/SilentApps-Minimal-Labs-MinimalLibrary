@@ -238,6 +238,8 @@ struct Settings {
     remote_off: bool,
     /// Ablage für Musik vom Handy (leer = „Musik/Minimal Library“ des Benutzers); je Gerät ein Unterordner
     phone_dir: Option<String>,
+    /// Ordner je gekoppeltem Handy (Gerätename → Ordner)
+    device_dirs: std::collections::HashMap<String, String>,
     /// Musikordner, die nur bei Bedarf gelesen werden (Cloud-Laufwerk) – zusätzlich zur Erkennung
     on_demand: Vec<String>,
     /// (früher: Cloud-Erkennung ausgeschaltet – nicht mehr benutzt)
@@ -314,6 +316,7 @@ impl Default for Settings {
             on_demand_off: vec![],
             remote_off: false,
             phone_dir: None,
+            device_dirs: Default::default(),
         }
     }
 }
@@ -531,6 +534,12 @@ fn start_remote(app: &AppHandle, main: &AppState) {
                     .filter(|d| !d.is_empty())
                     .map(PathBuf::from)
                     .unwrap_or_else(|| default_phone.clone()),
+                device_dirs: s
+                    .device_dirs
+                    .into_iter()
+                    .filter(|(_, d)| !d.is_empty())
+                    .map(|(k, d)| (k, PathBuf::from(d)))
+                    .collect(),
             }
         }),
         changed: Box::new(move |c| match c {

@@ -49,6 +49,7 @@ export interface Settings {
   /** Musikordner, deren Titel nicht mit anderen Musikordnern auf Duplikate verglichen werden */
   noCrossDup: string[];
   onDemand?: string[];
+  deviceDirs?: Record<string, string>;
   onDemandOff?: string[];
   /** Bibliothek nicht für Minimal Player Connected freigeben */
   remoteOff: boolean;

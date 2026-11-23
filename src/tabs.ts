@@ -150,7 +150,7 @@ function dragToTab(t: { label: string; name: string }, ids: number[]) {
   }
   const me = tabs.find((x) => x.label === MY_TAB);
   cancelDrag();
-  emitTo(t.label, "tab-drag", { kind: "tab", from: MY_TAB, fromName: shown(me?.name ?? ""), ids, names })
+  emitTo(t.label, "tab-drag", { kind: "tab", to: t.label, from: MY_TAB, fromName: shown(me?.name ?? ""), ids, names })
     .then(() => api.tabShow(t.label))
     .catch((e) => toast(String(e)));
 }

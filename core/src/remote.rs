@@ -35,6 +35,8 @@ pub struct HostSettings {
     pub enabled: bool,
     /// Ablage für Musik vom Handy (je Gerät ein Unterordner = eigene Musikquelle)
     pub phone_dir: PathBuf,
+    /// Eigener Ordner je Gerät (Name → Ordner); ohne Eintrag: phone_dir/<Gerätename>
+    pub device_dirs: std::collections::HashMap<String, PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -633,7 +635,11 @@ fn receive_upload(
     if rel.is_empty() {
         return Err(anyhow!("Dateiname fehlt"));
     }
-    let base = s.phone_dir.join(clean(client));
+    let base = s
+        .device_dirs
+        .get(client)
+        .cloned()
+        .unwrap_or_else(|| s.phone_dir.join(clean(client)));
     std::fs::create_dir_all(&base)?;
     (host.changed)(Changed::Root(base.clone()));
     let mut dest = base;

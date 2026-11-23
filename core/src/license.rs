@@ -110,6 +110,8 @@ pub struct Status {
     pub name: String,
     pub email: String,
     pub kind: String,
+    /// Kennung des Schlüssels (für die Update-Abfrage, damit die Website sie der Lizenz zuordnen kann)
+    pub id: String,
     pub trial_start: i64,
 }
 
@@ -129,6 +131,7 @@ pub fn status(trial_start: i64, key: Option<&str>, revoked: &[String], now: i64)
             name: p.n,
             email: p.e,
             kind: p.k,
+            id: p.id,
             trial_start,
         };
     }

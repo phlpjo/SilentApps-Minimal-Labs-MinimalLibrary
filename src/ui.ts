@@ -96,7 +96,8 @@ export function reportErrors(errors: string[], okMsg?: string) {
 }
 
 // ---------- Sheet ----------
-export function sheet(title: string, body: Child, opts: { wide?: boolean; onClose?: () => void } = {}) {
+/** `onDismiss`: Klick daneben / Esc ruft das statt Schließen auf (z. B. Speichern) */
+export function sheet(title: string, body: Child, opts: { wide?: boolean; onClose?: () => void; onDismiss?: () => void } = {}) {
   const box = h("div", { class: "sheet" + (opts.wide ? " wide" : "") }, h("h2", {}, title), body);
   const bg = h("div", { class: "sheet-bg" }, box);
   const close = () => {
@@ -107,11 +108,11 @@ export function sheet(title: string, body: Child, opts: { wide?: boolean; onClos
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
       e.stopPropagation();
-      close();
+      (opts.onDismiss ?? close)();
     }
   };
   bg.addEventListener("mousedown", (e) => {
-    if (e.target === bg) close();
+    if (e.target === bg) (opts.onDismiss ?? close)();
   });
   document.addEventListener("keydown", onKey, true);
   document.body.appendChild(bg);

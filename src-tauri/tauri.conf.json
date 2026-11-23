@@ -70,7 +70,6 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJCOTA4NzJCNjIxNjE4Q0QKUldUTkdCWmlLNGVRdXlITVFHQm5xL3NCaXhkRTlKMjNLdEN2TDBjMllZblhSTVlYb2JlZGE4dmEK",
       "endpoints": [
-        "https://github.com/phlpjo/SilentApps-Minimal-Labs-MinimalLibrary/releases/latest/download/latest.json",
         "https://silentapps-minimal-labs.com/api/update/minimal-library/{{target}}/{{arch}}/{{current_version}}"
       ],
       "windows": {

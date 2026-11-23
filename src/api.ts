@@ -102,7 +102,7 @@ export interface Candidate {
 export interface DirEntry { name: string; path: string; hasChildren: boolean; tracks: number }
 
 export interface CastDevice { id: string; name: string; kind: "sonos" | "dlna"; model: string }
-export interface LicenseStatus { state: "trial" | "licensed" | "expired" | "revoked"; daysLeft: number; name: string; email: string; kind: string; trialStart: number }
+export interface LicenseStatus { state: "trial" | "licensed" | "expired" | "revoked"; daysLeft: number; name: string; email: string; kind: string; id?: string; trialStart: number }
 export interface CastStatus { state: string; position: number; duration: number; volume: number; track: string }
 
 export interface ToolStatus { ytdlp: string | null; ffmpeg: boolean; dir: string }

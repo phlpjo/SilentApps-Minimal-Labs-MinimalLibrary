@@ -5,6 +5,7 @@ import { player } from "./player";
 import { store } from "./store";
 import { h, sheet, toast } from "./ui";
 import { L } from "./i18n";
+import { license } from "./license";
 
 export const updater = {
   available: null as Update | null,
@@ -30,7 +31,9 @@ export async function checkUpdate(manual = false, silent = false): Promise<void>
   updater.state = "checking";
   emit();
   try {
-    const u = await check();
+    // Mit aktiver Lizenz: deren Kennung mitschicken, damit die Website die Abfrage der Lizenz zuordnen kann
+    const id = license.state === "licensed" ? license.id : "";
+    const u = await check(id ? { headers: { "X-License-Id": id } } : undefined);
     updater.lastCheck = Date.now();
     updater.available = u;
     updater.state = u ? "available" : "none";

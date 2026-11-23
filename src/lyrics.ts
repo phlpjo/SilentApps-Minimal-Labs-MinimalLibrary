@@ -92,6 +92,15 @@ function parseTime(s: string): number | null {
   return Number(m[1]) * 60 + Number(m[2]) + (m[3] ? Number(m[3]) / Math.pow(10, m[3].length) : 0);
 }
 
+/** Schnelltaste für ♪ (instrumentale Stelle): Alt+M */
+const isNoteKey = (e: KeyboardEvent) => e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyM";
+function insertNote(el: HTMLInputElement | HTMLTextAreaElement) {
+  const a = el.selectionStart ?? el.value.length;
+  const b = el.selectionEnd ?? a;
+  el.setRangeText("♪", a, b, "end");
+  el.focus();
+}
+
 export async function editLyrics(id: number) {
   const t = store.tracks.get(id);
   if (!t) return;
@@ -132,6 +141,7 @@ export async function editLyrics(id: number) {
       });
       text.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); tap(); return; }
+        if (isNoteKey(e)) { e.preventDefault(); insertNote(text); rows[i].text = text.value; draw(); return; }
         if (e.key === "Enter") {
           e.preventDefault();
           const pos = text.selectionStart ?? text.value.length;
@@ -346,6 +356,36 @@ export async function editLyrics(id: number) {
     else { ({ head, rows } = toRows(raw.value)); raw.style.display = "none"; list.style.display = ""; rawBtn.textContent = L("Als Text"); renderRows(); draw(); }
   });
 
+  raw.addEventListener("keydown", (e) => { if (isNoteKey(e)) { e.preventDefault(); insertNote(raw); } });
+
+  // Speichern (auch beim Klick daneben / Esc) – nur „Abbrechen“ verwirft
+  const original = fromRows(head, rows);
+  let closing = false;
+  const save = async () => {
+    if (closing) return;
+    try {
+      if (raw.style.display !== "none") ({ head, rows } = toRows(raw.value));
+      const now = fromRows(head, rows);
+      if (now !== original) {
+        closing = true;
+        await api.lyricsSave(id, rows.some((r) => r.text.trim() || r.t != null) ? now : "");
+        toast(L("Songtext gespeichert"));
+        store.emit("lyrics");
+      }
+      s.close();
+    } catch (e) { closing = false; toast(String(e)); }
+  };
+  // ♪ in die zuletzt gewählte Textzeile
+  let lastInput: HTMLInputElement | HTMLTextAreaElement | null = null;
+  const noteBtn = h("button", { class: "btn", title: L("♪ einfügen (Alt+M)"), onmousedown: (e: Event) => e.preventDefault(), onclick: () => {
+    const el = (document.activeElement?.matches?.(".lyr-text, textarea") ? document.activeElement : lastInput ?? rowEls[sel]?.querySelector(".lyr-text")) as HTMLInputElement | HTMLTextAreaElement | null;
+    if (!el) return;
+    insertNote(el);
+    if (el instanceof HTMLInputElement) { const k = rowEls.findIndex((r) => r.contains(el)); if (k >= 0) { rows[k].text = el.value; draw(); } }
+  } }, "♪");
+  list.addEventListener("focusin", (e) => { if ((e.target as HTMLElement).matches(".lyr-text")) lastInput = e.target as HTMLInputElement; });
+  raw.addEventListener("focus", () => (lastInput = raw));
+
   const tool = (label: string, title: string, fn: () => void) => h("button", { class: "btn", title, onclick: fn }, label);
   const s = sheet(L("Songtext · {0}", store.label(t)), h("div", {},
     h("div", { class: "line", style: { flexWrap: "wrap", gap: "6px" } },
@@ -356,6 +396,7 @@ export async function editLyrics(id: number) {
       h("span", { class: "spacer" }),
       tool("−", L("Zeitachse verkleinern (Strg+Mausrad)"), () => { pps = Math.max(8, pps * 0.8); draw(); }),
       tool("+", L("Zeitachse vergrößern (Strg+Mausrad)"), () => { pps = Math.min(300, pps * 1.25); draw(); }),
+      noteBtn,
       fetchBtn,
       rawBtn,
     ),
@@ -374,23 +415,15 @@ export async function editLyrics(id: number) {
     ),
     list,
     raw,
-    h("div", { class: "note" }, L("Zeitachse: klicken/ziehen = spulen, Marken ziehen = Zeit verschieben, Mausrad = scrollen, Strg+Mausrad = zoomen. Zeilen: Enter = neue Zeile, Strg+Enter = Zeit setzen, Doppelklick auf die Zeit = dorthin springen. Gespeichert wird als .lrc neben der Datei."),
+    h("div", { class: "note" }, L("Zeitachse: klicken/ziehen = spulen, Marken ziehen = Zeit verschieben, Mausrad = scrollen, Strg+Mausrad = zoomen. Zeilen: Enter = neue Zeile, Strg+Enter = Zeit setzen, Doppelklick auf die Zeit = dorthin springen. Gespeichert wird als .lrc neben der Datei."), " ", L("Alt+M = ♪. Klick daneben oder Esc speichert, nur „Abbrechen“ verwirft."),
       cur?.source === "tag" ? L(" Der bisherige Text stammt aus dem Tag; Speichern legt eine .lrc an.") : ""),
     h("div", { class: "foot" },
       cur?.source === "lrc" ? holdButton(L("Songtext löschen"), async () => { await api.lyricsSave(id, ""); s.close(); store.emit("lyrics"); }, L("halten")) : "",
       h("span", { class: "spacer" }),
       h("button", { class: "btn", onclick: () => s.close() }, L("Abbrechen")),
-      h("button", { class: "btn primary", onclick: async () => {
-        try {
-          if (raw.style.display !== "none") ({ head, rows } = toRows(raw.value));
-          await api.lyricsSave(id, rows.some((r) => r.text.trim() || r.t != null) ? fromRows(head, rows) : "");
-          toast(L("Songtext gespeichert"));
-          s.close();
-          store.emit("lyrics");
-        } catch (e) { toast(String(e)); }
-      } }, L("Speichern")),
+      h("button", { class: "btn primary", onclick: save }, L("Speichern")),
     ),
-  ), { wide: true, onClose: () => { unsub(); typeof unsub2 === "function" && unsub2(); } });
+  ), { wide: true, onDismiss: save, onClose: () => { unsub(); typeof unsub2 === "function" && unsub2(); } });
   renderRows();
   requestAnimationFrame(() => { draw(); focusRow(0); });
 }

@@ -935,4 +935,6 @@ export const EN: Record<string, string> = {
   "Lautsprecher neu suchen": "Search speakers again",
   "Suche Lautsprecher …": "Searching speakers …",
   "Läuft auch gerade ({0})": "Also playing ({0})",
+  "♪ einfügen (Alt+M)": "Insert ♪ (Alt+M)",
+  "Alt+M = ♪. Klick daneben oder Esc speichert, nur „Abbrechen“ verwirft.": "Alt+M = ♪. Clicking outside or Esc saves, only “Cancel” discards.",
 };

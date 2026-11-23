@@ -4,7 +4,7 @@ import { cachedDevices, discoverIfStale, isFound, isSearching, labelsHidden, loc
 import type { CastDevice } from "../api";
 import { player } from "../player";
 import { store } from "../store";
-import { clear, h, holdButton, toast } from "../ui";
+import { clear, h, toast } from "../ui";
 import { busyBy, house, takeOver, whoOf } from "../remotectl";
 import { IS_MAC, OS } from "../platform";
 import { L } from "../i18n";
@@ -31,8 +31,8 @@ export function equalizerView(): { el: HTMLElement; destroy: () => void } {
       const action = isPlaying(local, id)
         ? h("span", { class: "out-live" }, L("● spielt hier"))
         : other
-          // Belegt von einem anderen Tab oder Handy: übernehmen nur mit Gedrückthalten
-          ? h("span", { onclick: (e: Event) => e.stopPropagation() }, holdButton(L("Übernehmen"), async () => { await takeOver(hs, outId, play); click(); }, L("halten · {0} pausiert", whoOf(other, hs.computer))))
+          // Belegt von einem anderen Tab oder Handy: übernehmen (die andere Wiedergabe pausiert)
+          ? h("button", { class: "btn small", onclick: async (e: Event) => { e.stopPropagation(); await takeOver(hs, outId, play); click(); } }, L("Übernehmen"))
           : h("button", { class: "btn small", onclick: async (e: Event) => { e.stopPropagation(); await play(); click(); } }, L("Hier abspielen"));
       return h("div", { class: "out-item" + (on ? " on" : "") + (dim ? " dim" : ""), onclick: click },
         h("span", { class: "out-name" }, label, h("small", {}, other ? L("belegt · {0}", whoOf(other, hs.computer)) : sub)),

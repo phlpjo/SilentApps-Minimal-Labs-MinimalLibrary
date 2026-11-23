@@ -4,7 +4,7 @@
 import { api, type CastDevice } from "./api";
 import { player } from "./player";
 import { store } from "./store";
-import { h, holdButton, toast } from "./ui";
+import { h, toast } from "./ui";
 import { icon } from "./icons";
 import { L } from "./i18n";
 import { IS_MAC } from "./platform";
@@ -185,19 +185,16 @@ export function outputPopup(anchor: HTMLElement) {
     box.style.top = Math.max(8, r.top - b.height - 8) + "px";
   };
   let hs: House = { computer: "", sessions: [], outputs: [] };
-  let arming = "";
   let showOthers = false;
 
   const row = (id: string, ico: string, label: string, on: boolean, select: () => Promise<void> | void, dim = false) => {
+    // Antippen = hier abspielen. Spielt dort gerade jemand anderes, hält dessen Wiedergabe an (er bekommt einen Hinweis).
     const other = on ? undefined : busyBy(hs, id);
-    if (other && arming === id) {
-      return h("div", { class: "out-row armed" }, icon(ico, 18), h("span", { class: "out-l" }, label),
-        holdButton(L("Übernehmen"), () => { close(); takeOver(hs, id, select); }, L("halten · {0} pausiert", whoOf(other, hs.computer))));
-    }
-    return h("div", { class: "out-row" + (on ? " on" : "") + (dim ? " dim" : ""), onclick: (e: Event) => {
-      if (on) return close();
-      if (other) { e.stopPropagation(); arming = id; render(); return; }
-      close(); select();
+    return h("div", { class: "out-row" + (on ? " on" : "") + (dim ? " dim" : ""), onclick: () => {
+      close();
+      if (on) return;
+      if (other) takeOver(hs, id, select);
+      else select();
     } },
       icon(ico, 18),
       h("span", { class: "out-l" }, label),

@@ -96,7 +96,7 @@ export function startRemoteControl() {
       case "next": player.next(); break;
       case "prev": player.prev(); break;
       case "seek": if (isFinite(num("pos")) && player.duration > 0) player.seekFrac(num("pos") / player.duration); break;
-      case "volume": if (isFinite(num("vol"))) player.setVolume(Math.max(0, Math.min(1, num("vol")))); break;
+      case "volume": if (isFinite(num("vol"))) { player.setVolume(Math.max(0, Math.min(1, num("vol")))); store.emit("player"); } break;
       case "shuffle": player.setShuffle(!!c.on); break;
       case "output": await setOutput(String(c.id ?? "local")); break;
       case "queue": {

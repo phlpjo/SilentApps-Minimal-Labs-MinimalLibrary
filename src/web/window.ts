@@ -9,6 +9,10 @@ const win = {
   async setTitle(t: string) { document.title = t; },
   async show() {},
   async setFocus() { window.focus(); },
+  async setFullscreen(on: boolean) {
+    if (on && !document.fullscreenElement) await document.documentElement.requestFullscreen().catch(() => {});
+    if (!on && document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+  },
   async onResized(cb: () => void) { window.addEventListener("resize", cb); return () => window.removeEventListener("resize", cb); },
   async onCloseRequested(_cb: unknown) { return () => {}; },
 };

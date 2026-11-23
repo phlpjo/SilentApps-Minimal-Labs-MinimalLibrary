@@ -1,5 +1,5 @@
 {
   "port-config": {
-    "protocol-file": "conf/MinimalLibrary.sc"
+    "protocol-file": "app/MinimalLibrary.sc"
   }
 }

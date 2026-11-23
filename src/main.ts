@@ -1,3 +1,4 @@
+import { openStage } from "./stage";
 import { lyricsPanelOpen, toggleLyricsPanel } from "./lyrics";
 import { isStarred, toggleStar } from "./star";
 import "./style.css";
@@ -676,6 +677,7 @@ function buildPlayer() {
   }, { passive: false });
   const nowInfo = h("div", { style: { minWidth: "0" } }, t1, t2);
   const lyrBtn = h("button", { class: "ibtn", title: L("Songtext (mitlaufend)"), onclick: () => toggleLyricsPanel() }, icon("lyrics"));
+  const stageBtn = h("button", { class: "ibtn", title: L("Vollbild: Sternenhimmel und Songtext"), onclick: () => openStage() }, icon("fullscreen"));
   const starBtn = h("button", { class: "ibtn star", title: L("Stern (Playlist „Stern“)"), onclick: () => player.current && toggleStar([player.current.id]) }, icon("star"));
   // Rechtsklick auf den laufenden Titel: gleiches Menü wie in der Liste
   for (const el of [cover, nowInfo]) {
@@ -708,6 +710,7 @@ function buildPlayer() {
       h("button", { class: "ibtn", title: L("Weiter"), onclick: () => player.next() }, icon("next")),
       repeatBtn,
       lyrBtn,
+      stageBtn,
     ),
     h("div", { class: "bigwave" }, wrap, h("div", { class: "time" }, tCur, tDur)),
     h("div", { class: "vol" }, devBtn, volBox),

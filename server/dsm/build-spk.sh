@@ -12,6 +12,9 @@ cp "$ARM" "$WORK/pkg/bin/minimal-library-server-aarch64"
 chmod 755 "$WORK/pkg/bin/"*
 cp -r "$WEB" "$WORK/pkg/web"
 cp -r "$HERE/ui" "$WORK/pkg/ui"
+# Firewall-Ports: Pfad ist relativ zum Paket-Ziel (/var/packages/MinimalLibrary/target), nicht zu conf/
+mkdir -p "$WORK/pkg/app"
+cp "$HERE/MinimalLibrary.sc" "$WORK/pkg/app/MinimalLibrary.sc"
 (cd "$WORK/pkg" && tar czf "$WORK/spk/package.tgz" .)
 cp -r "$HERE/scripts" "$HERE/conf" "$WORK/spk/"
 cp "$HERE/PACKAGE_ICON.PNG" "$HERE/PACKAGE_ICON_256.PNG" "$WORK/spk/"

@@ -956,4 +956,6 @@ export const EN: Record<string, string> = {
   "Speichern unter (NAS)": "Save as (NAS)",
   "Diesen Ordner wählen": "Choose this folder",
   "Leer": "Empty",
+  "Vollbild: Sternenhimmel und Songtext": "Full screen: starry sky and lyrics",
+  "Vollbild beenden (Esc)": "Exit full screen (Esc)",
 };

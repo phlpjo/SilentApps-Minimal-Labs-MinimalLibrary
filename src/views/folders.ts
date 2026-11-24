@@ -33,7 +33,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
   const info = h("span", { class: "sub" });
   const tiles = h("div", { class: "tiles" });
   let query = "";
-  const search = h("input", { type: "search", placeholder: L("In diesem Ordner suchen …"), style: { width: "210px", flex: "none" } });
+  const search = h("input", { type: "search", placeholder: L("Ordner durchsuchen …  (Strg+F)"), title: L("Sucht in diesem Ordner und allen Unterordnern"), style: { width: "230px", flex: "none" } });
   search.addEventListener("input", () => {
     query = search.value;
     showTracks();
@@ -277,7 +277,9 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     const words = searchWords(query);
     for (const t of store.tracks.values()) {
       const p = norm(t.path);
-      const inside = recursive ? p.startsWith(c + "\\") : norm(dirname(t.path)) === c;
+      // Beim Suchen immer mit allen Unterordnern
+      const deep = recursive || words.length > 0;
+      const inside = deep ? p.startsWith(c + "\\") : norm(dirname(t.path)) === c;
       if (inside) total++;
       // Suche nur im aktuellen Ordner (mit Unterordnern, wenn eingeschaltet)
       if (inside && textMatches(t, words, true)) {

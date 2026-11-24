@@ -41,8 +41,10 @@ type ViewName = "library" | "search" | "folders" | "history" | "ripper" | "sync"
 const app = document.getElementById("app")!;
 const win = getCurrentWindow();
 const backBtn = h("button", { class: "tb-btn back", title: IS_MAC ? L("Zurück (⌘[)") : L("Zurück (Alt+←)"), onclick: () => goBack() }, "‹");
+const fwdBtn = h("button", { class: "tb-btn back", title: IS_MAC ? L("Vorwärts (⌘])") : L("Vorwärts (Alt+→)"), onclick: () => goForward() }, "›");
 function updateBack() {
   backBtn.disabled = backStack.length === 0;
+  fwdBtn.disabled = fwdStack.length === 0;
 }
 const maxBtn = h("button", { class: "tb-btn", title: L("Maximieren"), onclick: () => win.toggleMaximize() }, "▢");
 const sideBtn = h("button", { class: "tb-btn tb-icon", title: L("Seitenleiste ein-/ausklappen"), onclick: () => setSideClosed(!app.classList.contains("side-closed")) }, icon("panelLeft", 17));
@@ -50,6 +52,7 @@ const inspBtn = h("button", { class: "tb-btn tb-icon", title: L("Infoleiste ein-
 const titlebar = h("header", { id: "titlebar", "data-tauri-drag-region": "" },
   sideBtn,
   backBtn,
+  fwdBtn,
   tabStrip(),
   h("div", { class: "tb-title", "data-tauri-drag-region": "" }),
   // Hell/Dunkel ganz rechts in der Titelleiste (Windows: vor den Fenstersymbolen)
@@ -79,12 +82,18 @@ window.addEventListener("mouseup", (e) => {
   if (e.button === 3) {
     e.preventDefault();
     goBack();
+  } else if (e.button === 4) {
+    e.preventDefault();
+    goForward();
   }
 });
 window.addEventListener("keydown", (e) => {
   if ((!IS_MAC && e.altKey && e.key === "ArrowLeft") || (IS_MAC && e.metaKey && (e.key === "[" || e.key === "ArrowLeft"))) {
     e.preventDefault();
     goBack();
+  } else if ((!IS_MAC && e.altKey && e.key === "ArrowRight") || (IS_MAC && e.metaKey && (e.key === "]" || e.key === "ArrowRight"))) {
+    e.preventDefault();
+    goForward();
   }
 });
 const side = h("nav", { id: "side" });
@@ -97,21 +106,36 @@ new Inspector(insp);
 let current: { name: ViewName; arg?: number[]; path?: string; destroy: () => void } | null = null;
 type HistEntry = { name: ViewName; arg?: number[]; path?: string; scroll: number[]; session: Record<string, string | null> };
 const backStack: HistEntry[] = [];
+/** Nach „Zurück“: dorthin führt „Vorwärts“ (wird bei jeder neuen Bewegung geleert) */
+const fwdStack: HistEntry[] = [];
 /** Ansichts-Zustand, der beim Zurückgehen wiederhergestellt wird (Suche, Filter, Sortierung, erweiterte Suche) */
 const SESSION_KEYS = ["ml.query", "ml.filter", "ml.sort", "ml.adv"];
 
 /** Aktuellen Stand auf den Zurück-Stapel legen – vor jeder Bewegung (Ansicht, Ordner, Suche per Klick) */
 export function recordNav() {
-  if (!current) return;
-  backStack.push({
+  const s = snapshot();
+  if (!s) return;
+  backStack.push(s);
+  if (backStack.length > 80) backStack.shift();
+  fwdStack.length = 0;
+  updateBack();
+}
+
+function snapshot(): HistEntry | null {
+  if (!current) return null;
+  return {
     name: current.name,
     arg: current.arg,
     path: current.path,
     scroll: captureScroll(),
     session: Object.fromEntries(SESSION_KEYS.map((k) => [k, sessionStorage.getItem(k)])),
-  });
-  if (backStack.length > 80) backStack.shift();
-  updateBack();
+  };
+}
+
+function restore(e: HistEntry) {
+  for (const [k, v] of Object.entries(e.session)) v === null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v);
+  nav(e.name, e.arg, e.path, true);
+  restoreScroll(e.scroll);
 }
 
 /** Ansicht meldet ihren Ort (z. B. aktueller Ordner), damit „Zurück“ genau dorthin führt */
@@ -144,9 +168,20 @@ function restoreScroll(pos: number[]) {
 export function goBack() {
   const prev = backStack.pop();
   if (prev) {
-    for (const [k, v] of Object.entries(prev.session)) v === null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v);
-    nav(prev.name, prev.arg, prev.path, true);
-    restoreScroll(prev.scroll);
+    const here = snapshot();
+    if (here) fwdStack.push(here);
+    restore(prev);
+  }
+  updateBack();
+}
+
+/** Wieder vorwärts (nach „Zurück“): Vorwärts-Taste der Maus, Alt+→, › oben links */
+export function goForward() {
+  const next = fwdStack.pop();
+  if (next) {
+    const here = snapshot();
+    if (here) backStack.push(here);
+    restore(next);
   }
   updateBack();
 }
@@ -551,7 +586,9 @@ export async function scanNow() {
     await store.loadTracks();
     await store.loadPlaylists();
     if (r.added || r.removed || r.updated) toast(L("Scan: {0} neu, {1} geändert, {2} entfernt", r.added, r.updated, r.removed));
-    if (r.errors.length) toast(L("{0} Dateien konnten nicht gelesen werden", r.errors.length));
+    const badDirs = r.errors.filter((e) => e.startsWith("Ordner nicht lesbar: "));
+    if (badDirs.length) toast(L("Ordner nicht lesbar: {0}", badDirs.map((e) => e.slice(21).split(": ")[0]).slice(0, 3).join(", ") + (badDirs.length > 3 ? " …" : "")), 8000);
+    if (r.errors.length > badDirs.length) toast(L("{0} Dateien konnten nicht gelesen werden", r.errors.length - badDirs.length));
     if (store.settings.autoAnalyze && [...store.tracks.values()].some((t) => !t.analyzed || (t.cutoff == null && !t.analysisError)) && !busy) analyzeIds(null);
   } catch (e) {
     toast(String(e));
@@ -572,7 +609,20 @@ listen<number>("analyzed", (e) => {
       store.emit("pioneer");
     }, 700);
 });
-listen<{ task: string; done: number; total: number; message: string }>("progress", (e) => setStatus(e.payload.task, e.payload.done, e.payload.total, e.payload.message));
+// Scan speichert in Paketen: neue Titel schon während des Scans zeigen (höchstens alle 3 s nachladen)
+let scanReloadAt = 0;
+let scanReloadTimer = 0;
+listen<{ task: string; done: number; total: number; message: string }>("progress", (e) => {
+  setStatus(e.payload.task, e.payload.done, e.payload.total, e.payload.message);
+  if (e.payload.task === "scan" && e.payload.message === "Titel gespeichert …" && !scanReloadTimer) {
+    const wait = Math.max(0, 3000 - (Date.now() - scanReloadAt));
+    scanReloadTimer = window.setTimeout(async () => {
+      scanReloadTimer = 0;
+      scanReloadAt = Date.now();
+      await store.loadTracks();
+    }, wait);
+  }
+});
 store.on("tracks", () => store.emit("history"));
 
 // Infobereich (Tray): Steuerung + Titel im Tooltip

@@ -59,25 +59,75 @@ pub fn refresh(conn: &Connection, path: &Path) -> Result<i64> {
     upsert(conn, path, &t)
 }
 
+/// Alle Audiodateien unter `root` – auch in Unterordnern, über Verknüpfungen hinweg.
+/// Ordner, die sich nicht lesen lassen (Cloud-Laufwerk lädt noch, kurz gesperrt …), werden einmal neu versucht;
+/// was dann noch fehlt, landet in `bad` (dort wird später nichts als „verschwunden“ gelöscht).
+fn walk(root: &Path, files: &mut Vec<PathBuf>, bad: &mut Vec<(PathBuf, String)>, progress: Progress) {
+    let mut retry: Vec<PathBuf> = Vec::new();
+    let visit = |dir: &Path, files: &mut Vec<PathBuf>, failed: &mut Vec<(PathBuf, String)>| {
+        for e in walkdir::WalkDir::new(dir).follow_links(true).into_iter() {
+            match e {
+                Ok(e) => {
+                    if e.file_type().is_file() && is_audio(e.path()) {
+                        files.push(e.into_path());
+                        if files.len() % 500 == 0 {
+                            progress(0, 0, &format!("{} Dateien gefunden …", files.len()));
+                        }
+                    }
+                }
+                Err(err) => {
+                    // Schleife durch Verknüpfungen: einfach überspringen
+                    if err.loop_ancestor().is_some() {
+                        continue;
+                    }
+                    if let Some(p) = err.path() {
+                        failed.push((p.to_path_buf(), err.to_string()));
+                    }
+                }
+            }
+        }
+    };
+    let mut failed = Vec::new();
+    visit(root, files, &mut failed);
+    for (p, _) in &failed {
+        if p.is_dir() || !p.exists() {
+            retry.push(p.clone());
+        }
+    }
+    if failed.is_empty() {
+        return;
+    }
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    let mut still = Vec::new();
+    for (p, e) in failed {
+        if retry.contains(&p) && p.is_dir() {
+            let before = still.len();
+            visit(&p, files, &mut still);
+            if still.len() == before {
+                continue; // beim zweiten Versuch geklappt
+            }
+        } else {
+            still.push((p, e));
+        }
+    }
+    bad.extend(still);
+}
+
 pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> Result<ScanReport> {
     let mut report = ScanReport::default();
     progress(0, 0, "Dateien suchen …");
     let mut files: Vec<PathBuf> = Vec::new();
+    let mut bad: Vec<(PathBuf, String)> = Vec::new();
     for root in roots {
-        for e in walkdir::WalkDir::new(root)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            if e.file_type().is_file() && is_audio(e.path()) {
-                files.push(e.into_path());
-                if files.len() % 500 == 0 {
-                    progress(0, 0, &format!("{} Dateien gefunden …", files.len()));
-                }
-            }
-        }
+        walk(root, &mut files, &mut bad, progress);
     }
+    // doppelte (über Verknüpfungen zweimal gefunden) entfernen, in Ordner-Reihenfolge
+    files.sort();
+    files.dedup();
     report.found = files.len();
+    for (p, e) in &bad {
+        report.errors.push(format!("Ordner nicht lesbar: {}: {e}", p.display()));
+    }
 
     let existing: HashMap<String, (i64, i64)> = {
         let c = conn.lock().unwrap();
@@ -94,21 +144,21 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
         })
         .collect();
 
+    // In Paketen lesen und gleich speichern: neue Titel erscheinen schon während des Scans
     let total = todo.len();
     let done = AtomicUsize::new(0);
-    let results: Vec<(PathBuf, Result<tags::TagData>)> = todo
-        .par_iter()
-        .map(|p| {
-            let r = tags::read(p);
-            let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-            if n % 25 == 0 || n == total {
-                progress(n, total, "Tags lesen …");
-            }
-            ((*p).clone(), r)
-        })
-        .collect();
-
-    {
+    for chunk in todo.chunks(300) {
+        let results: Vec<(PathBuf, Result<tags::TagData>)> = chunk
+            .par_iter()
+            .map(|p| {
+                let r = tags::read(p);
+                let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                if n % 25 == 0 || n == total {
+                    progress(n, total, "Tags lesen …");
+                }
+                ((*p).clone(), r)
+            })
+            .collect();
         let mut c = conn.lock().unwrap();
         let tx = c.transaction()?;
         for (path, r) in results {
@@ -130,14 +180,24 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
                 report.updated += 1;
             }
         }
-        // Verschwundene Dateien innerhalb der Musikordner entfernen
+        tx.commit()?;
+        drop(c);
+        // Oberfläche: neue Titel nachladen
+        progress(done.load(Ordering::Relaxed), total, "Titel gespeichert …");
+    }
+
+    {
+        let mut c = conn.lock().unwrap();
+        let tx = c.transaction()?;
+        // Verschwundene Dateien innerhalb der Musikordner entfernen – nicht in Ordnern, die gerade nicht lesbar waren
         let found: HashSet<String> = files
             .iter()
             .map(|f| f.to_string_lossy().to_string())
             .collect();
         for path in existing.keys() {
             let inside = roots.iter().any(|r| Path::new(path).starts_with(r));
-            if inside && !found.contains(path) {
+            let unreadable = bad.iter().any(|(b, _)| Path::new(path).starts_with(b));
+            if inside && !unreadable && !found.contains(path) {
                 // gemerkt: taucht die Datei woanders auf, behält sie ID und Playlist-Plätze
                 let ids: Vec<i64> = {
                     let mut st = tx.prepare("SELECT id FROM tracks WHERE path = ?1")?;
@@ -181,4 +241,30 @@ pub fn add_files(conn: &Mutex<Connection>, paths: &[PathBuf]) -> Result<Vec<i64>
         ids.push(upsert(&c, &p, &t)?);
     }
     Ok(ids)
+}
+
+#[cfg(test)]
+mod walk_tests {
+    use super::*;
+
+    #[test]
+    fn finds_files_in_all_subfolders() {
+        let dir = std::env::temp_dir().join(format!("ml-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let deep = dir.join("a").join("b c").join("d.e").join("ä ö");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::create_dir_all(dir.join(".versteckt")).unwrap();
+        for (i, p) in [dir.join("1.mp3"), dir.join("a").join("2.FLAC"), deep.join("3.m4a"), dir.join(".versteckt").join("4.mp3"), dir.join("a").join("x.txt")]
+            .iter()
+            .enumerate()
+        {
+            std::fs::write(p, [i as u8]).unwrap();
+        }
+        let mut files = Vec::new();
+        let mut bad = Vec::new();
+        walk(&dir, &mut files, &mut bad, &|_, _, _| {});
+        assert_eq!(files.len(), 4, "{files:?}");
+        assert!(bad.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

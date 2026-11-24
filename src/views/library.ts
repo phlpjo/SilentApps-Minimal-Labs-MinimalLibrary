@@ -1,3 +1,4 @@
+import { openSpectrum } from "../spectrum";
 import { editLyrics, fetchLyricsMany } from "../lyrics";
 import { isStarred, toggleStar } from "../star";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -38,6 +39,7 @@ export function trackMenu(ids: number[], extra: MenuItem[] = []): MenuItem[] {
       ],
     },
     { label: "", sep: true },
+    ...(one ? [{ label: L("Spektrum ansehen …"), action: () => openSpectrum(one.id) }] : []),
     { label: L("Neu analysieren"), action: () => analyzeIds(ids, true) },
     ...(one ? [{ label: L("Songtext …"), action: () => editLyrics(one.id) }] : []),
     { label: L("Songtexte holen (LRCLIB)"), action: () => fetchLyricsMany(ids) },

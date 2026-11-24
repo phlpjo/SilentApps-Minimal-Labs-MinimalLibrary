@@ -25,6 +25,9 @@ class Eq {
   private sources = new WeakMap<HTMLMediaElement, MediaElementAudioSourceNode>();
   private pendingSink: string | null = null;
   private volGain!: GainNode;
+  /** Ende der Filterkette (vor der Lautstärke) – hier hängt die Spektrum-Anzeige */
+  private post: AudioNode | null = null;
+  private taps: { spec: AnalyserNode; left: AnalyserNode; right: AnalyserNode } | null = null;
   private vol = 1;
   /** Schlüssel des aktuellen Ausgabegeräts, z. B. "local:default" */
   key = "local:default";
@@ -63,6 +66,7 @@ class Eq {
     this.volGain = this.ctx.createGain();
     this.volGain.gain.value = this.vol;
     node.connect(this.volGain);
+    this.post = node;
     this.volGain.connect(this.ctx.destination);
     this.apply(this.load(this.key));
     if (this.pendingSink !== null) this.setSink(this.pendingSink);
@@ -86,6 +90,31 @@ class Eq {
       }
       if (this.ctx.state === "suspended") this.ctx.resume().catch(() => {});
     });
+  }
+
+  /**
+   * Abgriff fürs Spektrum: was gerade (mit Equalizer, vor der Lautstärke) zu hören ist.
+   * null, wenn der Klangweg aus ist oder noch nichts gespielt hat.
+   */
+  tap(): { spec: AnalyserNode; left: AnalyserNode; right: AnalyserNode; rate: number } | null {
+    this.ensure();
+    if (!this.ctx || !this.post) return null;
+    if (!this.taps) {
+      const spec = this.ctx.createAnalyser();
+      spec.fftSize = 16384;
+      spec.minDecibels = -100;
+      spec.maxDecibels = 0;
+      this.post.connect(spec);
+      const split = this.ctx.createChannelSplitter(2);
+      this.post.connect(split);
+      const left = this.ctx.createAnalyser();
+      const right = this.ctx.createAnalyser();
+      left.fftSize = right.fftSize = 2048;
+      split.connect(left, 0);
+      split.connect(right, 1);
+      this.taps = { spec, left, right };
+    }
+    return { ...this.taps, rate: this.ctx.sampleRate };
   }
 
   setVolume(v: number) {

@@ -2109,7 +2109,7 @@ async fn dir_import_untracked(state: Tab, path: String) -> R<Vec<i64>> {
         let files = dirs::audio_files(Path::new(&path))?;
         let files: Vec<PathBuf> = {
             let c = db.lock().unwrap();
-            let mut st = c.prepare("SELECT 1 FROM tracks WHERE path = ?1")?;
+            let mut st = c.prepare(&format!("SELECT 1 FROM tracks WHERE {}", musiccore::paths::PATH_EQ))?;
             files.into_iter().filter(|p| !st.exists([p.to_string_lossy().as_ref()]).unwrap_or(true)).collect()
         };
         scanner::add_files(&db, &files)

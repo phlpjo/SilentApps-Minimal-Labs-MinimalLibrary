@@ -202,6 +202,42 @@ pub fn scan_with(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress
         rows.collect::<rusqlite::Result<_>>()?
     };
 
+    // Gleiche Datei in anderer Pfad-Schreibweise (Windows: Groß/klein, / statt \\, Laufwerk neu verbunden):
+    // Titel behalten und nur den Pfad angleichen – sonst gilt er als neu und wird nochmal analysiert.
+    let existing = {
+        let mut existing = existing;
+        let norm: HashMap<String, String> = existing
+            .keys()
+            .map(|k| (crate::paths::norm_key(k), k.clone()))
+            .filter(|(n, k)| n != k || cfg!(windows))
+            .collect();
+        let mut renames: Vec<(String, String)> = Vec::new();
+        if !norm.is_empty() {
+            let here: HashSet<String> = files.iter().map(|f| f.to_string_lossy().to_string()).collect();
+            for k in &here {
+                if existing.contains_key(k) {
+                    continue;
+                }
+                if let Some(old) = norm.get(&crate::paths::norm_key(k)) {
+                    if old != k && !here.contains(old) {
+                        renames.push((old.clone(), k.clone()));
+                    }
+                }
+            }
+        }
+        if !renames.is_empty() {
+            let c = conn.lock().unwrap();
+            for (old, new) in renames {
+                if c.execute("UPDATE OR IGNORE tracks SET path = ?2 WHERE path = ?1", [&old, &new]).unwrap_or(0) > 0 {
+                    if let Some(v) = existing.remove(&old) {
+                        existing.insert(new, v);
+                    }
+                }
+            }
+        }
+        existing
+    };
+
     let mut todo: Vec<&PathBuf> = files
         .iter()
         .filter(|f| match existing.get(f.to_string_lossy().as_ref()) {
@@ -291,9 +327,10 @@ pub fn scan_with(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress
                 report.added += 1;
             } else {
                 // Nur Tags geändert (gleiche Länge) → Analyse bleibt. Neu analysieren nur, wenn sich der Ton geändert hat.
+                // Länge unbekannt (Tag-Leser liefert bei manchen Dateien/Netzlaufwerken 0) → Analyse behalten
                 let audio_changed = match old_dur {
-                    Some(o) => o <= 0.0 || new_dur <= 0.0 || (o - new_dur).abs() > 0.5,
-                    None => true,
+                    Some(o) => o > 0.0 && new_dur > 0.0 && (o - new_dur).abs() > 0.5,
+                    None => false,
                 };
                 if audio_changed {
                     tx.execute("UPDATE tracks SET analyzed = 0 WHERE path = ?1", [&key])?;

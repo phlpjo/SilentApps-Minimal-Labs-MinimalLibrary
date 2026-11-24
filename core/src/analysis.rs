@@ -449,6 +449,12 @@ pub fn analyze_with(path: &Path, cancel: &AtomicBool, pioneer: bool) -> Result<A
     let mut acc = Accum::new();
     acc.want_pioneer = pioneer;
     decode(path, &mut acc, cancel)?;
+    if acc.rate == 0 || acc.frames == 0 {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(anyhow!("Abgebrochen"));
+        }
+        return Err(anyhow!("Keine Audiodaten gelesen"));
+    }
     if acc.b_n > 0 {
         acc.blocks_max.push(acc.b_max);
         acc.blocks_rms
@@ -832,19 +838,7 @@ pub fn detect_key(x: &[f32], rate: f32) -> Option<String> {
 // ---------- Bibliothek analysieren ----------
 
 pub fn store(conn: &Connection, id: i64, r: &Result<AnalysisResult>) -> Result<()> {
-    if let Ok(AnalysisResult {
-        pioneer: Some(p), ..
-    }) = r
-    {
-        // Ein von Hand korrigiertes Grid bleibt erhalten, nur die Wellenform wird erneuert
-        conn.execute(
-            "INSERT INTO pioneer_analysis(track_id, bpm, downbeat_ms, grid_edited, frames, updated) VALUES(?1, ?2, ?3, 0, ?4, ?5)
-             ON CONFLICT(track_id) DO UPDATE SET frames = excluded.frames, updated = excluded.updated,
-               bpm = CASE WHEN grid_edited = 1 THEN bpm ELSE excluded.bpm END,
-               downbeat_ms = CASE WHEN grid_edited = 1 THEN downbeat_ms ELSE excluded.downbeat_ms END",
-            params![id, p.bpm, p.downbeat_ms, p.frames, crate::now()],
-        )?;
-    }
+    // Erst den Titel als analysiert markieren – geht danach etwas schief, wird nicht alles wiederholt
     match r {
         Ok(a) => {
             conn.execute(
@@ -860,7 +854,53 @@ pub fn store(conn: &Connection, id: i64, r: &Result<AnalysisResult>) -> Result<(
             )?;
         }
     }
+    if let Ok(AnalysisResult {
+        pioneer: Some(p), ..
+    }) = r
+    {
+        // Ein von Hand korrigiertes Grid bleibt erhalten, nur die Wellenform wird erneuert
+        conn.execute(
+            "INSERT INTO pioneer_analysis(track_id, bpm, downbeat_ms, grid_edited, frames, updated) VALUES(?1, ?2, ?3, 0, ?4, ?5)
+             ON CONFLICT(track_id) DO UPDATE SET frames = excluded.frames, updated = excluded.updated,
+               bpm = CASE WHEN grid_edited = 1 THEN bpm ELSE excluded.bpm END,
+               downbeat_ms = CASE WHEN grid_edited = 1 THEN downbeat_ms ELSE excluded.downbeat_ms END",
+            params![id, p.bpm, p.downbeat_ms, p.frames, crate::now()],
+        )?;
+    }
     Ok(())
+}
+
+/// Dieselbe Datei ist schon analysiert (gleicher Name, gleiche Größe und Änderungszeit – z. B. derselbe Titel
+/// unter anderem Pfad oder als Kopie)? Dann deren Analyse übernehmen statt die Datei nochmal übers Netz zu lesen.
+fn reuse(conn: &Connection, id: i64, donor: i64, pioneer: bool) -> Result<bool> {
+    if pioneer {
+        let has: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pioneer_analysis WHERE track_id = ?1)",
+            [donor],
+            |r| r.get(0),
+        )?;
+        if !has {
+            return Ok(false);
+        }
+    }
+    let n = conn.execute(
+        "UPDATE tracks SET (analyzed, analysis_error, peaks, fingerprint, bpm, musical_key, cutoff) =
+           (SELECT 1, NULL, peaks, fingerprint, bpm, musical_key, cutoff FROM tracks WHERE id = ?2),
+         duration = CASE WHEN duration > 0 THEN duration ELSE (SELECT duration FROM tracks WHERE id = ?2) END
+         WHERE id = ?1",
+        params![id, donor],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO pioneer_analysis(track_id, bpm, downbeat_ms, grid_edited, frames, updated)
+         SELECT ?1, bpm, downbeat_ms, grid_edited, frames, updated FROM pioneer_analysis WHERE track_id = ?2",
+        params![id, donor],
+    )?;
+    Ok(n > 0)
+}
+
+fn file_name(p: &str) -> String {
+    let s = p.rsplit(['/', '\\']).next().unwrap_or(p);
+    if cfg!(windows) { s.to_lowercase() } else { s.to_string() }
 }
 
 /// Analysiert alle noch nicht analysierten Titel (oder die übergebenen IDs) parallel.
@@ -886,28 +926,57 @@ pub fn analyze_pending_with(
     progress: Progress,
     on_done: &(dyn Fn(i64) + Sync),
 ) -> Result<usize> {
-    let jobs: Vec<(i64, String)> = {
+    type Job = (i64, String, bool, i64, i64);
+    let row = |r: &rusqlite::Row| -> rusqlite::Result<Job> { Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? != 0, r.get(3)?, r.get(4)?)) };
+    let (mut jobs, reused): (Vec<Job>, Vec<i64>) = {
         let c = conn.lock().unwrap();
-        match ids {
+        let jobs: Vec<Job> = match ids {
             Some(ids) => {
-                let mut st = c.prepare("SELECT id, path FROM tracks WHERE id = ?1")?;
-                ids.iter()
-                    .filter_map(|id| st.query_row([id], |r| Ok((r.get(0)?, r.get(1)?))).ok())
-                    .collect()
+                let mut st = c.prepare("SELECT id, path, analyzed, size, mtime FROM tracks WHERE id = ?1")?;
+                ids.iter().filter_map(|id| st.query_row([id], row).ok()).collect()
             }
             None => {
                 let mut st = c.prepare(
-                    "SELECT id, path FROM tracks WHERE analyzed = 0 OR (analysis_error IS NULL AND cutoff IS NULL)
+                    "SELECT id, path, analyzed, size, mtime FROM tracks WHERE analyzed = 0 OR (analysis_error IS NULL AND cutoff IS NULL)
                        OR (?1 AND analysis_error IS NULL AND id NOT IN (SELECT track_id FROM pioneer_analysis)) ORDER BY id",
                 )?;
-                st.query_map([pioneer], |r| Ok((r.get(0)?, r.get(1)?)))?
-                    .collect::<rusqlite::Result<_>>()?
+                st.query_map([pioneer], row)?.collect::<rusqlite::Result<_>>()?
+            }
+        };
+        // Noch nie analysierte Titel: gibt es dieselbe Datei schon fertig analysiert? (nur Datenbank, kein Dateizugriff)
+        let mut reused = Vec::new();
+        if jobs.iter().any(|j| !j.2) {
+            let mut donors: std::collections::HashMap<(i64, i64, String), i64> = std::collections::HashMap::new();
+            let mut st = c.prepare(
+                "SELECT id, path, size, mtime FROM tracks WHERE analyzed = 1 AND analysis_error IS NULL AND peaks IS NOT NULL AND cutoff IS NOT NULL AND size > 0",
+            )?;
+            let rows = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?)))?;
+            for (id, path, size, mtime) in rows.flatten() {
+                donors.entry((size, mtime, file_name(&path))).or_insert(id);
+            }
+            if !donors.is_empty() {
+                for j in jobs.iter().filter(|j| !j.2 && j.3 > 0) {
+                    if let Some(&d) = donors.get(&(j.3, j.4, file_name(&j.1))) {
+                        if d != j.0 && reuse(&c, j.0, d, pioneer).unwrap_or(false) {
+                            reused.push(j.0);
+                        }
+                    }
+                }
             }
         }
+        (jobs, reused)
     };
+    if !reused.is_empty() {
+        let set: std::collections::HashSet<i64> = reused.iter().copied().collect();
+        jobs.retain(|j| !set.contains(&j.0));
+        for id in &reused {
+            on_done(*id);
+        }
+    }
+    let jobs: Vec<(i64, String)> = jobs.into_iter().map(|j| (j.0, j.1)).collect();
     let total = jobs.len();
     if total == 0 {
-        return Ok(0);
+        return Ok(reused.len());
     }
     let done = AtomicUsize::new(0);
     let pool = rayon::ThreadPoolBuilder::new()
@@ -939,7 +1008,35 @@ pub fn analyze_pending_with(
             progress(n, total, &name);
         });
     });
-    Ok(done.load(Ordering::Relaxed))
+    Ok(done.load(Ordering::Relaxed) + reused.len())
+}
+
+#[cfg(test)]
+mod reuse_tests {
+    use super::*;
+
+    #[test]
+    fn same_file_elsewhere_keeps_analysis() {
+        let base = std::env::temp_dir().join(format!("ml-reuse-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let c = crate::db::open(&base.join("t.db")).unwrap();
+        c.execute_batch(
+            "INSERT INTO tracks(id, path, size, mtime, added, analyzed, peaks, cutoff, bpm) VALUES(1, '/nas/a/Song.mp3', 1000, 77, 0, 1, x'01', -1, 128.0);
+             INSERT INTO tracks(id, path, size, mtime, added) VALUES(2, '/nas/b/Song.mp3', 1000, 77, 0);
+             INSERT INTO tracks(id, path, size, mtime, added) VALUES(3, '/nas/b/Other.mp3', 1000, 77, 0);",
+        )
+        .unwrap();
+        let m = Mutex::new(c);
+        let done = Mutex::new(Vec::new());
+        let n = analyze_pending_with(&m, Some(vec![2]), 1, false, &AtomicBool::new(false), &|_, _, _| {}, &|id| done.lock().unwrap().push(id)).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(*done.lock().unwrap(), vec![2]);
+        let c = m.lock().unwrap();
+        let (a, bpm): (i64, f64) = c.query_row("SELECT analyzed, bpm FROM tracks WHERE id = 2", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((a, bpm), (1, 128.0));
+        // anderer Dateiname → keine Übernahme
+        assert!(!c.query_row("SELECT analyzed FROM tracks WHERE id = 3", [], |r| r.get::<_, bool>(0)).unwrap());
+    }
 }
 
 #[cfg(test)]

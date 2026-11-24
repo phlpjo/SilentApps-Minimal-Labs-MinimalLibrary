@@ -160,6 +160,18 @@ mod tests {
 
 /// Liegt der Ordner in einem Cloud-Laufwerk (pCloud, OneDrive, iCloud, Google Drive, Dropbox …)?
 /// Dort lädt jedes vollständige Lesen die Datei herunter – solche Ordner werden nur bei Bedarf analysiert.
+/// Vergleichsschlüssel für Pfade: unter Windows ohne Groß/klein und mit einheitlichem Trenner
+pub fn norm_key(s: &str) -> String {
+    if cfg!(windows) {
+        s.replace('/', "\\").to_lowercase()
+    } else {
+        s.to_string()
+    }
+}
+
+/// SQL-Bedingung „Pfad gleich ?1“ – unter Windows ohne Groß/klein
+pub const PATH_EQ: &str = if cfg!(windows) { "path = ?1 COLLATE NOCASE" } else { "path = ?1" };
+
 pub fn is_cloud(p: &Path) -> bool {
     let s = p.to_string_lossy().to_lowercase().replace('\\', "/");
     const HINTS: &[&str] = &[

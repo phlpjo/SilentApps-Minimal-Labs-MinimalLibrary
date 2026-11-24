@@ -134,7 +134,7 @@ pub fn audio_files(path: &Path) -> Result<Vec<PathBuf>> {
 }
 
 pub fn untracked_files(conn: &Connection, path: &Path) -> Result<Vec<PathBuf>> {
-    let mut st = conn.prepare("SELECT 1 FROM tracks WHERE path = ?1")?;
+    let mut st = conn.prepare(&format!("SELECT 1 FROM tracks WHERE {}", crate::paths::PATH_EQ))?;
     let mut out = Vec::new();
     for e in std::fs::read_dir(path)?.filter_map(|e| e.ok()) {
         let p = e.path();

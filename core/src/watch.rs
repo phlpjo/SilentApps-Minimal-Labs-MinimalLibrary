@@ -43,7 +43,7 @@ fn ignored(p: &Path) -> bool {
 
 fn track_id(c: &Connection, p: &Path) -> Option<i64> {
     c.query_row(
-        "SELECT id FROM tracks WHERE path = ?1",
+        &format!("SELECT id FROM tracks WHERE {}", crate::paths::PATH_EQ),
         [p.to_string_lossy()],
         |r| r.get(0),
     )

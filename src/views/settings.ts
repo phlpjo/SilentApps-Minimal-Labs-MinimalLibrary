@@ -5,24 +5,38 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { store } from "../store";
 import { clear, h, holdButton, toast } from "../ui";
-import { analyzeIds, scanNow } from "../main";
+import { analyzeIds, scanNow, scanning } from "../main";
 import { applyTheme, themeMode, type ThemeMode } from "../theme";
 import { IS_MAC, FILE_MANAGER } from "../platform";
 import { autoInstall, checkUpdate, installUpdate, updater } from "../updater";
-import { L, trMsg, langMode, setLangMode, type LangMode } from "../i18n";
+import { L, LOCALE, trMsg, langMode, setLangMode, type LangMode } from "../i18n";
 import { BUY_URL, FEATURE_NAME, license, licenseSheet, setLicense, unlocked, type Feature } from "../license";
 
 export function settingsView(): { el: HTMLElement; destroy: () => void } {
   const body = h("div", { class: "view-scroll" });
+  // Musikordner sofort zeigen (hinzufügen/entfernen), auch bevor die Bibliothek fertig ist
+  let pendingRoots: string[] | null = null;
+  // Titel je Musikordner und ob gerade eingelesen wird
+  const rootStatus = (r: string) => {
+    const pre = r.replace(/[\\/]+$/, "").toLowerCase();
+    let n = 0;
+    for (const t of store.tracks.values()) {
+      const p = t.path.toLowerCase();
+      if (p.startsWith(pre + "\\") || p.startsWith(pre + "/")) n++;
+    }
+    const busy = scanning.all || scanning.roots.has(r);
+    return (busy ? L("wird eingelesen … ") : "") + L("{0} Titel", n.toLocaleString(LOCALE));
+  };
   let version = "";
   api.version().then((v) => { version = v; render(); });
 
   const render = () => {
     const s = store.settings;
     clear(body);
+    const rootList = pendingRoots ?? s.roots;
     const roots = h("div", {},
-      ...(s.roots.length
-        ? s.roots.map((r) => {
+      ...(rootList.length
+        ? rootList.map((r) => {
             // Duplikatsuche: Titel dieses Ordners auch mit den anderen Musikordnern vergleichen?
             const cross = h("input", { type: "checkbox", checked: !(s.noCrossDup ?? []).includes(r) }) as HTMLInputElement;
             cross.addEventListener("change", () => {
@@ -43,7 +57,17 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
               h("span", { style: { fontFamily: "var(--mono)", fontSize: "12px", flex: "1", minWidth: "220px", wordBreak: "break-all" } }, r),
               s.roots.length > 1 ? h("label", { class: "check", title: L("Aus: Duplikate nur innerhalb dieses Ordners suchen") }, cross, L("Duplikate mit anderen Musikordnern finden")) : "",
               h("label", { class: "check", title: L("Spart Speicher bei Cloud-Laufwerken wie pCloud oder OneDrive: Titel und Tags werden gelesen, Wellenform, Tempo, Tonart, Qualität und Fingerabdruck aber erst beim Abspielen oder Export. Ohne Haken wird auch ein Cloud-Ordner komplett analysiert – Datei für Datei nacheinander.") }, od, L("Nur bei Bedarf laden (Cloud)")),
-              h("button", { class: "btn", onclick: async () => { await store.saveSettings({ roots: s.roots.filter((x) => x !== r), noCrossDup: (s.noCrossDup ?? []).filter((x) => x !== r), onDemand: (s.onDemand ?? []).filter((x) => x !== r), onDemandOff: (s.onDemandOff ?? []).filter((x) => x !== r) }); render(); scanNow(); } }, L("Entfernen")),
+              h("span", { class: "note root-status", "data-root": r, style: { margin: "0" } }, rootStatus(r)),
+              // Entfernen nur mit Gedrückthalten; Liste sofort aktualisieren, Bibliothek räumt im Hintergrund auf
+              holdButton(L("Entfernen"), async () => {
+                const keep = s.roots.filter((x) => x !== r);
+                pendingRoots = keep;
+                render();
+                await store.saveSettings({ roots: keep, noCrossDup: (s.noCrossDup ?? []).filter((x) => x !== r), onDemand: (s.onDemand ?? []).filter((x) => x !== r), onDemandOff: (s.onDemandOff ?? []).filter((x) => x !== r) });
+                pendingRoots = null;
+                await store.loadTracks();
+                render();
+              }, L("halten · Titel verlassen die Bibliothek")),
             );
           })
         : [h("div", { class: "note" }, L("Noch kein Musikordner. Füge den Ordner hinzu, in dem deine Musik liegt."))]),
@@ -78,9 +102,16 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
           h("button", { class: "btn primary", onclick: async () => {
             const d = await open({ directory: true, multiple: false });
             if (!d) return;
-            await store.saveSettings({ roots: [...new Set([...s.roots, d as string])] });
+            const dir = d as string;
+            if (s.roots.includes(dir)) return toast(L("Ist schon ein Musikordner"));
+            // sofort zeigen, dann einlesen (samt allen Unterordnern) und gleich analysieren
+            pendingRoots = [...s.roots, dir];
+            scanning.roots.add(dir);
             render();
-            scanNow();
+            await store.saveSettings({ roots: [...new Set([...s.roots, dir])] });
+            pendingRoots = null;
+            render();
+            scanNow([dir]);
           } }, L("Ordner hinzufügen …")),
           h("button", { class: "btn", onclick: () => scanNow() }, L("Jetzt scannen")),
         ),
@@ -121,7 +152,16 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
       ),
     );
   };
-  const unsubs = [store.on("settings", render), store.on("update", render)];
+  // Titelzahl/„wird eingelesen“ je Musikordner laufend nachführen (ohne die Seite neu aufzubauen)
+  let statT = 0;
+  const updStatus = () => {
+    if (statT) return;
+    statT = window.setTimeout(() => {
+      statT = 0;
+      body.querySelectorAll<HTMLElement>(".root-status").forEach((e) => (e.textContent = rootStatus(e.dataset.root ?? "")));
+    }, 400);
+  };
+  const unsubs = [store.on("settings", render), store.on("update", render), store.on("tracks", updStatus), store.on("scanning", updStatus)];
   render();
   const el = h("div", { style: { display: "contents" } }, h("div", { class: "head" }, h("h1", {}, L("Einstellungen"))), body);
   return { el, destroy: () => unsubs.forEach((u) => u()) };

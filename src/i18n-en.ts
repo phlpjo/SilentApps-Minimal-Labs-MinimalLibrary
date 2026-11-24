@@ -989,4 +989,7 @@ export const EN: Record<string, string> = {
   "Stärkste Stelle: {0}Hz ({1} dB)": "Strongest: {0}Hz ({1} dB)",
   "Für das Spektrum muss der Klangweg an sein (Einstellungen → Ausgabe).": "The spectrum needs the audio path to be on (Settings → Output).",
   "Grenze {0}Hz": "Cutoff {0}Hz",
+  "wird eingelesen … ": "reading … ",
+  "halten · Titel verlassen die Bibliothek": "hold · tracks leave the library",
+  "Ist schon ein Musikordner": "Already a music folder",
 };

@@ -579,19 +579,36 @@ store.on("pruned", () => {
   }, 1200);
 });
 
-export async function scanNow() {
+/** Scans nacheinander (nie zwei gleichzeitig über dieselben Dateien) */
+let scanChain: Promise<void> = Promise.resolve();
+export const scanning = { roots: new Set<string>(), all: false };
+
+/** Musikordner einlesen. `only`: nur diese Ordner (z. B. gerade hinzugefügt) – danach immer gleich analysieren. */
+export function scanNow(only?: string[]): Promise<void> {
+  const job = scanChain.then(() => runScan(only));
+  scanChain = job.catch(() => {});
+  return job;
+}
+
+async function runScan(only?: string[]) {
   if (!store.settings.roots.length) return;
+  if (only) only.forEach((r) => scanning.roots.add(r)); else scanning.all = true;
+  store.emit("scanning");
   try {
-    const r = await api.scan();
+    const r = await api.scan(only);
     await store.loadTracks();
     await store.loadPlaylists();
     if (r.added || r.removed || r.updated) toast(L("Scan: {0} neu, {1} geändert, {2} entfernt", r.added, r.updated, r.removed));
     const badDirs = r.errors.filter((e) => e.startsWith("Ordner nicht lesbar: "));
     if (badDirs.length) toast(L("Ordner nicht lesbar: {0}", badDirs.map((e) => e.slice(21).split(": ")[0]).slice(0, 3).join(", ") + (badDirs.length > 3 ? " …" : "")), 8000);
     if (r.errors.length > badDirs.length) toast(L("{0} Dateien konnten nicht gelesen werden", r.errors.length - badDirs.length));
-    if (store.settings.autoAnalyze && [...store.tracks.values()].some((t) => !t.analyzed || (t.cutoff == null && !t.analysisError)) && !busy) analyzeIds(null);
+    const want = only ? true : store.settings.autoAnalyze;
+    if (want && [...store.tracks.values()].some((t) => !t.analyzed || (t.cutoff == null && !t.analysisError)) && !busy) analyzeIds(null);
   } catch (e) {
     toast(String(e));
+  } finally {
+    if (only) only.forEach((r) => scanning.roots.delete(r)); else scanning.all = false;
+    store.emit("scanning");
   }
 }
 

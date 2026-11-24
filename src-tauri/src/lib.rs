@@ -907,13 +907,17 @@ fn handle_deep_link(app: &AppHandle, url: &str) {
 // ---------- Bibliothek ----------
 
 #[tauri::command]
-async fn scan_library(app: AppHandle, state: Tab) -> R<scanner::ScanReport> {
+async fn scan_library(app: AppHandle, state: Tab, only: Option<Vec<String>>) -> R<scanner::ScanReport> {
     let db = state.db.clone();
-    let roots: Vec<PathBuf> = load_settings(&db.lock().unwrap())
+    let mut roots: Vec<PathBuf> = load_settings(&db.lock().unwrap())
         .roots
         .iter()
         .map(PathBuf::from)
         .collect();
+    // Nur bestimmte Musikordner (z. B. gerade hinzugefügt) – schneller als alles
+    if let Some(only) = only {
+        roots.retain(|r| only.iter().any(|o| Path::new(o) == r));
+    }
     let prog = emitter(&app, &state.label, "scan");
     blocking(move || {
         let r = scanner::scan(&db, &roots, &prog)?;

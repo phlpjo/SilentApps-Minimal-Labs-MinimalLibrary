@@ -69,6 +69,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     return c;
   };
 
+  let countT = 0;
   const reloadAll = async () => {
     const paths = [...roots(), ...expanded.values(), current].filter(Boolean);
     children.clear();
@@ -392,7 +393,12 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
   document.addEventListener("keydown", onKey);
 
   const unsubs = [
-    store.on("tracks", () => { showTracks(); renderTree(); }),
+    store.on("tracks", () => {
+      showTracks();
+      renderTree();
+      // Zahlen im Ordnerbaum frisch holen (z. B. während ein Scan läuft) – höchstens alle 4 s
+      if (!countT) countT = window.setTimeout(() => { countT = 0; reloadAll(); }, 4000);
+    }),
     store.on("dirs", () => reloadAll()),
     store.on("settings", () => reloadAll()),
   ];

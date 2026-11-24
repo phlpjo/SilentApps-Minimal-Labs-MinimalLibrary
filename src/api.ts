@@ -123,7 +123,7 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   /** Gibt die Zahl der Titel zurück, die wegen entfernter Musikordner aus der Bibliothek fielen */
   setSettings: (settings: Settings) => invoke<number>("set_settings", { settings }),
-  scan: () => invoke<ScanReport>("scan_library"),
+  scan: (only?: string[]) => invoke<ScanReport>("scan_library", { only: only ?? null }),
   addPaths: (paths: string[]) => invoke<{ ids: number[]; skipped: number; newRoots: string[] }>("add_paths", { paths }),
   listTracks: () => invoke<Track[]>("list_tracks"),
   getTracks: (ids: number[]) => invoke<Track[]>("get_tracks", { ids }),

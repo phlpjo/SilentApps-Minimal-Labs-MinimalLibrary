@@ -6,7 +6,7 @@ import { api, type Track } from "../api";
 import { player } from "../player";
 import { store } from "../store";
 import { TrackList } from "../tracklist";
-import { fmtDuration, searchNorm, h, holdButton, reportErrors, sheet, toast, type MenuItem } from "../ui";
+import { calm, fmtDuration, searchNorm, h, holdButton, reportErrors, sheet, toast, type MenuItem } from "../ui";
 import { analyzeIds, newPlaylistFromIds, nav } from "../main";
 import { moveTracksPick, renameFileDialog } from "../fileops";
 import { SHOW_IN, TRASH } from "../platform";
@@ -162,7 +162,9 @@ export function libraryView(): { el: HTMLElement; destroy: () => void } {
     }
   };
   document.addEventListener("keydown", onKey);
-  const unsub = store.on("tracks", refresh);
+  // Während Scan/Analyse ruhig bleiben: gebündelt neu zeichnen
+  const calmRefresh = calm(refresh, 800);
+  const unsub = store.on("tracks", calmRefresh);
   const el = h("div", { style: { display: "contents" } },
     h("div", { class: "head" }, h("h1", {}, L("Bibliothek")), info, h("div", { class: "spacer" }), sel, search),
     list.el,
@@ -173,6 +175,7 @@ export function libraryView(): { el: HTMLElement; destroy: () => void } {
     destroy: () => {
       sessionStorage.setItem("ml.sort", list.sort);
       unsub();
+      calmRefresh.cancel();
       list.destroy();
       document.removeEventListener("keydown", onKey);
     },

@@ -69,7 +69,26 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     return c;
   };
 
-  let countT = 0;
+  let tracksT = 0;
+  let pointerDown = false;
+  // Titelzahlen je Ordner aus der Bibliothek im Speicher (kein Plattenzugriff, auch nicht übers NAS)
+  let countsDirty = true;
+  let counts = new Map<string, number>();
+  const countOf = (path: string) => {
+    if (countsDirty) {
+      counts = new Map();
+      for (const t of store.tracks.values()) {
+        let d = norm(t.path);
+        let i: number;
+        while ((i = d.lastIndexOf("\\")) > 0) {
+          d = d.slice(0, i);
+          counts.set(d, (counts.get(d) ?? 0) + 1);
+        }
+      }
+      countsDirty = false;
+    }
+    return counts.get(norm(path).replace(/\\+$/, "")) ?? 0;
+  };
   const reloadAll = async () => {
     const paths = [...roots(), ...expanded.values(), current].filter(Boolean);
     children.clear();
@@ -95,7 +114,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     if (!isRoot) row.addEventListener("pointerdown", (e) => beginDrag(e, () => ({ kind: "dir", path })));
     folderDrop(row, path, () => { if (hasChildren && !expanded.has(key)) toggle(path); });
     const out: HTMLElement[] = [row];
-    if (open) for (const c of children.get(key) ?? []) out.push(...node(c.name, c.path, depth + 1, c.hasChildren, c.tracks, false));
+    if (open) for (const c of children.get(key) ?? []) out.push(...node(c.name, c.path, depth + 1, c.hasChildren, countOf(c.path), false));
     return out;
   };
 
@@ -106,7 +125,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     }
     const nodes: HTMLElement[] = [];
     for (const r of roots()) {
-      const count = [...store.tracks.values()].filter((t) => norm(t.path).startsWith(norm(r) + "\\")).length;
+      const count = countOf(r);
       nodes.push(...node(basename(r.replace(/[\\/]+$/, "")) || r, r, 0, (children.get(norm(r)) ?? []).length > 0, count, true));
     }
     tree.replaceChildren(...nodes);
@@ -393,11 +412,18 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
   document.addEventListener("keydown", onKey);
 
   const unsubs = [
+    // Während Scan/Analyse kommen laufend Änderungen: gesammelt höchstens einmal pro Sekunde zeichnen,
+    // nie während man gerade klickt/zieht – Ordnerstruktur wird dabei nicht neu von der Platte gelesen.
     store.on("tracks", () => {
-      showTracks();
-      renderTree();
-      // Zahlen im Ordnerbaum frisch holen (z. B. während ein Scan läuft) – höchstens alle 4 s
-      if (!countT) countT = window.setTimeout(() => { countT = 0; reloadAll(); }, 4000);
+      countsDirty = true;
+      if (tracksT) return;
+      const run = () => {
+        if (pointerDown) { tracksT = window.setTimeout(run, 300); return; }
+        tracksT = 0;
+        showTracks();
+        renderTree();
+      };
+      tracksT = window.setTimeout(run, 1000);
     }),
     store.on("dirs", () => reloadAll()),
     store.on("settings", () => reloadAll()),
@@ -443,5 +469,11 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     if (startTrack) requestAnimationFrame(() => list.reveal(startTrack.id));
   })();
 
-  return { el, destroy: () => { localStorage.setItem("ml.folderSort", list.sort); unsubs.forEach((u) => u()); list.destroy(); document.removeEventListener("keydown", onKey); } };
+  // Während man klickt/zieht, nicht neu zeichnen (sonst landet der Klick im Leeren)
+  const down = () => (pointerDown = true);
+  const up = () => (pointerDown = false);
+  el.addEventListener("pointerdown", down, true);
+  window.addEventListener("pointerup", up, true);
+  window.addEventListener("pointercancel", up, true);
+  return { el, destroy: () => { localStorage.setItem("ml.folderSort", list.sort); unsubs.forEach((u) => u()); list.destroy(); document.removeEventListener("keydown", onKey); window.removeEventListener("pointerup", up, true); window.removeEventListener("pointercancel", up, true); clearTimeout(tracksT); } };
 }

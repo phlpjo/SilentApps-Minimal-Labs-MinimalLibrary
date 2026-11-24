@@ -353,3 +353,25 @@ export function qualityText(t: { realKbps: number | null; upscaled: boolean; los
   if (t.realKbps) return short ? `≈ ${t.realKbps}` : L("≈ {0} kbps", t.realKbps);
   return short ? "" : L("nicht messbar");
 }
+
+/** Häufige Ereignisse (Scan/Analyse) bündeln: höchstens alle `ms` ausführen, nie während die Maus gedrückt ist */
+let mouseDown = false;
+window.addEventListener("pointerdown", () => (mouseDown = true), true);
+window.addEventListener("pointerup", () => (mouseDown = false), true);
+window.addEventListener("pointercancel", () => (mouseDown = false), true);
+export function calm(fn: () => void, ms = 700): (() => void) & { cancel: () => void } {
+  let t = 0;
+  let last = 0;
+  const run = () => {
+    if (mouseDown) { t = window.setTimeout(run, 250); return; }
+    t = 0;
+    last = Date.now();
+    fn();
+  };
+  const f = (() => {
+    if (t) return;
+    t = window.setTimeout(run, Math.max(0, ms - (Date.now() - last)));
+  }) as (() => void) & { cancel: () => void };
+  f.cancel = () => clearTimeout(t);
+  return f;
+}

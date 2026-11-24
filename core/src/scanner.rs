@@ -86,6 +86,11 @@ pub fn upsert(conn: &Connection, path: &Path, t: &tags::TagData) -> Result<i64> 
         anyhow::bail!("{}: nicht mehr vorhanden", path.display());
     }
     let (size, mtime) = file_stat(path);
+    upsert_stat(conn, path, t, size, mtime)
+}
+
+/// Wie `upsert`, Größe/Änderungszeit schon bekannt (kein Dateizugriff, während die Datenbank gesperrt ist)
+pub fn upsert_stat(conn: &Connection, path: &Path, t: &tags::TagData, size: i64, mtime: i64) -> Result<i64> {
     let p = path.to_string_lossy().to_string();
     conn.execute(
         "INSERT INTO tracks (path, size, mtime, added, title, artist, album, album_artist, genre, year, track_no, disc_no, comment, duration, bitrate, sample_rate, channels, has_cover, tag_bpm, tag_key)
@@ -164,6 +169,12 @@ fn walk(root: &Path, files: &mut Vec<PathBuf>, bad: &mut Vec<(PathBuf, String)>,
 }
 
 pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> Result<ScanReport> {
+    scan_with(conn, roots, progress, &|_| {})
+}
+
+/// Wie `scan`; `on_batch` bekommt nach jedem gespeicherten Paket die Kennungen der neuen/geänderten Titel
+/// (die Oberfläche lädt nur diese nach statt der ganzen Bibliothek).
+pub fn scan_with(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress, on_batch: &dyn Fn(Vec<i64>)) -> Result<ScanReport> {
     let mut report = ScanReport::default();
     progress(0, 0, "Dateien suchen …");
     let mut files: Vec<PathBuf> = Vec::new();
@@ -198,29 +209,48 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
             None => true,
         })
         .collect();
-    // Früher verschwundene Titel (z. B. als das NAS kurz weg war) mit alter ID, Analyse und Playlist-Plätzen zurückholen
+    // Früher verschwundene Titel (z. B. als das NAS kurz weg war) mit alter ID, Analyse und Playlist-Plätzen zurückholen.
+    // Dateigrößen vorher lesen – nicht, während die Datenbank gesperrt ist.
     {
-        let c = conn.lock().unwrap();
-        todo.retain(|f| {
-            if existing.contains_key(f.to_string_lossy().as_ref()) {
-                return true;
-            }
-            let (size, mtime) = file_stat(f);
-            match crate::db::revive_lost(&c, f, size, mtime) {
-                Ok(Some(_)) => {
-                    report.updated += 1;
-                    false
+        let fresh: Vec<(PathBuf, i64, i64)> = todo
+            .iter()
+            .filter(|f| !existing.contains_key(f.to_string_lossy().as_ref()))
+            .map(|f| {
+                let (size, mtime) = file_stat(f);
+                ((*f).clone(), size, mtime)
+            })
+            .collect();
+        let has_lost: bool = conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT EXISTS(SELECT 1 FROM lost_tracks)", [], |r| r.get(0))
+            .unwrap_or(false);
+        if has_lost && !fresh.is_empty() {
+            let mut revived: HashSet<PathBuf> = HashSet::new();
+            let mut ids = Vec::new();
+            for chunk in fresh.chunks(200) {
+                let c = conn.lock().unwrap();
+                for (f, size, mtime) in chunk {
+                    if let Ok(Some(id)) = crate::db::revive_lost(&c, f, *size, *mtime) {
+                        revived.insert(f.clone());
+                        ids.push(id);
+                    }
                 }
-                _ => true,
             }
-        });
+            report.updated += revived.len();
+            todo.retain(|f| !revived.contains(*f));
+            if !ids.is_empty() {
+                on_batch(ids);
+            }
+        }
     }
 
     // In Paketen lesen und gleich speichern: neue Titel erscheinen schon während des Scans
     let total = todo.len();
     let done = AtomicUsize::new(0);
     for chunk in todo.chunks(300) {
-        let results: Vec<(PathBuf, Result<tags::TagData>)> = chunk
+        // Tags und Dateigröße ohne Datenbank-Sperre lesen (NAS/Netzwerk kann langsam sein)
+        let results: Vec<(PathBuf, Result<tags::TagData>, bool, (i64, i64))> = chunk
             .par_iter()
             .map(|p| {
                 let r = tags::read(p);
@@ -228,14 +258,17 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
                 if n % 25 == 0 || n == total {
                     progress(n, total, "Tags lesen …");
                 }
-                ((*p).clone(), r)
+                let missing = gone(p);
+                let st = file_stat(p);
+                ((*p).clone(), r, missing, st)
             })
             .collect();
+        let mut batch_ids = Vec::new();
         let mut c = conn.lock().unwrap();
         let tx = c.transaction()?;
-        for (path, r) in results {
+        for (path, r, missing, (size, mtime)) in results {
             // Während des Scans gelöscht oder verschoben → nicht wieder aufnehmen
-            if gone(&path) {
+            if missing {
                 continue;
             }
             let key = path.to_string_lossy().to_string();
@@ -253,7 +286,7 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
                 }
             };
             let new_dur = data.duration;
-            upsert(&tx, &path, &data)?;
+            batch_ids.push(upsert_stat(&tx, &path, &data, size, mtime)?);
             if is_new {
                 report.added += 1;
             } else {
@@ -270,20 +303,21 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
         }
         tx.commit()?;
         drop(c);
-        // Oberfläche: neue Titel nachladen
+        // Oberfläche: nur diese Titel nachladen
+        on_batch(batch_ids);
         progress(done.load(Ordering::Relaxed), total, "Titel gespeichert …");
     }
 
     {
-        let mut c = conn.lock().unwrap();
-        let tx = c.transaction()?;
-        // Verschwundene Dateien innerhalb der Musikordner entfernen – nicht in Ordnern, die gerade nicht lesbar waren
+        // Verschwundene Dateien innerhalb der Musikordner entfernen – nicht in Ordnern, die gerade nicht lesbar waren.
+        // Erst ohne Datenbank-Sperre prüfen (Dateisystem), dann kurz sperren und entfernen.
         let found: HashSet<String> = files
             .iter()
             .map(|f| f.to_string_lossy().to_string())
             .collect();
         let mut listing = HashMap::new();
         let mut kept = 0usize;
+        let mut remove: Vec<&String> = Vec::new();
         for path in existing.keys() {
             let inside = roots.iter().any(|r| Path::new(path).starts_with(r));
             let unreadable = bad.iter().any(|(b, _)| Path::new(path).starts_with(b));
@@ -294,6 +328,13 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
                     kept += 1;
                     continue;
                 }
+                remove.push(path);
+            }
+        }
+        let mut c = conn.lock().unwrap();
+        let tx = c.transaction()?;
+        for path in remove {
+            {
                 // gemerkt: taucht die Datei woanders auf, behält sie ID und Playlist-Plätze
                 let ids: Vec<i64> = {
                     let mut st = tx.prepare("SELECT id FROM tracks WHERE path = ?1")?;

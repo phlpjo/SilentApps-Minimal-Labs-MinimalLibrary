@@ -125,7 +125,9 @@ fn tab_state(app: &AppHandle, label: &str) -> anyhow::Result<Arc<AppState>> {
         m.entry(label.to_string()).or_insert(st).clone()
     };
     if st.watcher.lock().unwrap().is_none() {
-        restart_watcher(app, &st);
+        // Überwachung im Hintergrund starten: Netzlaufwerke/NAS können dabei Sekunden brauchen – die App startet sofort
+        let (app2, st2) = (app.clone(), st.clone());
+        std::thread::spawn(move || restart_watcher(&app2, &st2));
     }
     Ok(st)
 }
@@ -919,8 +921,13 @@ async fn scan_library(app: AppHandle, state: Tab, only: Option<Vec<String>>) -> 
         roots.retain(|r| only.iter().any(|o| Path::new(o) == r));
     }
     let prog = emitter(&app, &state.label, "scan");
+    let (app2, label) = (app.clone(), state.label.clone());
     blocking(move || {
-        let r = scanner::scan(&db, &roots, &prog)?;
+        // Nach jedem gespeicherten Paket nur dessen Titel an die Oberfläche melden (statt alles neu zu laden)
+        let batch = move |ids: Vec<i64>| {
+            let _ = app2.emit_to(&label, "scan-batch", ids);
+        };
+        let r = scanner::scan_with(&db, &roots, &prog, &batch)?;
         sync_playlists(&db.lock().unwrap());
         Ok(r)
     })
@@ -2086,7 +2093,12 @@ async fn sync_playlist_folder(state: Tab) -> R<usize> {
 #[tauri::command]
 async fn dir_list(state: Tab, path: String) -> R<Vec<dirs::DirEntry>> {
     let db = state.db.clone();
-    blocking(move || dirs::list(&db.lock().unwrap(), Path::new(&path))).await
+    blocking(move || {
+        // Erst den (evtl. langsamen) Ordner lesen, dann kurz die Datenbank – nie das NAS lesen, während die DB gesperrt ist
+        let fs = dirs::list_fs(Path::new(&path))?;
+        dirs::with_counts(&db.lock().unwrap(), Path::new(&path), fs)
+    })
+    .await
 }
 
 /// Audiodateien im Ordner, die noch nicht in der Bibliothek sind, aufnehmen.
@@ -2094,7 +2106,12 @@ async fn dir_list(state: Tab, path: String) -> R<Vec<dirs::DirEntry>> {
 async fn dir_import_untracked(state: Tab, path: String) -> R<Vec<i64>> {
     let db = state.db.clone();
     blocking(move || {
-        let files = dirs::untracked_files(&db.lock().unwrap(), Path::new(&path))?;
+        let files = dirs::audio_files(Path::new(&path))?;
+        let files: Vec<PathBuf> = {
+            let c = db.lock().unwrap();
+            let mut st = c.prepare("SELECT 1 FROM tracks WHERE path = ?1")?;
+            files.into_iter().filter(|p| !st.exists([p.to_string_lossy().as_ref()]).unwrap_or(true)).collect()
+        };
         scanner::add_files(&db, &files)
     })
     .await

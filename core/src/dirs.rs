@@ -44,6 +44,48 @@ fn hidden(p: &Path) -> bool {
 }
 
 /// Unterordner von `path` mit Titelanzahl (alphabetisch).
+/// Unterordner samt „hat selbst Unterordner“ – nur Dateisystem, ohne Datenbank (darf langsam sein, z. B. NAS)
+pub fn list_fs(path: &Path) -> Result<Vec<(PathBuf, bool)>> {
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(path)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .map(|e| e.path())
+        .filter(|p| !hidden(p))
+        .collect();
+    dirs.sort_by_key(|p| {
+        p.file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default()
+    });
+    Ok(dirs.into_iter().map(|d| {
+        let sub = has_subdirs(&d);
+        (d, sub)
+    }).collect())
+}
+
+/// Zu `list_fs` die Titelzahlen aus der Datenbank (schnell)
+pub fn with_counts(conn: &Connection, path: &Path, dirs: Vec<(PathBuf, bool)>) -> Result<Vec<DirEntry>> {
+    let all: Vec<String> = {
+        let prefix = with_sep(&path.to_string_lossy());
+        let mut st = conn.prepare("SELECT path FROM tracks WHERE substr(path, 1, ?2) = ?1")?;
+        st.query_map(params![prefix, prefix.chars().count() as i64], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    Ok(dirs
+        .into_iter()
+        .map(|(d, has_children)| {
+            let p = d.to_string_lossy().to_string();
+            let pre = with_sep(&p);
+            DirEntry {
+                name: d.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                tracks: all.iter().filter(|t| t.starts_with(&pre)).count(),
+                has_children,
+                path: p,
+            }
+        })
+        .collect())
+}
+
 pub fn list(conn: &Connection, path: &Path) -> Result<Vec<DirEntry>> {
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(path)?
         .filter_map(|e| e.ok())
@@ -81,6 +123,16 @@ pub fn list(conn: &Connection, path: &Path) -> Result<Vec<DirEntry>> {
 }
 
 /// Audiodateien direkt in einem Ordner, die (noch) nicht in der Bibliothek sind.
+/// Audiodateien direkt in einem Ordner (nur Dateisystem)
+pub fn audio_files(path: &Path) -> Result<Vec<PathBuf>> {
+    Ok(std::fs::read_dir(path)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_file() || t.is_symlink()).unwrap_or(false))
+        .map(|e| e.path())
+        .filter(|p| is_audio(p))
+        .collect())
+}
+
 pub fn untracked_files(conn: &Connection, path: &Path) -> Result<Vec<PathBuf>> {
     let mut st = conn.prepare("SELECT 1 FROM tracks WHERE path = ?1")?;
     let mut out = Vec::new();

@@ -11,7 +11,7 @@ import { api, type LibraryChange, type Playlist } from "./api";
 import { Inspector } from "./inspector";
 import { player } from "./player";
 import { store } from "./store";
-import { albumLink, artistLinks, onAlbumClick, clear, contextMenu, fmtTime, h, onArtistClick, sheet, toast } from "./ui";
+import { albumLink, artistLinks, calm, onAlbumClick, clear, contextMenu, fmtTime, h, onArtistClick, sheet, toast } from "./ui";
 import { drawWave, waveElement } from "./waveform";
 import { beginDrag, dragging, dropTarget, externalDrag, type Payload } from "./dnd";
 import { duplicatesView } from "./views/duplicates";
@@ -626,19 +626,19 @@ listen<number>("analyzed", (e) => {
       store.emit("pioneer");
     }, 700);
 });
-// Scan speichert in Paketen: neue Titel schon während des Scans zeigen (höchstens alle 3 s nachladen)
-let scanReloadAt = 0;
-let scanReloadTimer = 0;
-listen<{ task: string; done: number; total: number; message: string }>("progress", (e) => {
-  setStatus(e.payload.task, e.payload.done, e.payload.total, e.payload.message);
-  if (e.payload.task === "scan" && e.payload.message === "Titel gespeichert …" && !scanReloadTimer) {
-    const wait = Math.max(0, 3000 - (Date.now() - scanReloadAt));
-    scanReloadTimer = window.setTimeout(async () => {
-      scanReloadTimer = 0;
-      scanReloadAt = Date.now();
-      await store.loadTracks();
-    }, wait);
-  }
+listen<{ task: string; done: number; total: number; message: string }>("progress", (e) => setStatus(e.payload.task, e.payload.done, e.payload.total, e.payload.message));
+// Scan speichert in Paketen: nur die neuen/geänderten Titel nachladen, gesammelt höchstens einmal pro Sekunde
+let batchIds: number[] = [];
+let batchTimer = 0;
+listen<number[]>("scan-batch", (e) => {
+  batchIds.push(...e.payload);
+  if (!batchTimer)
+    batchTimer = window.setTimeout(async () => {
+      const ids = batchIds;
+      batchIds = [];
+      batchTimer = 0;
+      await store.refreshTracks(ids);
+    }, 1000);
 });
 store.on("tracks", () => store.emit("history"));
 
@@ -849,7 +849,7 @@ document.addEventListener("contextmenu", (e) => {
 store.on("playlists", renderSide);
 store.on("sync", renderSide);
 store.on("update", renderSide);
-store.on("tracks", renderSide);
+store.on("tracks", calm(renderSide, 1000));
 
 async function start() {
   buildPlayer();

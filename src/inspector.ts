@@ -31,6 +31,10 @@ export class Inspector {
   private ids: number[] = [];
   private timer = 0;
   private pendingCoverRelease: string | null = null;
+  /** Stand der angezeigten Titel – nur neu aufbauen, wenn sich daran wirklich etwas geändert hat */
+  private sig = "";
+  private coverFor = -1;
+  private coverUrl: string | null = null;
 
   constructor(private el: HTMLElement) {
     store.on("selection", () => this.schedule());
@@ -47,8 +51,12 @@ export class Inspector {
     clearTimeout(this.timer);
     this.timer = window.setTimeout(() => {
       const ids = [...store.selection].filter((id) => store.tracks.has(id));
-      // Ungespeicherte Eingaben nicht überschreiben, wenn nur Daten aktualisiert wurden
-      if (onlyIfChanged && this.dirty() && ids.join() === this.ids.join()) return;
+      if (onlyIfChanged && ids.join() === this.ids.join()) {
+        // Bibliothek wurde aktualisiert (z. B. läuft die Analyse): Seitenleiste nur neu aufbauen, wenn sich die
+        // ausgewählten Titel geändert haben – und nie, solange man darin tippt oder ungespeicherte Eingaben hat.
+        if (this.dirty() || this.el.contains(document.activeElement)) return;
+        if (this.signature(ids) === this.sig) return;
+      }
       this.render(ids);
     }, 60);
   }
@@ -61,8 +69,13 @@ export class Inspector {
     return false;
   }
 
+  private signature(ids: number[]) {
+    return JSON.stringify(ids.map((id) => store.tracks.get(id)));
+  }
+
   render(ids: number[]) {
     this.ids = ids;
+    this.sig = this.signature(ids);
     this.pendingCoverRelease = null;
     clear(this.el);
     this.inputs.clear();
@@ -76,10 +89,16 @@ export class Inspector {
 
     // Cover
     const cov = h("div", { class: "cover" }, tracks[0].hasCover ? "…" : L("Kein Cover"));
+    const showCover = (url: string | null) =>
+      cov.replaceChildren(url ? h("img", { src: url, title: L("Klicken: groß ansehen"), onclick: (e: Event) => zoomCover(e.currentTarget as HTMLElement, tracks[0].id, url) }) : L("Kein Cover"));
     if (tracks[0].hasCover) {
+      // Gleicher Titel wie eben: Cover sofort zeigen (kein Flackern beim Neuaufbau)
+      if (this.coverFor === tracks[0].id && this.coverUrl) showCover(this.coverUrl);
       api.getCover(tracks[0].id).then((url) => {
         if (this.ids !== ids) return;
-        cov.replaceChildren(url ? h("img", { src: url, title: L("Klicken: groß ansehen"), onclick: (e: Event) => zoomCover(e.currentTarget as HTMLElement, tracks[0].id, url) }) : L("Kein Cover"));
+        this.coverFor = tracks[0].id;
+        this.coverUrl = url;
+        if (url !== (cov.querySelector("img") as HTMLImageElement | null)?.getAttribute("src")) showCover(url);
       });
     }
     this.el.append(

@@ -121,6 +121,8 @@ fn tab_state(app: &AppHandle, label: &str) -> anyhow::Result<Arc<AppState>> {
         .iter()
         .map(PathBuf::from)
         .collect();
+    // Pfade wie „Y:Ordner\\…“ (fehlender Trenner nach dem Laufwerk) berichtigen – sonst gelten sie als außerhalb
+    let _ = db::repair_drive_paths(&conn);
     let _ = dirs::prune_outside(&conn, &roots);
     for r in &roots {
         let _ = app.asset_protocol_scope().allow_directory(r, true);
@@ -2109,6 +2111,7 @@ async fn sync_playlist_folder(state: Tab) -> R<usize> {
 
 #[tauri::command]
 async fn dir_list(state: Tab, path: String) -> R<Vec<dirs::DirEntry>> {
+    let path = musiccore::paths::fix_drive(&path);
     let db = state.db.clone();
     blocking(move || {
         // Erst den (evtl. langsamen) Ordner lesen, dann kurz die Datenbank – nie das NAS lesen, während die DB gesperrt ist
@@ -2121,6 +2124,7 @@ async fn dir_list(state: Tab, path: String) -> R<Vec<dirs::DirEntry>> {
 /// Audiodateien im Ordner, die noch nicht in der Bibliothek sind, aufnehmen.
 #[tauri::command]
 async fn dir_import_untracked(state: Tab, path: String) -> R<Vec<i64>> {
+    let path = musiccore::paths::fix_drive(&path);
     let db = state.db.clone();
     blocking(move || {
         let files = dirs::audio_files(Path::new(&path))?;
@@ -2136,6 +2140,7 @@ async fn dir_import_untracked(state: Tab, path: String) -> R<Vec<i64>> {
 
 #[tauri::command]
 fn dir_create(app: AppHandle, parent: String, name: String) -> R<String> {
+    let parent = musiccore::paths::fix_drive(&parent);
     let p = dirs::create(Path::new(&parent), &name).map_err(err)?;
     let _ = app.asset_protocol_scope().allow_directory(&p, true);
     Ok(p.to_string_lossy().to_string())
@@ -2143,6 +2148,7 @@ fn dir_create(app: AppHandle, parent: String, name: String) -> R<String> {
 
 #[tauri::command]
 async fn dir_rename(app: AppHandle, state: Tab, path: String, name: String) -> R<String> {
+    let path = musiccore::paths::fix_drive(&path);
     let db = state.db.clone();
     let p = blocking(move || {
         let c = db.lock().unwrap();
@@ -2170,6 +2176,8 @@ async fn dir_rename(app: AppHandle, state: Tab, path: String, name: String) -> R
 
 #[tauri::command]
 async fn dir_move(app: AppHandle, state: Tab, path: String, target: String) -> R<String> {
+    let path = musiccore::paths::fix_drive(&path);
+    let target = musiccore::paths::fix_drive(&target);
     let db = state.db.clone();
     let p = blocking(move || {
         let c = db.lock().unwrap();
@@ -2199,6 +2207,7 @@ async fn dir_move(app: AppHandle, state: Tab, path: String, target: String) -> R
 
 #[tauri::command]
 async fn dir_trash(state: Tab, path: String) -> R<usize> {
+    let path = musiccore::paths::fix_drive(&path);
     let db = state.db.clone();
     blocking(move || {
         {

@@ -64,7 +64,14 @@ export function basename(p: string): string {
 
 export function dirname(p: string): string {
   const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-  return i > 0 ? p.slice(0, i) : p;
+  return fixDrive(i > 0 ? p.slice(0, i) : p);
+}
+
+/** Windows-Laufwerk: „Y:“ heißt „aktueller Ordner auf Y“, nicht „Y:\\“ – immer mit Trenner nach dem Doppelpunkt */
+export function fixDrive(p: string): string {
+  if (/^[A-Za-z]:$/.test(p)) return p + "\\";
+  if (/^[A-Za-z]:[^\\/]/.test(p)) return p.slice(0, 2) + "\\" + p.slice(2);
+  return p;
 }
 
 export function ext(p: string): string {

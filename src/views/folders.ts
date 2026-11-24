@@ -3,7 +3,7 @@ import { api, type DirEntry } from "../api";
 import { player } from "../player";
 import { store } from "../store";
 import { TrackList } from "../tracklist";
-import { basename, clear, contextMenu, dirname, fmtDuration, h, holdButton, reportErrors, sheet, toast, type MenuItem } from "../ui";
+import { basename, clear, contextMenu, dirname, fixDrive, fmtDuration, h, holdButton, reportErrors, sheet, toast, type MenuItem } from "../ui";
 import { dupGate, moveTracksTo } from "../fileops";
 import { MY_TAB } from "../tabs";
 import { beginDrag, dragging, dropTarget } from "../dnd";
@@ -18,13 +18,13 @@ const norm = (p: string) => p.replace(/[\\/]+$/, "").replace(/\//g, "\\").toLowe
 export function foldersView(startPath?: string): { el: HTMLElement; destroy: () => void } {
   const roots = () => store.settings.roots;
   // aufgeklappte Ordner: normalisiert → echter Pfad
-  const expanded = new Map<string, string>((JSON.parse(localStorage.getItem("ml.expanded") ?? "[]") as string[]).map((p) => [norm(p), p]));
+  const expanded = new Map<string, string>((JSON.parse(localStorage.getItem("ml.expanded") ?? "[]") as string[]).map((p) => [norm(fixDrive(p)), fixDrive(p)]));
   const saveExpanded = () => localStorage.setItem("ml.expanded", JSON.stringify([...expanded.values()]));
-  const expand = (p: string) => expanded.set(norm(p), p);
+  const expand = (p: string) => expanded.set(norm(p), fixDrive(p));
   const children = new Map<string, DirEntry[]>();
   // startPath: Datei (→ ihr Ordner, Titel markieren) oder Ordner (z. B. beim Zurückgehen)
   const startTrack = startPath ? [...store.tracks.values()].find((t) => norm(t.path) === norm(startPath)) : undefined;
-  let current = startTrack ? dirname(startTrack.path) : startPath ?? localStorage.getItem("ml.folder") ?? roots()[0] ?? "";
+  let current = fixDrive(startTrack ? dirname(startTrack.path) : startPath ?? localStorage.getItem("ml.folder") ?? roots()[0] ?? "");
   if (current && !roots().some((r) => norm(current).startsWith(norm(r)))) current = roots()[0] ?? "";
   let recursive = localStorage.getItem("ml.recursive") === "1";
 
@@ -64,7 +64,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
   // ---------- Daten ----------
   const load = async (path: string, force = false) => {
     if (!force && children.has(norm(path))) return children.get(norm(path))!;
-    const c = await api.dirList(path).catch(() => [] as DirEntry[]);
+    const c = await api.dirList(fixDrive(path)).catch(() => [] as DirEntry[]);
     children.set(norm(path), c);
     return c;
   };
@@ -208,6 +208,7 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
   // ---------- Ordner öffnen ----------
   let ready = false;
   const openFolder = async (path: string) => {
+    path = fixDrive(path);
     if (ready && norm(path) !== norm(current)) recordNav(); // jeder Ordnerwechsel ist ein Schritt für „Zurück“
     setViewPath(path);
     if (norm(path) !== norm(current)) search.value = query = "";
@@ -219,11 +220,11 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     for (const r of roots()) {
       if (!norm(path).startsWith(norm(r))) continue;
       const parts = path.slice(r.replace(/[\\/]+$/, "").length).split(/[\\/]/).filter(Boolean);
-      let p = r.replace(/[\\/]+$/, "");
+      let p = fixDrive(r.replace(/[\\/]+$/, ""));
       expand(p);
       await load(p);
       for (const part of parts.slice(0, -1)) {
-        p += (p.includes("/") && !p.includes("\\") ? "/" : "\\") + part;
+        p = (p.endsWith("\\") || p.endsWith("/") ? p : p + (p.includes("/") && !p.includes("\\") ? "/" : "\\")) + part;
         expand(p);
         await load(p);
       }
@@ -251,9 +252,9 @@ export function foldersView(startPath?: string): { el: HTMLElement; destroy: () 
     const parts = current.slice(base.length).split(/[\\/]/).filter(Boolean);
     const sep = base.includes("/") && !base.includes("\\") ? "/" : "\\";
     let p = base;
-    const segs: [string, string][] = [[basename(base) || base, base]];
+    const segs: [string, string][] = [[basename(base) || base, fixDrive(base)]];
     for (const part of parts) {
-      p += sep + part;
+      p = (p.endsWith("\\") || p.endsWith("/") ? p : p + sep) + part;
       segs.push([part, p]);
     }
     segs.forEach(([name, path], i) => {

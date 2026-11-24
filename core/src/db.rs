@@ -481,6 +481,92 @@ pub fn forget_tracks(conn: &Connection, ids: &[i64]) -> Result<usize> {
     Ok(n)
 }
 
+/// Reparatur: Pfade wie „Y:Ordner\\Titel.mp3“ (Laufwerk ohne Trenner, entstand beim Öffnen von „Y:\\“ in der
+/// Ordneransicht) zu „Y:\\Ordner\\Titel.mp3“. Gibt es den richtigen Pfad schon, wird der doppelte Eintrag
+/// zusammengeführt (Playlisten, Analyse, Cues gehen auf den richtigen über). Gibt die Anzahl reparierter Titel zurück.
+pub fn repair_drive_paths(conn: &Connection) -> Result<usize> {
+    let bad: Vec<(i64, String)> = {
+        let mut st = conn.prepare("SELECT id, path FROM tracks WHERE path GLOB '[A-Za-z]:[^\\/]*'")?;
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    let lost: Vec<(i64, String)> = {
+        let mut st = conn.prepare("SELECT id, path FROM lost_tracks WHERE path GLOB '[A-Za-z]:[^\\/]*'")?;
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    if bad.is_empty() && lost.is_empty() {
+        return Ok(0);
+    }
+    let tables: Vec<String> = {
+        let mut st = conn.prepare(
+            "SELECT m.name FROM sqlite_master m, pragma_table_info(m.name) c WHERE m.type = 'table' AND c.name = 'track_id'",
+        )?;
+        st.query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    let find = |p: &str| -> Option<i64> {
+        conn.query_row(
+            &format!("SELECT id FROM tracks WHERE {}", crate::paths::PATH_EQ),
+            [p],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+    };
+    conn.execute_batch("BEGIN")?;
+    let mut merged = 0;
+    let mut moved = 0;
+    for (id, path) in &bad {
+        let fixed = crate::paths::fix_drive_str(path);
+        match find(&fixed) {
+            Some(good) if good != *id => {
+                for t in &tables {
+                    if t == "pioneer_analysis" || t == "cues" {
+                        let has: bool = conn.query_row(
+                            &format!("SELECT EXISTS(SELECT 1 FROM {t} WHERE track_id = ?1)"),
+                            [good],
+                            |r| r.get(0),
+                        )?;
+                        if has {
+                            continue;
+                        }
+                    }
+                    conn.execute(&format!("UPDATE OR IGNORE {t} SET track_id = ?2 WHERE track_id = ?1"), [id, &good])?;
+                }
+                // Analyse übernehmen, falls der richtige Eintrag noch keine hat
+                conn.execute(
+                    "UPDATE tracks SET (analyzed, analysis_error, peaks, fingerprint, bpm, musical_key, cutoff) =
+                       (SELECT analyzed, analysis_error, peaks, fingerprint, bpm, musical_key, cutoff FROM tracks WHERE id = ?2)
+                     WHERE id = ?1 AND analyzed = 0 AND (SELECT analyzed FROM tracks WHERE id = ?2) = 1",
+                    [good, *id],
+                )?;
+                conn.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
+                merged += 1;
+            }
+            _ => {
+                conn.execute("UPDATE OR IGNORE tracks SET path = ?2 WHERE id = ?1", params![id, fixed])?;
+                moved += 1;
+            }
+        }
+    }
+    for (id, path) in &lost {
+        let fixed = crate::paths::fix_drive_str(path);
+        if find(&fixed).is_some() {
+            conn.execute("DELETE FROM lost_tracks WHERE id = ?1", [id])?;
+        } else {
+            conn.execute("UPDATE lost_tracks SET path = ?2 WHERE id = ?1", params![id, fixed])?;
+        }
+    }
+    conn.execute_batch("COMMIT")?;
+    crate::diag::log(format!(
+        "Reparatur Laufwerkspfade: {merged} doppelte Titel zusammengeführt, {moved} Pfade berichtigt, {} gemerkte berichtigt",
+        lost.len()
+    ));
+    Ok(merged + moved)
+}
+
 /// Neue Datei = früher verschwundener Titel? Dann mit alter ID, Analyse und Playlist-Plätzen zurückholen.
 pub fn revive_lost(conn: &Connection, path: &Path, size: i64, mtime: i64) -> Result<Option<i64>> {
     let name = path
@@ -578,5 +664,38 @@ mod lost_tests {
             .unwrap();
         assert_eq!(p, "/b/x.mp3");
         assert_eq!(crate::playlists::track_ids(&c, pl).unwrap(), vec![id]);
+    }
+}
+
+#[cfg(test)]
+mod drive_tests {
+    use super::*;
+
+    #[test]
+    fn repairs_drive_relative_paths() {
+        assert_eq!(crate::paths::fix_drive_str("Y:"), "Y:\\");
+        assert_eq!(crate::paths::fix_drive_str("Y:Tanja\\a.mp3"), "Y:\\Tanja\\a.mp3");
+        assert_eq!(crate::paths::fix_drive_str("Y:\\Tanja"), "Y:\\Tanja");
+        assert_eq!(crate::paths::fix_drive_str("/m/a.mp3"), "/m/a.mp3");
+        let base = std::env::temp_dir().join(format!("ml-drive-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let c = open(&base.join("t.db")).unwrap();
+        c.execute_batch(
+            "INSERT INTO tracks(id, path, size, mtime, added, analyzed) VALUES(1, 'Y:\\T\\a.mp3', 1, 1, 0, 0);
+             INSERT INTO tracks(id, path, size, mtime, added, analyzed, bpm) VALUES(2, 'Y:T\\a.mp3', 1, 1, 0, 1, 120.0);
+             INSERT INTO tracks(id, path, size, mtime, added) VALUES(3, 'Y:T\\b.mp3', 1, 1, 0);
+             INSERT INTO playlists(id, name) VALUES(1, 'p');
+             INSERT INTO playlist_items(playlist_id, pos, track_id) VALUES(1, 0, 2);",
+        )
+        .unwrap();
+        assert_eq!(repair_drive_paths(&c).unwrap(), 2);
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 2);
+        let (a, bpm): (i64, f64) = c.query_row("SELECT analyzed, bpm FROM tracks WHERE id = 1", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((a, bpm), (1, 120.0));
+        let pl: i64 = c.query_row("SELECT track_id FROM playlist_items", [], |r| r.get(0)).unwrap();
+        assert_eq!(pl, 1);
+        let p: String = c.query_row("SELECT path FROM tracks WHERE id = 3", [], |r| r.get(0)).unwrap();
+        assert_eq!(p, "Y:\\T\\b.mp3");
     }
 }

@@ -160,6 +160,25 @@ mod tests {
 
 /// Liegt der Ordner in einem Cloud-Laufwerk (pCloud, OneDrive, iCloud, Google Drive, Dropbox …)?
 /// Dort lädt jedes vollständige Lesen die Datei herunter – solche Ordner werden nur bei Bedarf analysiert.
+/// „Y:“ bzw. „Y:Ordner“ meint unter Windows den *aktuellen* Ordner auf Y – gemeint ist aber immer „Y:\\…“.
+pub fn fix_drive_str(s: &str) -> String {
+    let b = s.as_bytes();
+    if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+        if b.len() == 2 {
+            return format!("{s}\\");
+        }
+        if b[2] != b'\\' && b[2] != b'/' {
+            return format!("{}\\{}", &s[..2], &s[2..]);
+        }
+    }
+    s.to_string()
+}
+
+/// Wie `fix_drive_str`, nur unter Windows
+pub fn fix_drive(s: &str) -> String {
+    if cfg!(windows) { fix_drive_str(s) } else { s.to_string() }
+}
+
 /// Vergleichsschlüssel für Pfade: unter Windows ohne Groß/klein und mit einheitlichem Trenner
 pub fn norm_key(s: &str) -> String {
     if cfg!(windows) {

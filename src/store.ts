@@ -24,9 +24,32 @@ class Store {
     this.listeners.get(ev)?.forEach((f) => f());
   }
 
+  /** Gerade gelöschte Titel: verspätete Antworten von früher gestarteten Abfragen dürfen sie nicht zurückholen */
+  private deleted = new Map<number, number>();
+  private loadSeq = 0;
+
+  markDeleted(ids: number[]) {
+    const now = Date.now();
+    for (const [id, t] of this.deleted) if (now - t > 60_000) this.deleted.delete(id);
+    for (const id of ids) {
+      this.deleted.set(id, now);
+      this.tracks.delete(id);
+      this.selection.delete(id);
+    }
+    this.emit("tracks");
+  }
+
+  private isDeleted(id: number) {
+    const t = this.deleted.get(id);
+    return t != null && Date.now() - t < 60_000;
+  }
+
   async loadTracks() {
+    const seq = ++this.loadSeq;
     const list = await api.listTracks();
-    this.tracks = new Map(list.map((t) => [t.id, t]));
+    // Inzwischen wurde neuer geladen → diese (ältere) Antwort verwerfen
+    if (seq !== this.loadSeq) return;
+    this.tracks = new Map(list.filter((t) => !this.isDeleted(t.id)).map((t) => [t.id, t]));
     for (const id of [...this.selection]) if (!this.tracks.has(id)) this.selection.delete(id);
     this.emit("tracks");
   }
@@ -35,7 +58,7 @@ class Store {
     if (!ids.length) return;
     const list = await api.getTracks(ids);
     const found = new Set(list.map((t) => t.id));
-    for (const t of list) this.tracks.set(t.id, t);
+    for (const t of list) if (!this.isDeleted(t.id)) this.tracks.set(t.id, t);
     for (const id of ids) {
       if (!found.has(id)) this.tracks.delete(id);
       this.peaks.delete(id);

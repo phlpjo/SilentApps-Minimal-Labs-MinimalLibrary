@@ -34,7 +34,16 @@ fn file_stat(p: &Path) -> (i64, i64) {
 }
 
 /// Schreibt gelesene Tags + Dateiinfos in die Datenbank (neu oder aktualisiert).
+/// Datei inzwischen gelöscht oder verschoben? Dann darf ein Scan oder die Ordnerüberwachung, die noch den alten
+/// Stand kennt, sie nicht wieder in die Bibliothek holen (sonst tauchen gelöschte Titel wieder auf).
+pub fn gone(path: &Path) -> bool {
+    !path.exists()
+}
+
 pub fn upsert(conn: &Connection, path: &Path, t: &tags::TagData) -> Result<i64> {
+    if gone(path) {
+        anyhow::bail!("{}: nicht mehr vorhanden", path.display());
+    }
     let (size, mtime) = file_stat(path);
     let p = path.to_string_lossy().to_string();
     conn.execute(
@@ -162,8 +171,17 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
         let mut c = conn.lock().unwrap();
         let tx = c.transaction()?;
         for (path, r) in results {
+            // Während des Scans gelöscht oder verschoben → nicht wieder aufnehmen
+            if gone(&path) {
+                continue;
+            }
             let key = path.to_string_lossy().to_string();
             let is_new = !existing.contains_key(&key);
+            let old_dur: Option<f64> = if is_new {
+                None
+            } else {
+                tx.query_row("SELECT duration FROM tracks WHERE path = ?1", [&key], |r| r.get(0)).ok()
+            };
             let data = match r {
                 Ok(d) => d,
                 Err(e) => {
@@ -171,12 +189,19 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
                     tags::TagData::default()
                 }
             };
+            let new_dur = data.duration;
             upsert(&tx, &path, &data)?;
             if is_new {
                 report.added += 1;
             } else {
-                // Geänderte Datei → Analyse neu
-                tx.execute("UPDATE tracks SET analyzed = 0 WHERE path = ?1", [&key])?;
+                // Nur Tags geändert (gleiche Länge) → Analyse bleibt. Neu analysieren nur, wenn sich der Ton geändert hat.
+                let audio_changed = match old_dur {
+                    Some(o) => o <= 0.0 || new_dur <= 0.0 || (o - new_dur).abs() > 0.5,
+                    None => true,
+                };
+                if audio_changed {
+                    tx.execute("UPDATE tracks SET analyzed = 0 WHERE path = ?1", [&key])?;
+                }
                 report.updated += 1;
             }
         }
@@ -238,6 +263,9 @@ pub fn add_files(conn: &Mutex<Connection>, paths: &[PathBuf]) -> Result<Vec<i64>
     let c = conn.lock().unwrap();
     let mut ids = Vec::new();
     for (p, t) in read {
+        if gone(&p) {
+            continue;
+        }
         ids.push(upsert(&c, &p, &t)?);
     }
     Ok(ids)

@@ -75,7 +75,11 @@ export function trackMenu(ids: number[], extra: MenuItem[] = []): MenuItem[] {
               holdButton(L("In den Papierkorb"), async () => {
                 s.close();
                 player.release(ids);
-                reportErrors(await api.trash(ids), L("{0} Datei{1} im Papierkorb", ids.length, pl(ids.length, "en")));
+                const errs = await api.trash(ids);
+                // Was wirklich weg ist, sofort und endgültig aus der Anzeige nehmen
+                const failed = new Set(errs.map((e) => e.split(": ")[0]));
+                store.markDeleted(ids.filter((id) => !failed.has(store.tracks.get(id)?.path ?? "")));
+                reportErrors(errs, L("{0} Datei{1} im Papierkorb", ids.length, pl(ids.length, "en")));
                 await store.loadTracks();
                 store.loadPlaylists();
               }),

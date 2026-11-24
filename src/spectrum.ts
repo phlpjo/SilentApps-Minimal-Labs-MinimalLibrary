@@ -19,11 +19,13 @@ const loadPrefs = (): Prefs => {
 };
 
 const FMIN = 20;
-const FMAX = 20000;
+// bis zur halben Abtastrate (44,1 kHz → 22 kHz): so sieht man, ob oben etwas abgeschnitten ist
+let FMAX = 22050;
 const DB_MIN = -90;
 const DB_MAX = 0;
 // Terzbänder (1/3 Oktave), 20 Hz – 20 kHz
-const THIRDS = Array.from({ length: 31 }, (_, i) => 1000 * Math.pow(2, (i - 17) / 3)).filter((f) => f >= 19 && f <= 21000);
+const THIRDS = Array.from({ length: 33 }, (_, i) => 1000 * Math.pow(2, (i - 17) / 3)).filter((f) => f >= 19 && f <= 24000);
+const GRID = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000, 20000];
 const fmtF = (f: number) => (f >= 1000 ? (f / 1000).toFixed(f >= 10000 ? 0 : 1).replace(".0", "") + " k" : Math.round(f) + "");
 
 let panel: HTMLElement | null = null;
@@ -165,6 +167,7 @@ export async function openSpectrum(trackId?: number) {
   };
 
   const draw = (rate: number, dt: number, now: number, live: boolean) => {
+    FMAX = rate / 2;
     const { w, h: hh, dpr } = size(cv);
     const g = cv.getContext("2d")!;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -181,7 +184,7 @@ export async function openSpectrum(trackId?: number) {
     g.strokeStyle = DIM;
     g.globalAlpha = 0.25;
     g.lineWidth = 1;
-    for (const f of [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]) {
+    for (const f of GRID) {
       const x = Math.round(xOf(f)) + 0.5;
       g.beginPath(); g.moveTo(x, padT); g.lineTo(x, padT + ph); g.stroke();
     }
@@ -191,10 +194,36 @@ export async function openSpectrum(trackId?: number) {
     }
     g.globalAlpha = 0.8;
     g.textAlign = "center";
-    for (const f of [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]) g.fillText(fmtF(f), xOf(f), hh - 4);
+    // Beschriftung: nur, was nicht mit der vorigen überlappt (20 k hat Vorrang vor 12 k)
+    let lastRight = -1e9;
+    const labels = GRID.filter((f) => f !== 12000);
+    labels.forEach((f, i) => {
+      const t = fmtF(f).replace(" ", "");
+      const tw = g.measureText(t).width;
+      const x = xOf(f);
+      const nextX = i + 1 < labels.length ? xOf(labels[i + 1]) - g.measureText(fmtF(labels[i + 1]).replace(" ", "")).width / 2 : 1e9;
+      if (x - tw / 2 > lastRight + 3 && (f === 20000 || x + tw / 2 < nextX - 3 || f === 16000)) {
+        g.fillText(t, x, hh - 4);
+        lastRight = x + tw / 2;
+      }
+    });
     g.textAlign = "right";
     for (let db = DB_MIN; db <= DB_MAX; db += 20) g.fillText(String(db), padL - 5, yOf(db) + 3);
     g.globalAlpha = 1;
+    // Gemessene Grenzfrequenz (Analyse „echte Qualität“) als gestrichelte Linie
+    const cut = player.current?.cutoff;
+    if (cut && cut > FMIN && cut < FMAX) {
+      const x = Math.round(xOf(cut)) + 0.5;
+      g.strokeStyle = INK;
+      g.globalAlpha = 0.7;
+      g.setLineDash([4, 4]);
+      g.beginPath(); g.moveTo(x, padT); g.lineTo(x, padT + ph); g.stroke();
+      g.setLineDash([]);
+      g.textAlign = "right";
+      g.fillStyle = INK;
+      g.fillText(L("Grenze {0}Hz", fmtF(cut)), x - 4, padT + 12);
+      g.globalAlpha = 1;
+    }
 
     const binHz = rate / 2 / data.length;
     const level = (f0: number, f1: number) => {
@@ -216,7 +245,8 @@ export async function openSpectrum(trackId?: number) {
     if (prefs.mode === "bars") {
       const n = THIRDS.length;
       for (let k = 0; k < n; k++) {
-        const f = THIRDS[k], f0 = f / Math.pow(2, 1 / 6), f1 = f * Math.pow(2, 1 / 6);
+        const f = THIRDS[k], f0 = f / Math.pow(2, 1 / 6), f1 = Math.min(FMAX, f * Math.pow(2, 1 / 6));
+        if (f0 >= FMAX) break;
         const v = level(f0, f1);
         updPeak(k, v);
         if (v > maxV) { maxV = v; maxF = f; }

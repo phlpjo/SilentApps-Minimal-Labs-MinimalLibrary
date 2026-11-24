@@ -80,7 +80,10 @@ export function duplicatesView(): { el: HTMLElement; destroy: () => void } {
       ids.length
         ? holdButton(L("Abgewählte in den Papierkorb"), async () => {
             player.release(ids);
-            reportErrors(await api.trash(ids, replace), L("{0} Dateien im Papierkorb – Playlisten zeigen jetzt auf die behaltene Version", ids.length));
+            const errs = await api.trash(ids, replace);
+            const failed = new Set(errs.map((e) => e.split(": ")[0]));
+            store.markDeleted(ids.filter((id) => !failed.has(store.tracks.get(id)?.path ?? "")));
+            reportErrors(errs, L("{0} Dateien im Papierkorb – Playlisten zeigen jetzt auf die behaltene Version", ids.length));
             await store.loadTracks();
             store.loadPlaylists();
             run();

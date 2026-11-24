@@ -13,6 +13,9 @@ use std::time::Duration;
 
 pub type Watcher = Debouncer<RecommendedWatcher, RecommendedCache>;
 
+/// Überwachte Musikordner (für die Prüfung „Laufwerk weg ≠ Dateien gelöscht“)
+static ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
 #[derive(Debug, Default, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Change {
@@ -77,9 +80,10 @@ fn adopt_or_add(conn: &Mutex<Connection>, files: Vec<PathBuf>, ch: &mut Change) 
                         .query_map(params![size, mtime], |r| Ok((r.get(0)?, r.get(1)?)))?
                         .filter_map(|r| r.ok())
                         .collect();
+                    let mut cache = std::collections::HashMap::new();
                     Ok(rows
                         .into_iter()
-                        .find(|(_, p)| !Path::new(p).exists())
+                        .find(|(_, p)| scanner::really_gone(Path::new(p), &mut cache))
                         .map(|(id, _)| id))
                 })
                 .ok()
@@ -162,7 +166,21 @@ fn sync_path(conn: &Mutex<Connection>, p: &Path, ch: &mut Change) {
             }
         }
     } else {
-        // gelöscht: Datei oder ganzer Ordner
+        // gelöscht: Datei oder ganzer Ordner – aber nur, wenn wirklich weg (nicht bloß Netzlaufwerk/NAS kurz weg)
+        // Musikordner selbst nicht erreichbar (NAS/Laufwerk getrennt) → nichts entfernen
+        let roots = ROOTS.lock().unwrap().clone();
+        if roots.iter().any(|r| p.starts_with(r) && !r.is_dir()) || roots.iter().any(|r| r.starts_with(p)) {
+            return;
+        }
+        let mut cache = std::collections::HashMap::new();
+        if !scanner::really_gone(p, &mut cache) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(300));
+        cache.clear();
+        if !scanner::really_gone(p, &mut cache) {
+            return;
+        }
         let c = conn.lock().unwrap();
         let s = p.to_string_lossy().to_string();
         let pre = format!("{s}{MAIN_SEPARATOR}");
@@ -245,6 +263,7 @@ pub fn start(
             on_change(ch);
         }
     };
+    *ROOTS.lock().unwrap() = roots.to_vec();
     // 1,5 s warten: eigene Änderungen der App sind bis dahin in der Datenbank
     let mut deb = new_debouncer(Duration::from_millis(1500), None, handler)?;
     for r in roots {

@@ -34,6 +34,47 @@ fn file_stat(p: &Path) -> (i64, i64) {
 }
 
 /// Schreibt gelesene Tags + Dateiinfos in die Datenbank (neu oder aktualisiert).
+/// Ist die Datei wirklich weg – oder nur gerade nicht erreichbar (NAS schläft, Netzwerk hakt, Cloud lädt)?
+/// Weg ist sie nur, wenn ein darüberliegender Ordner sich lesen lässt und der Eintrag darin fehlt.
+/// `cache` merkt sich Ordnerinhalte (für viele Prüfungen in einem Rutsch).
+pub fn really_gone(p: &Path, cache: &mut HashMap<PathBuf, Option<HashSet<String>>>) -> bool {
+    if p.exists() {
+        return false;
+    }
+    let mut child = p;
+    let mut cur = match p.parent() {
+        Some(x) => x,
+        None => return false,
+    };
+    loop {
+        let listing = cache
+            .entry(cur.to_path_buf())
+            .or_insert_with(|| {
+                std::fs::read_dir(cur).ok().map(|rd| {
+                    rd.flatten()
+                        .map(|e| e.file_name().to_string_lossy().to_lowercase())
+                        .collect()
+                })
+            })
+            .clone();
+        match listing {
+            Some(names) => {
+                let name = child.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+                // Eintrag noch da (nur tiefer nicht erreichbar) → nicht weg
+                return !names.contains(&name);
+            }
+            None => {
+                // Ordner nicht lesbar: weiter nach oben – ist bis ganz oben nichts lesbar, ist das Laufwerk weg
+                child = cur;
+                cur = match cur.parent() {
+                    Some(x) => x,
+                    None => return false,
+                };
+            }
+        }
+    }
+}
+
 /// Datei inzwischen gelöscht oder verschoben? Dann darf ein Scan oder die Ordnerüberwachung, die noch den alten
 /// Stand kennt, sie nicht wieder in die Bibliothek holen (sonst tauchen gelöschte Titel wieder auf).
 pub fn gone(path: &Path) -> bool {
@@ -128,6 +169,11 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
     let mut files: Vec<PathBuf> = Vec::new();
     let mut bad: Vec<(PathBuf, String)> = Vec::new();
     for root in roots {
+        // Musikordner gerade nicht erreichbar (NAS aus, Laufwerk getrennt): nichts davon als gelöscht werten
+        if !root.is_dir() {
+            bad.push((root.clone(), "nicht erreichbar".into()));
+            continue;
+        }
         walk(root, &mut files, &mut bad, progress);
     }
     // doppelte (über Verknüpfungen zweimal gefunden) entfernen, in Ordner-Reihenfolge
@@ -145,13 +191,30 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
         rows.collect::<rusqlite::Result<_>>()?
     };
 
-    let todo: Vec<&PathBuf> = files
+    let mut todo: Vec<&PathBuf> = files
         .iter()
         .filter(|f| match existing.get(f.to_string_lossy().as_ref()) {
             Some(&(size, mtime)) => file_stat(f) != (size, mtime),
             None => true,
         })
         .collect();
+    // Früher verschwundene Titel (z. B. als das NAS kurz weg war) mit alter ID, Analyse und Playlist-Plätzen zurückholen
+    {
+        let c = conn.lock().unwrap();
+        todo.retain(|f| {
+            if existing.contains_key(f.to_string_lossy().as_ref()) {
+                return true;
+            }
+            let (size, mtime) = file_stat(f);
+            match crate::db::revive_lost(&c, f, size, mtime) {
+                Ok(Some(_)) => {
+                    report.updated += 1;
+                    false
+                }
+                _ => true,
+            }
+        });
+    }
 
     // In Paketen lesen und gleich speichern: neue Titel erscheinen schon während des Scans
     let total = todo.len();
@@ -219,10 +282,18 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
             .iter()
             .map(|f| f.to_string_lossy().to_string())
             .collect();
+        let mut listing = HashMap::new();
+        let mut kept = 0usize;
         for path in existing.keys() {
             let inside = roots.iter().any(|r| Path::new(path).starts_with(r));
             let unreadable = bad.iter().any(|(b, _)| Path::new(path).starts_with(b));
             if inside && !unreadable && !found.contains(path) {
+                // Nicht gefunden ≠ gelöscht: nur entfernen, wenn der Ordner lesbar ist und die Datei darin fehlt
+                // (Netzlaufwerk/NAS kurz weg → Titel bleiben)
+                if !really_gone(Path::new(path), &mut listing) {
+                    kept += 1;
+                    continue;
+                }
                 // gemerkt: taucht die Datei woanders auf, behält sie ID und Playlist-Plätze
                 let ids: Vec<i64> = {
                     let mut st = tx.prepare("SELECT id FROM tracks WHERE path = ?1")?;
@@ -234,6 +305,9 @@ pub fn scan(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress) -> 
             }
         }
         tx.commit()?;
+        if kept > 0 {
+            report.errors.push(format!("Ordner nicht lesbar: {kept} Titel nicht erreichbar – bleiben in der Bibliothek"));
+        }
     }
     progress(total, total, "Fertig");
     Ok(report)
@@ -266,6 +340,12 @@ pub fn add_files(conn: &Mutex<Connection>, paths: &[PathBuf]) -> Result<Vec<i64>
         if gone(&p) {
             continue;
         }
+        // schon mal da gewesen (verschwunden) → alte ID samt Analyse zurück
+        let (size, mtime) = file_stat(&p);
+        if let Ok(Some(id)) = crate::db::revive_lost(&c, &p, size, mtime) {
+            ids.push(id);
+            continue;
+        }
         ids.push(upsert(&c, &p, &t)?);
     }
     Ok(ids)
@@ -293,6 +373,24 @@ mod walk_tests {
         walk(&dir, &mut files, &mut bad, &|_, _, _| {});
         assert_eq!(files.len(), 4, "{files:?}");
         assert!(bad.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod gone_tests {
+    use super::*;
+
+    #[test]
+    fn missing_vs_unreachable() {
+        let dir = std::env::temp_dir().join(format!("ml-gone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("da")).unwrap();
+        std::fs::write(dir.join("da").join("x.mp3"), [0]).unwrap();
+        let mut c = HashMap::new();
+        assert!(!really_gone(&dir.join("da").join("x.mp3"), &mut c), "vorhanden");
+        assert!(really_gone(&dir.join("da").join("weg.mp3"), &mut c), "fehlt in lesbarem Ordner");
+        assert!(really_gone(&dir.join("geloescht").join("y.mp3"), &mut c), "ganzer Ordner gelöscht");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -12,6 +12,7 @@ include!(concat!(env!("OUT_DIR"), "/app.rs"));
 fn main() -> anyhow::Result<()> {
     let opt = web::Options::from_env();
     std::fs::create_dir_all(&opt.data)?;
+    musiccore::diag::init(opt.data.join("protokoll.log"));
     let bus = web::Bus::default();
     let app = AppHandle::new(opt.data.clone(), opt.music.clone(), env!("CARGO_PKG_VERSION"), bus);
     app.manage(Tabs {

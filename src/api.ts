@@ -130,6 +130,7 @@ export const api = {
   getPeaks: (ids: number[]) => invoke<Record<string, string>>("get_peaks", { ids }),
   allowPlay: (path: string) => invoke<void>("allow_play", { path }),
   analyze: (ids: number[] | null, explicit = false) => invoke<number>("analyze", { ids, explicit }),
+  diagPath: () => invoke<string | null>("diag_path"),
   analyzeQuiet: (ids: number[]) => invoke<number>("analyze_quiet", { ids }),
   setLang: (lang: string) => invoke<void>("set_lang", { lang }),
   licenseStatus: () => invoke<LicenseStatus>("license_status"),

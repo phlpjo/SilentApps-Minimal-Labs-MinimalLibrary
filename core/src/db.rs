@@ -455,6 +455,11 @@ pub fn forget_tracks(conn: &Connection, ids: &[i64]) -> Result<usize> {
     if ids.is_empty() {
         return Ok(0);
     }
+    {
+        let mut st = conn.prepare("SELECT path FROM tracks WHERE id = ?1")?;
+        let paths: Vec<String> = ids.iter().filter_map(|id| st.query_row([id], |r| r.get(0)).ok()).collect();
+        crate::diag::log(format!("  entfernt {} Titel (gemerkt in lost_tracks): {}", paths.len(), crate::diag::sample(&paths, 15)));
+    }
     let cols = track_columns(conn)?;
     conn.execute(
         "DELETE FROM lost_tracks WHERE lost_at < ?1",
@@ -491,6 +496,7 @@ pub fn revive_lost(conn: &Connection, path: &Path, size: i64, mtime: i64) -> Res
         )
         .optional()?;
     let Some(id) = found else { return Ok(None) };
+    crate::diag::log(format!("  zurückgeholt (alte ID {id}, Analyse bleibt): {}", path.display()));
     let taken: bool = conn.query_row("SELECT COUNT(*) FROM tracks WHERE id = ?1", [id], |r| {
         r.get::<_, i64>(0)
     })? > 0;

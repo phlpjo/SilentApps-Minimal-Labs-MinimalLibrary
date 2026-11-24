@@ -928,6 +928,7 @@ pub fn analyze_pending_with(
 ) -> Result<usize> {
     type Job = (i64, String, bool, i64, i64);
     let row = |r: &rusqlite::Row| -> rusqlite::Result<Job> { Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? != 0, r.get(3)?, r.get(4)?)) };
+    let ids_given = ids.is_some();
     let (mut jobs, reused): (Vec<Job>, Vec<i64>) = {
         let c = conn.lock().unwrap();
         let jobs: Vec<Job> = match ids {
@@ -943,6 +944,17 @@ pub fn analyze_pending_with(
                 st.query_map([pioneer], row)?.collect::<rusqlite::Result<_>>()?
             }
         };
+        {
+            let never = jobs.iter().filter(|j| !j.2).count();
+            let names: Vec<&str> = jobs.iter().filter(|j| !j.2).map(|j| j.1.as_str()).collect();
+            crate::diag::log(format!(
+                "Analyse: {} Titel ({}) – davon {} noch nie analysiert: {}",
+                jobs.len(),
+                if ids_given { "ausgewählt" } else { "fehlende" },
+                never,
+                crate::diag::sample(&names, 10)
+            ));
+        }
         // Noch nie analysierte Titel: gibt es dieselbe Datei schon fertig analysiert? (nur Datenbank, kein Dateizugriff)
         let mut reused = Vec::new();
         if jobs.iter().any(|j| !j.2) {
@@ -967,6 +979,7 @@ pub fn analyze_pending_with(
         (jobs, reused)
     };
     if !reused.is_empty() {
+        crate::diag::log(format!("Analyse: {} von gleicher Datei übernommen", reused.len()));
         let set: std::collections::HashSet<i64> = reused.iter().copied().collect();
         jobs.retain(|j| !set.contains(&j.0));
         for id in &reused {

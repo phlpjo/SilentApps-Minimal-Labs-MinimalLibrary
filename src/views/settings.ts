@@ -1,7 +1,7 @@
 import { IS_WEB } from "../platform";
 import { setStarMode, starMode, type StarMode } from "../stars";
 import { open } from "@tauri-apps/plugin-dialog";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { store } from "../store";
 import { clear, h, holdButton, toast } from "../ui";
@@ -126,6 +126,7 @@ export function settingsView(): { el: HTMLElement; destroy: () => void } {
           h("button", { class: "btn", onclick: () => analyzeIds(null) }, L("Fehlende analysieren")),
           holdButton(L("Alles neu analysieren"), () => analyzeIds([...store.tracks.keys()]), L("halten · dauert")),
         ),
+        h("div", { class: "line" }, h("button", { class: "btn", onclick: async () => { const p = await api.diagPath(); if (p) revealItemInDir(p).catch(() => toast(L("Noch kein Protokoll vorhanden"))); } }, L("Protokoll zeigen"))),
         h("div", { class: "note" }, L("Die Analyse erstellt Wellenform, Audio-Fingerabdruck (für Duplikate), BPM und Tonart. Sie liest jede Datei einmal vollständig.")),
       ),
       h("div", { class: "card" }, h("h3", {}, L("Online (nur auf Klick)")),

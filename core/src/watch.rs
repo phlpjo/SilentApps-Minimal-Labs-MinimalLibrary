@@ -108,6 +108,8 @@ fn adopt_or_add(conn: &Mutex<Connection>, files: Vec<PathBuf>, ch: &mut Change) 
         }
     }
     if !new.is_empty() {
+        let names: Vec<String> = new.iter().map(|p| p.display().to_string()).collect();
+        crate::diag::log(format!("Überwachung: {} neue Datei(en): {}", new.len(), crate::diag::sample(&names, 10)));
         if let Ok(ids) = scanner::add_files(conn, &new) {
             ch.added.extend(ids);
         }
@@ -183,6 +185,7 @@ fn sync_path(conn: &Mutex<Connection>, p: &Path, ch: &mut Change) {
         }
         let c = conn.lock().unwrap();
         let s = p.to_string_lossy().to_string();
+        crate::diag::log(format!("Überwachung: weg gemeldet und geprüft: {s}"));
         let pre = format!("{s}{MAIN_SEPARATOR}");
         let ids: Vec<i64> = c
             .prepare("SELECT id FROM tracks WHERE path = ?1 OR substr(path, 1, ?3) = ?2")
@@ -205,6 +208,7 @@ fn rename(conn: &Mutex<Connection>, from: &Path, to: &Path, ch: &mut Change) {
     }
     let c = conn.lock().unwrap();
     if to.is_dir() {
+        crate::diag::log(format!("Überwachung: Ordner umbenannt {} → {}", from.display(), to.display()));
         if let Ok(n) = dirs::rewrite_prefix(&c, from, to) {
             ch.moved += n;
         }

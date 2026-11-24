@@ -191,6 +191,12 @@ pub fn scan_with(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress
     files.sort();
     files.dedup();
     report.found = files.len();
+    crate::diag::log(format!(
+        "Scan: {} Audiodateien gefunden in {} | nicht lesbar: {}",
+        files.len(),
+        roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(" | "),
+        bad.iter().map(|(p, e)| format!("{} ({e})", p.display())).collect::<Vec<_>>().join(" | ")
+    ));
     for (p, e) in &bad {
         report.errors.push(format!("Ordner nicht lesbar: {}: {e}", p.display()));
     }
@@ -226,6 +232,11 @@ pub fn scan_with(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress
             }
         }
         if !renames.is_empty() {
+            crate::diag::log(format!(
+                "Scan: {} Pfade nur anders geschrieben, angeglichen: {}",
+                renames.len(),
+                crate::diag::sample(&renames.iter().map(|(a, b)| format!("{a} → {b}")).collect::<Vec<_>>(), 5)
+            ));
             let c = conn.lock().unwrap();
             for (old, new) in renames {
                 if c.execute("UPDATE OR IGNORE tracks SET path = ?2 WHERE path = ?1", [&old, &new]).unwrap_or(0) > 0 {
@@ -245,6 +256,28 @@ pub fn scan_with(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress
             None => true,
         })
         .collect();
+    {
+        let mut new_files = Vec::new();
+        let mut changed = Vec::new();
+        for f in &todo {
+            let k = f.to_string_lossy().to_string();
+            match existing.get(&k) {
+                Some(&(size, mtime)) => {
+                    let (s2, m2) = file_stat(f);
+                    changed.push(format!("{k} (Größe {size}→{s2}, Zeit {mtime}→{m2})"));
+                }
+                None => new_files.push(k),
+            }
+        }
+        crate::diag::log(format!(
+            "Scan: Bibliothek kennt {} Titel | {} unbekannte Dateien: {} | {} geänderte: {}",
+            existing.len(),
+            new_files.len(),
+            crate::diag::sample(&new_files, 10),
+            changed.len(),
+            crate::diag::sample(&changed, 10)
+        ));
+    }
     // Früher verschwundene Titel (z. B. als das NAS kurz weg war) mit alter ID, Analyse und Playlist-Plätzen zurückholen.
     // Dateigrößen vorher lesen – nicht, während die Datenbank gesperrt ist.
     {
@@ -333,6 +366,7 @@ pub fn scan_with(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress
                     None => false,
                 };
                 if audio_changed {
+                    crate::diag::log(format!("  Länge geändert {:?} → {new_dur}, neu analysieren: {key}", old_dur));
                     tx.execute("UPDATE tracks SET analyzed = 0 WHERE path = ?1", [&key])?;
                 }
                 report.updated += 1;
@@ -367,6 +401,9 @@ pub fn scan_with(conn: &Mutex<Connection>, roots: &[PathBuf], progress: Progress
                 }
                 remove.push(path);
             }
+        }
+        if !remove.is_empty() || kept > 0 {
+            crate::diag::log(format!("Scan: {} nicht mehr gefunden und wirklich weg, {} nicht erreichbar (bleiben)", remove.len(), kept));
         }
         let mut c = conn.lock().unwrap();
         let tx = c.transaction()?;

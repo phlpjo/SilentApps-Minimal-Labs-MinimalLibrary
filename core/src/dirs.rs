@@ -239,6 +239,11 @@ pub fn prune_outside(conn: &Connection, roots: &[PathBuf]) -> Result<usize> {
     if gone.is_empty() {
         return Ok(0);
     }
+    crate::diag::log(format!(
+        "Außerhalb der Musikordner: {} Titel (Musikordner: {})",
+        gone.len(),
+        roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(" | ")
+    ));
     conn.execute_batch("BEGIN")?;
     // gemerkt: kommt der Musikordner zurück, behalten die Titel ID und Playlist-Plätze
     crate::db::forget_tracks(conn, &gone)?;

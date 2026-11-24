@@ -5,6 +5,7 @@ pub mod acoustid;
 pub mod analysis;
 pub mod cast;
 pub mod db;
+pub mod diag;
 pub mod dirs;
 pub mod duplicates;
 pub mod export;

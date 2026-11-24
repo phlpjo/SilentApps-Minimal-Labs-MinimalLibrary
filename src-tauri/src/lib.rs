@@ -101,6 +101,17 @@ fn tab_state(app: &AppHandle, label: &str) -> anyhow::Result<Arc<AppState>> {
         return Ok(s.clone());
     }
     let conn = db::open(&tabs.dir_of(label).join("library.db"))?;
+    {
+        let n = |q: &str| conn.query_row(q, [], |r| r.get::<_, i64>(0)).unwrap_or(-1);
+        musiccore::diag::log(format!(
+            "=== Start {} (Tab {label}) | Titel {} | analysiert {} | gemerkt verschwunden {} | Musikordner: {}",
+            env!("CARGO_PKG_VERSION"),
+            n("SELECT COUNT(*) FROM tracks"),
+            n("SELECT COUNT(*) FROM tracks WHERE analyzed = 1"),
+            n("SELECT COUNT(*) FROM lost_tracks"),
+            load_settings(&conn).roots.join(" | ")
+        ));
+    }
     if label == "main" {
         musiccore::webcache::purge(&conn); // Online-Zwischenspeicher nach 3 Tagen löschen
     }
@@ -972,6 +983,12 @@ struct AddReport {
     ids: Vec<i64>,
     skipped: usize,
     new_roots: Vec<String>,
+}
+
+/// Protokoll-Datei (für „Protokoll zeigen“)
+#[tauri::command]
+fn diag_path() -> Option<String> {
+    musiccore::diag::path().map(|p| p.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -2925,6 +2942,8 @@ pub fn run() {
                 allow_device_names(&w);
             }
             let dir = app.path().app_data_dir()?;
+            let _ = std::fs::create_dir_all(&dir);
+            musiccore::diag::init(dir.join("protokoll.log"));
             app.manage(Tabs {
                 base: dir,
                 map: Mutex::new(HashMap::new()),
@@ -2996,6 +3015,7 @@ pub fn run() {
             trash_tracks,
             write_tags,
             write_analysis_to_tags,
+            diag_path,
             get_cover,
             set_cover_file,
             remove_cover,

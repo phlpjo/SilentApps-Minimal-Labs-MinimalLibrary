@@ -618,6 +618,8 @@ export const EN: Record<string, string> = {
   "Gleichzeitige Analysen": "Parallel analyses",
   "Neue Titel automatisch analysieren": "Analyze new tracks automatically",
   "Fehlende analysieren": "Analyze missing",
+  "Protokoll zeigen": "Show log",
+  "Noch kein Protokoll vorhanden": "No log yet",
   "Alles neu analysieren": "Re-analyze everything",
   "halten · dauert": "hold · takes a while",
   "Die Analyse erstellt Wellenform, Audio-Fingerabdruck (für Duplikate), BPM und Tonart. Sie liest jede Datei einmal vollständig.": "Analysis creates the waveform, audio fingerprint (for duplicates), BPM and key. It reads every file once completely.",

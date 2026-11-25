@@ -40,6 +40,8 @@ pub struct Playlist {
     pub rules: Option<SmartRules>,
     pub count: usize,
     pub duration: f64,
+    /// Hauptplayliste, in der diese liegt (eine Ebene)
+    pub parent: Option<i64>,
 }
 
 fn text(t: &Track, f: &str) -> Option<String> {
@@ -167,27 +169,115 @@ pub fn evaluate(all_tracks: &[Track], rules: &SmartRules) -> Vec<i64> {
 pub fn list(conn: &Connection) -> Result<Vec<Playlist>> {
     let all = db::all_tracks(conn)?;
     let dur: std::collections::HashMap<i64, f64> = all.iter().map(|t| (t.id, t.duration)).collect();
-    let mut st =
-        conn.prepare("SELECT id, name, rules FROM playlists ORDER BY pos, name COLLATE NOCASE")?;
-    let rows: Vec<(i64, String, Option<String>)> = st
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+    let mut st = conn.prepare(
+        "SELECT id, name, rules, parent_id FROM playlists ORDER BY pos, name COLLATE NOCASE",
+    )?;
+    let rows: Vec<(i64, String, Option<String>, Option<i64>)> = st
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    let mut out = Vec::new();
-    for (id, name, rules) in rows {
+    // Eigene Titel je Playlist
+    let mut own: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
+    let mut parsed = Vec::new();
+    for (id, name, rules, parent) in rows {
         let rules: Option<SmartRules> = rules.and_then(|r| serde_json::from_str(&r).ok());
         let ids = match &rules {
             Some(r) => evaluate(&all, r),
             None => item_ids(conn, id)?,
         };
+        own.insert(id, ids);
+        parsed.push((id, name, rules, parent));
+    }
+    let valid: std::collections::HashSet<i64> = parsed.iter().filter(|p| p.3.is_none()).map(|p| p.0).collect();
+    let mut out = Vec::new();
+    for (id, name, rules, parent) in &parsed {
+        // Nur eine Ebene: Eltern muss es geben und selbst oben liegen
+        let parent = parent.filter(|p| valid.contains(p) && p != id);
+        let kids: Vec<i64> = if parent.is_none() {
+            parsed.iter().filter(|c| c.3 == Some(*id) && c.0 != *id).map(|c| c.0).collect()
+        } else {
+            Vec::new()
+        };
+        let ids = combine(own.get(id).cloned().unwrap_or_default(), kids.iter().map(|k| own.get(k).cloned().unwrap_or_default()).collect());
         out.push(Playlist {
-            id,
-            name,
-            rules,
+            id: *id,
+            name: name.clone(),
+            rules: rules.clone(),
             count: ids.len(),
             duration: ids.iter().filter_map(|i| dur.get(i)).sum(),
+            parent,
         });
     }
     Ok(out)
+}
+
+/// Eigene Titel + Titel der Unter-Playlisten (jeder Titel einmal; liegt er in einer Unter-Playlist, zählt er dort)
+fn combine(own: Vec<i64>, kids: Vec<Vec<i64>>) -> Vec<i64> {
+    let in_kids: std::collections::HashSet<i64> = kids.iter().flatten().copied().collect();
+    let mut seen = std::collections::HashSet::new();
+    own.into_iter()
+        .filter(|i| !in_kids.contains(i))
+        .chain(kids.into_iter().flatten())
+        .filter(|i| seen.insert(*i))
+        .collect()
+}
+
+/// Unter-Playlisten einer Hauptplayliste (in Reihenfolge); leer, wenn sie selbst in einer liegt
+pub fn children(conn: &Connection, id: i64) -> Result<Vec<i64>> {
+    let parent: Option<i64> = conn
+        .query_row("SELECT parent_id FROM playlists WHERE id = ?1", [id], |r| r.get(0))
+        .optional()?
+        .flatten();
+    if parent.is_some() {
+        return Ok(Vec::new());
+    }
+    let mut st = conn.prepare(
+        "SELECT id FROM playlists WHERE parent_id = ?1 AND id != ?1 ORDER BY pos, name COLLATE NOCASE",
+    )?;
+    Ok(st.query_map([id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Eigene Titel (ohne Unter-Playlisten; smarte frisch ausgewertet)
+pub fn own_ids(conn: &Connection, id: i64) -> Result<Vec<i64>> {
+    let rules: Option<String> = conn
+        .query_row("SELECT rules FROM playlists WHERE id = ?1", [id], |r| r.get(0))
+        .optional()?
+        .flatten();
+    match rules.and_then(|r| serde_json::from_str::<SmartRules>(&r).ok()) {
+        Some(r) => Ok(evaluate(&db::all_tracks(conn)?, &r)),
+        None => item_ids(conn, id),
+    }
+}
+
+fn is_smart(conn: &Connection, id: i64) -> bool {
+    conn.query_row("SELECT rules IS NOT NULL FROM playlists WHERE id = ?1", [id], |r| r.get(0))
+        .unwrap_or(false)
+}
+
+/// In eine Hauptplayliste legen (`None` = wieder nach oben). Nur eine Ebene.
+pub fn set_parent(conn: &Connection, id: i64, parent: Option<i64>) -> Result<()> {
+    if let Some(p) = parent {
+        if p == id {
+            anyhow::bail!("Eine Playlist kann nicht in sich selbst liegen");
+        }
+        let pp: Option<Option<i64>> = conn
+            .query_row("SELECT parent_id FROM playlists WHERE id = ?1", [p], |r| r.get(0))
+            .optional()?;
+        match pp {
+            None => anyhow::bail!("Playlist nicht gefunden"),
+            Some(Some(_)) => anyhow::bail!("Playlisten lassen sich nur eine Ebene tief ineinander legen"),
+            _ => {}
+        }
+        let has_kids: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM playlists WHERE parent_id = ?1)",
+            [id],
+            |r| r.get(0),
+        )?;
+        if has_kids {
+            anyhow::bail!("Diese Playlist enthält selbst Playlisten – nur eine Ebene möglich");
+        }
+    }
+    conn.execute("UPDATE playlists SET parent_id = ?2 WHERE id = ?1", params![id, parent])?;
+    Ok(())
 }
 
 fn item_ids(conn: &Connection, id: i64) -> Result<Vec<i64>> {
@@ -198,18 +288,15 @@ fn item_ids(conn: &Connection, id: i64) -> Result<Vec<i64>> {
         .collect::<rusqlite::Result<_>>()?)
 }
 
-/// Titel-IDs einer Playlist (bei smarten Playlisten frisch ausgewertet).
+/// Titel-IDs einer Playlist (bei smarten Playlisten frisch ausgewertet; Hauptplayliste mit allen Unter-Playlisten).
 pub fn track_ids(conn: &Connection, id: i64) -> Result<Vec<i64>> {
-    let rules: Option<String> = conn
-        .query_row("SELECT rules FROM playlists WHERE id = ?1", [id], |r| {
-            r.get(0)
-        })
-        .optional()?
-        .flatten();
-    match rules.and_then(|r| serde_json::from_str::<SmartRules>(&r).ok()) {
-        Some(r) => Ok(evaluate(&db::all_tracks(conn)?, &r)),
-        None => item_ids(conn, id),
+    let own = own_ids(conn, id)?;
+    let kids = children(conn, id)?;
+    if kids.is_empty() {
+        return Ok(own);
     }
+    let lists = kids.iter().map(|k| own_ids(conn, *k)).collect::<Result<Vec<_>>>()?;
+    Ok(combine(own, lists))
 }
 
 pub fn name(conn: &Connection, id: i64) -> Result<String> {
@@ -342,10 +429,43 @@ pub fn backup_order(conn: &Connection, batch: i64) -> Result<()> {
 
 pub fn delete(conn: &Connection, id: i64) -> Result<()> {
     conn.execute("DELETE FROM playlists WHERE id = ?1", [id])?;
+    // Unter-Playlisten bleiben erhalten und rücken nach oben
+    conn.execute("UPDATE playlists SET parent_id = NULL WHERE parent_id = ?1", [id])?;
     Ok(())
 }
 
+/// Titel einer Playlist setzen. Bei einer Hauptplayliste ist `ids` die ganze sichtbare Liste:
+/// Titel aus Unter-Playlisten bleiben dort (in neuer Reihenfolge, entfernte fliegen dort raus), der Rest gehört ihr selbst.
 pub fn set_items(conn: &mut Connection, id: i64, ids: &[i64]) -> Result<()> {
+    let kids = children(conn, id)?;
+    if kids.is_empty() {
+        return set_own(conn, id, ids);
+    }
+    let mut taken = std::collections::HashSet::new();
+    for k in &kids {
+        let mine: std::collections::HashSet<i64> = own_ids(conn, *k)?.into_iter().collect();
+        taken.extend(mine.iter().copied());
+        if is_smart(conn, *k) {
+            continue;
+        }
+        let next: Vec<i64> = ids.iter().copied().filter(|i| mine.contains(i)).collect();
+        set_own(conn, *k, &next)?;
+    }
+    if is_smart(conn, id) {
+        return Ok(());
+    }
+    let own: Vec<i64> = ids.iter().copied().filter(|i| !taken.contains(i)).collect();
+    set_own(conn, id, &own)
+}
+
+/// Gehören die Titel zu Unter-Playlisten dieser Hauptplayliste? (für „Rückgängig“ mitsichern)
+pub fn affected(conn: &Connection, id: i64) -> Vec<i64> {
+    let mut v = vec![id];
+    v.extend(children(conn, id).unwrap_or_default());
+    v
+}
+
+fn set_own(conn: &mut Connection, id: i64, ids: &[i64]) -> Result<()> {
     let tx = conn.transaction()?;
     tx.execute("DELETE FROM playlist_items WHERE playlist_id = ?1", [id])?;
     {
@@ -367,7 +487,7 @@ pub fn add_items(conn: &mut Connection, id: i64, ids: &[i64]) -> Result<()> {
             .filter(|i| !cur.contains(i))
             .collect::<Vec<_>>(),
     );
-    set_items(conn, id, &cur)
+    set_own(conn, id, &cur)
 }
 
 /// M3U8-Text, Pfade relativ zu `base_dir` (Trenner "/").
@@ -500,5 +620,60 @@ mod unique_tests {
         assert_eq!(super::name(&c, d).unwrap(), "party (3)");
         super::update(&c, a, "Party", None).unwrap();
         assert_eq!(super::name(&c, a).unwrap(), "Party");
+    }
+}
+
+#[cfg(test)]
+mod nested_tests {
+    use super::*;
+
+    #[test]
+    fn parent_sees_children_and_export_sorts_into_folders() {
+        let base = std::env::temp_dir().join(format!("ml-nest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("src")).unwrap();
+        let mut c = crate::db::open(&base.join("t.db")).unwrap();
+        for i in 1..=4 {
+            let p = base.join("src").join(format!("{i}.mp3"));
+            std::fs::write(&p, [0u8; 10]).unwrap();
+            c.execute(
+                "INSERT INTO tracks(id, path, size, mtime, added, title, artist) VALUES(?1, ?2, 10, 0, 0, ?3, 'A')",
+                params![i, p.to_string_lossy(), format!("T{i}")],
+            )
+            .unwrap();
+        }
+        let main = create(&c, "Set", None).unwrap();
+        let warm = create(&c, "Warm-up", None).unwrap();
+        let peak = create(&c, "Peak", None).unwrap();
+        add_items(&mut c, main, &[1]).unwrap();
+        add_items(&mut c, warm, &[2, 3]).unwrap();
+        add_items(&mut c, peak, &[4]).unwrap();
+        set_order(&c, &[main, warm, peak]).unwrap();
+        set_parent(&c, warm, Some(main)).unwrap();
+        set_parent(&c, peak, Some(main)).unwrap();
+        // nur eine Ebene
+        assert!(set_parent(&c, main, Some(warm)).is_err());
+        assert_eq!(track_ids(&c, main).unwrap(), vec![1, 2, 3, 4]);
+        let l = list(&c).unwrap();
+        assert_eq!(l.iter().find(|p| p.id == main).unwrap().count, 4);
+        // In der Hauptplayliste umsortieren und entfernen → wirkt in den Unter-Playlisten
+        set_items(&mut c, main, &[4, 3, 1]).unwrap();
+        assert_eq!(own_ids(&c, warm).unwrap(), vec![3]);
+        assert_eq!(own_ids(&c, peak).unwrap(), vec![4]);
+        assert_eq!(own_ids(&c, main).unwrap(), vec![1]);
+        // Export: Unter-Playlisten als Unterordner
+        let m = std::sync::Mutex::new(c);
+        let dest = base.join("out");
+        let r = crate::export::export(&m, &[main, warm], &dest, crate::export::Layout::Numbered, &std::sync::atomic::AtomicBool::new(false), &|_, _, _| {}).unwrap();
+        assert_eq!(r.copied, 3);
+        assert!(dest.join("Set").join("01 - A - T1.mp3").exists());
+        assert!(dest.join("Set").join("Warm-up").join("01 - A - T3.mp3").exists());
+        assert!(dest.join("Set").join("Peak").join("01 - A - T4.mp3").exists());
+        assert!(dest.join("Set").join("Set.m3u8").exists());
+        assert!(dest.join("Set").join("Peak").join("Peak.m3u8").exists());
+        // Löschen der Hauptplayliste: Unter-Playlisten bleiben und rücken nach oben
+        let c = m.lock().unwrap();
+        delete(&c, main).unwrap();
+        assert!(list(&c).unwrap().iter().all(|p| p.parent.is_none()));
     }
 }

@@ -150,6 +150,48 @@ export class TrackList {
     const theme = () => this.renderRows(true);
     document.addEventListener("themechange", theme);
     this.unsub.push(() => document.removeEventListener("themechange", theme));
+    // Umschalt + Mausrad: Titel unter der Maus eine Zeile hoch/runter schieben (Playlist, Sortierung "#").
+    // Die Liste scrollt mit, sodass der Titel unter der Maus bleibt; solange die Maus ruhig steht, bleibt er „gegriffen“.
+    let grab = -1;
+    let acc = 0;
+    let saveT = 0;
+    let lastX = 0, lastY = 0;
+    this.body.addEventListener("wheel", (e) => {
+      if (!e.shiftKey || !this.opts.reorderable || !this.opts.onReorder || this.sort !== "pos" || this.desc) return;
+      e.preventDefault();
+      const d = e.deltaY || e.deltaX; // Umschalt macht aus dem Rad oft waagerechtes Scrollen
+      if (!d) return;
+      const r = this.body.getBoundingClientRect();
+      if (grab < 0 || !this.view.includes(grab) || Math.hypot(e.clientX - lastX, e.clientY - lastY) > 6) {
+        const i = Math.floor((e.clientY - r.top + this.body.scrollTop) / ROW_H);
+        if (i < 0 || i >= this.view.length) return;
+        grab = this.view[i];
+        acc = 0;
+        if (!store.selection.has(grab) || store.selection.size > 1) this.selectOnly(i);
+      }
+      lastX = e.clientX;
+      lastY = e.clientY;
+      acc += e.deltaMode === 1 ? d * 40 : e.deltaMode === 2 ? d * 400 : d;
+      if (Math.abs(acc) < 40) return; // Touchpad: erst ab einer „Raste“
+      const step = acc > 0 ? 1 : -1;
+      acc = 0;
+      const vi = this.view.indexOf(grab);
+      const other = this.view[vi + step];
+      if (other === undefined) return;
+      const a = this.ids.indexOf(grab), b = this.ids.indexOf(other);
+      if (a < 0 || b < 0) return;
+      this.ids[a] = other;
+      this.ids[b] = grab;
+      this.anchor = vi + step;
+      this.applySort();
+      this.body.scrollTop += step * ROW_H;
+      clearTimeout(saveT);
+      saveT = window.setTimeout(() => this.opts.onReorder?.([...this.ids]), 500);
+    }, { passive: false });
+    const shiftUp = (e: KeyboardEvent) => { if (e.key === "Shift") grab = -1; };
+    window.addEventListener("keyup", shiftUp);
+    this.unsub.push(() => window.removeEventListener("keyup", shiftUp));
+
     // Umsortieren in Playlisten (nur bei Sortierung nach "#")
     dropTarget(this.body, {
       accepts: (p) => p.kind === "ids" && !!this.opts.reorderable && this.sort === "pos" && !this.desc,

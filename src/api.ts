@@ -92,7 +92,7 @@ export interface LibraryChange { added: number[]; updated: number; moved: number
 
 export interface Rule { field: string; op: string; value: string; value2: string }
 export interface SmartRules { all: boolean; rules: Rule[]; sort: string; desc: boolean; limit: number | null }
-export interface Playlist { id: number; name: string; rules: SmartRules | null; count: number; duration: number }
+export interface Playlist { id: number; name: string; rules: SmartRules | null; count: number; duration: number; /** Hauptplayliste, in der sie liegt */ parent: number | null }
 
 export interface Candidate {
   score: number; title: string; artist: string; album: string | null; albumArtist: string | null; year: string | null;
@@ -130,6 +130,7 @@ export const api = {
   getPeaks: (ids: number[]) => invoke<Record<string, string>>("get_peaks", { ids }),
   allowPlay: (path: string) => invoke<void>("allow_play", { path }),
   analyze: (ids: number[] | null, explicit = false) => invoke<number>("analyze", { ids, explicit }),
+  playlistSetParent: (id: number, parent: number | null) => invoke<void>("playlist_set_parent", { id, parent }),
   diagPath: () => invoke<string | null>("diag_path"),
   analyzeQuiet: (ids: number[]) => invoke<number>("analyze_quiet", { ids }),
   setLang: (lang: string) => invoke<void>("set_lang", { lang }),

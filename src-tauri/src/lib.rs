@@ -1884,8 +1884,8 @@ async fn playlist_items(state: Tab, id: i64) -> R<Vec<i64>> {
 async fn playlist_set_items(state: Tab, id: i64, ids: Vec<i64>) -> R<()> {
     let mut c = state.db.lock().unwrap();
     let n = playlists::name(&c, id).unwrap_or_default();
-    let b =
-        history::begin_playlist(&c, &format!("Playlist „{n}“ bearbeitet"), &[id]).map_err(err)?;
+    let b = history::begin_playlist(&c, &format!("Playlist „{n}“ bearbeitet"), &playlists::affected(&c, id))
+        .map_err(err)?;
     playlists::set_items(&mut c, id, &ids).map_err(err)?;
     let _ = history::finish(&c, b, 1);
     sync_playlists(&c);
@@ -1893,6 +1893,15 @@ async fn playlist_set_items(state: Tab, id: i64, ids: Vec<i64>) -> R<()> {
 }
 
 /// Eigene Reihenfolge der Playlisten (Ziehen in der Seitenleiste)
+/// Playlist in eine Hauptplayliste legen (`parent` leer = wieder nach oben)
+#[tauri::command]
+async fn playlist_set_parent(state: Tab, id: i64, parent: Option<i64>) -> R<()> {
+    let c = state.db.lock().unwrap();
+    playlists::set_parent(&c, id, parent).map_err(err)?;
+    sync_playlists(&c);
+    Ok(())
+}
+
 #[tauri::command]
 async fn playlist_order(state: Tab, ids: Vec<i64>) -> R<()> {
     history::playlist_order(&state.db.lock().unwrap(), &ids).map_err(err)
@@ -3016,6 +3025,7 @@ pub fn run() {
             license_activate,
             license_remove,
             playlist_order,
+            playlist_set_parent,
             batch_items,
             set_lang,
             on_demand_roots,

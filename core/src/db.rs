@@ -121,6 +121,10 @@ fn migrate(conn: &Connection) -> Result<()> {
              UPDATE playlists SET pos = (SELECT COUNT(*) FROM playlists p2 WHERE p2.name COLLATE NOCASE < playlists.name COLLATE NOCASE OR (p2.name COLLATE NOCASE = playlists.name COLLATE NOCASE AND p2.id < playlists.id));",
         )?;
     }
+    // Playlisten in Playlisten (eine Ebene): Hauptplayliste zeigt eigene + alle Titel der Unter-Playlisten
+    if !has("playlists", "parent_id") {
+        conn.execute_batch("ALTER TABLE playlists ADD COLUMN parent_id INTEGER;")?;
+    }
     // Rückgängig für Playlist-Änderungen
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS playlist_backups (

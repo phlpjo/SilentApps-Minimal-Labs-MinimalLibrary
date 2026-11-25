@@ -47,7 +47,12 @@ export function playlistView(id: number): { el: HTMLElement; destroy: () => void
     const p = pl();
     if (!p) return;
     title.textContent = shown(p.name);
-    sub.textContent = L("{0}{1} Titel · {2}", p.rules ? L("Smarte Playlist · ") : "", p.count, fmtDuration(p.duration));
+    const kids = store.playlists.filter((x) => x.parent === p.id);
+    const parent = p.parent != null ? store.playlists.find((x) => x.id === p.parent) : undefined;
+    sub.textContent =
+      L("{0}{1} Titel · {2}", p.rules ? L("Smarte Playlist · ") : "", p.count, fmtDuration(p.duration)) +
+      (kids.length ? " · " + L("mit {0}", kids.map((k) => shown(k.name)).join(", ")) : "") +
+      (parent ? " · " + L("liegt in „{0}“", shown(parent.name)) : "");
     clear(actions);
     actions.append(
       h("button", { class: "btn", onclick: () => player.play(items[0], 0, list.visibleIds), disabled: !items.length }, L("Abspielen")),
@@ -74,7 +79,7 @@ export function playlistView(id: number): { el: HTMLElement; destroy: () => void
   const unsubs = [
     store.on("playlists", () => {
       renderHead();
-      if (pl()?.rules) load();
+      if (pl()?.rules || store.playlists.some((x) => x.parent === id)) load();
     }),
     store.on("tracks", () => list.setIds(items)),
   ];

@@ -353,7 +353,7 @@ async function deletePlaylists(ids: number[]) {
 function playlistMenu(e: MouseEvent, p: Playlist) {
   e.preventDefault();
   const multi = plSel.has(p.id) && plSel.size > 1;
-  if (!multi) { plSel.clear(); plSel.add(p.id); plAnchor = store.playlists.findIndex((x) => x.id === p.id); renderSide(); }
+  if (!multi) { plSel.clear(); plSel.add(p.id); plAnchor = plOrdered().findIndex((x) => x.id === p.id); renderSide(); }
   const ids = multi ? store.playlists.filter((x) => plSel.has(x.id)).map((x) => x.id) : [p.id];
   const pio = pioneerOn() ? [{ label: L("Für Pioneer-Player exportieren …"), action: () => pioneerExportDialog(ids) }, { label: L("rekordbox-XML speichern …"), action: () => xmlDialog(ids) }] : [];
   contextMenu(e.clientX, e.clientY, multi
@@ -368,6 +368,9 @@ function playlistMenu(e: MouseEvent, p: Playlist) {
         p.rules ? { label: L("Regeln bearbeiten …"), action: () => smartEditor(p) } : { label: L("Umbenennen …"), action: () => renamePlaylist(p) },
         { label: L("Exportieren …"), action: () => exportDialog(ids) },
         ...pio,
+        ...(p.parent != null
+          ? [{ label: L("Aus Hauptplayliste herausnehmen"), action: async () => { await api.playlistSetParent(p.id, null); await store.loadPlaylists(); } }]
+          : []),
         { label: "", sep: true },
         { label: L("Löschen"), hold: true, action: () => deletePlaylists(ids) },
       ]);
@@ -399,14 +402,47 @@ function plFold() {
   return box;
 }
 
-/** Playlist an neue Stelle ziehen (eigene Reihenfolge) */
-async function movePlaylist(id: number, target: number, after: boolean) {
-  const ids = store.playlists.map((p) => p.id).filter((x) => x !== id);
-  const at = ids.indexOf(target);
-  if (at < 0) return;
-  ids.splice(after ? at + 1 : at, 0, id);
+/** Playlisten in Anzeige-Reihenfolge: oben liegende, jeweils gefolgt von ihren Unter-Playlisten */
+function plOrdered(): Playlist[] {
+  const all = store.playlists;
+  const out: Playlist[] = [];
+  for (const p of all.filter((x) => x.parent == null)) {
+    out.push(p);
+    out.push(...all.filter((x) => x.parent === p.id));
+  }
+  return out;
+}
+const hasKids = (id: number) => store.playlists.some((x) => x.parent === id);
+
+/** Playlist an neue Stelle ziehen: davor/dahinter (gleiche Ebene wie das Ziel) oder hinein (Ziel wird Hauptplayliste) */
+async function movePlaylist(id: number, target: number, where: "before" | "after" | "into") {
+  const t = store.playlists.find((x) => x.id === target);
+  if (!t) return;
+  const parent = where === "into" ? target : t.parent ?? null;
+  try {
+    if ((store.playlists.find((x) => x.id === id)?.parent ?? null) !== parent) await api.playlistSetParent(id, parent);
+  } catch (e) {
+    return toast(String(e));
+  }
+  const ids = plOrdered().map((p) => p.id).filter((x) => x !== id);
+  if (where === "into") {
+    // ans Ende der Unter-Playlisten
+    const kids = store.playlists.filter((x) => x.parent === target && x.id !== id).map((x) => x.id);
+    const last = kids.length ? kids[kids.length - 1] : target;
+    ids.splice(ids.indexOf(last) + 1, 0, id);
+  } else {
+    // Hauptplayliste samt Unter-Playlisten: „dahinter“ heißt hinter ihrem letzten Kind
+    let at = ids.indexOf(target);
+    if (at < 0) return;
+    if (where === "after") {
+      at++;
+      if (parent === null) while (at < ids.length && store.playlists.find((x) => x.id === ids[at])?.parent === target) at++;
+    }
+    ids.splice(at, 0, id);
+  }
   await api.playlistOrder(ids);
   await store.loadPlaylists();
+  if (where === "into") toast(L("„{0}“ liegt jetzt in „{1}“", shown(store.playlists.find((x) => x.id === id)?.name ?? ""), shown(t.name)));
 }
 
 function renderSide() {
@@ -445,8 +481,9 @@ function renderSide() {
     navItem("settings", L("Einstellungen"), n === "settings", () => nav("settings"), updater.state === "available" ? L("● Update") : undefined),
   );
   for (const id of [...plSel]) if (!store.playlists.some((p) => p.id === id)) plSel.delete(id);
+  const ordered = plOrdered();
   plList.replaceChildren(
-    ...store.playlists.map((p, i) => {
+    ...ordered.map((p, i) => {
       const star = p.name === "Stern" && !p.rules;
       const it = navItem(p.rules ? "smart" : star ? "star" : "playlist", shown(p.name), n === "playlist" && current?.arg?.[0] === p.id, (e) => {
         if (dragging) return;
@@ -459,7 +496,7 @@ function renderSide() {
         if (e.shiftKey && plAnchor >= 0) {
           const [a, b] = [Math.min(plAnchor, i), Math.max(plAnchor, i)];
           plSel.clear();
-          store.playlists.slice(a, b + 1).forEach((x) => plSel.add(x.id));
+          ordered.slice(a, b + 1).forEach((x) => plSel.add(x.id));
           renderSide();
           return;
         }
@@ -472,20 +509,26 @@ function renderSide() {
       // Ziehen: Playlist umsortieren
       it.addEventListener("pointerdown", (e) => beginDrag(e, () => ({ kind: "pl", id: p.id, name: shown(p.name) })));
       if (plSel.size > 1 && plSel.has(p.id)) it.classList.add("multi");
+      if (p.parent != null) it.classList.add("pl-child");
       // Titel auf die Playlist ziehen → hinzufügen (smarte Playlisten füllen sich selbst)
-      let after = false;
+      // Playlist ziehen: oberes/unteres Viertel = davor/dahinter, Mitte = hinein (eine Ebene)
+      let where: "before" | "after" | "into" = "before";
       dropTarget(it, {
         accepts: (pl) => ((pl.kind === "ids" || pl.kind === "dir") && !p.rules) || (pl.kind === "pl" && pl.id !== p.id),
         over: (pl, e) => {
           if (pl.kind !== "pl") return;
           const r = it.getBoundingClientRect();
-          after = e.clientY > r.top + r.height / 2;
-          it.classList.toggle("ins-before", !after);
-          it.classList.toggle("ins-after", after);
+          const f = (e.clientY - r.top) / r.height;
+          const canInto = p.parent == null && !hasKids(pl.id);
+          where = canInto && f > 0.25 && f < 0.75 ? "into" : f < 0.5 ? "before" : "after";
+          it.classList.toggle("ins-before", where === "before");
+          it.classList.toggle("ins-after", where === "after");
+          it.classList.toggle("ins-into", where === "into");
         },
-        leave: () => it.classList.remove("ins-before", "ins-after"),
+        leave: () => it.classList.remove("ins-before", "ins-after", "ins-into"),
         drop: async (pl) => {
-          if (pl.kind === "pl") return movePlaylist(pl.id, p.id, after);
+          it.classList.remove("ins-before", "ins-after", "ins-into");
+          if (pl.kind === "pl") return movePlaylist(pl.id, p.id, where);
           // Titel – oder ein ganzer Ordner: dann alle Titel darin
           const ids = dropIds(pl);
           if (!ids.length) return toast(L("In diesem Ordner sind keine Titel"));

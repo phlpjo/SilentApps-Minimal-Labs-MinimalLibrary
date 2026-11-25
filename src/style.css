@@ -100,6 +100,11 @@ input, select, textarea, button { font: inherit; color: inherit; }
 .nav-item .nl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nav-item .nicon { flex: none; opacity: 0.85; }
 .nav-item.active .nicon, .nav-item:hover .nicon { opacity: 1; }
+.nav-item.ins-into { outline: 1px solid var(--ink) !important; outline-offset: -1px; background: var(--sel) !important; }
+#pl-list .nav-item.pl-child, .nav-item.pl-child { margin-left: 18px; position: relative; }
+.nav-item.pl-child::before { content: ""; position: absolute; left: -9px; top: 6px; bottom: 6px; width: 1px; background: var(--line); }
+#app.side-closed .nav-item.pl-child { margin-left: 0; }
+#app.side-closed .nav-item.pl-child::before { display: none; }
 .nav-item.multi { background: var(--sel); color: var(--ink); box-shadow: inset 2px 0 0 var(--ink); }
 #titlebar .tb-icon { width: 38px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 

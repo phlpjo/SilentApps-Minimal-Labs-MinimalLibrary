@@ -5,7 +5,7 @@ use crate::{Progress, paths, playlists};
 use anyhow::Result;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]

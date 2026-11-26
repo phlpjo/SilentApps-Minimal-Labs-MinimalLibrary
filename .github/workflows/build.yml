@@ -194,12 +194,25 @@ jobs:
           curl -sf -b c.txt -X POST localhost:8642/api/invoke/get_settings -d '{}' | head -c 200
           curl -sf localhost:8642/ | grep -q "Minimal Library"
           kill %1 || true
+      - name: "Kurztest Stream-Variante"
+        run: |
+          mkdir -p "$RUNNER_TEMP/st/music" "$RUNNER_TEMP/st/data"
+          ML_MODE=stream ML_PORT=8643 ML_DATA="$RUNNER_TEMP/st/data" ML_MUSIC="$RUNNER_TEMP/st/music" ML_WEB="$PWD/server/stream-ui" \
+            target/dsm-x64/x86_64-unknown-linux-musl/release/minimal-library-server & sleep 3
+          curl -sf localhost:8643/ | grep -q "Minimal Library Stream"
+          curl -sf -c s.txt -X POST localhost:8643/api/login -d '{"password":"testtest"}'
+          curl -sf -b s.txt -X POST localhost:8643/api/invoke/stream_status -d '{}' | head -c 300
+          kill %1 || true
       - name: Paket packen
         run: |
           ./server/dsm/build-spk.sh "$VERSION" \
             target/dsm-x64/x86_64-unknown-linux-musl/release/minimal-library-server \
             target/dsm-arm/aarch64-unknown-linux-musl/release/minimal-library-server \
             dist-web out
+          ./server/dsm/build-spk.sh "$VERSION" \
+            target/dsm-x64/x86_64-unknown-linux-musl/release/minimal-library-server \
+            target/dsm-arm/aarch64-unknown-linux-musl/release/minimal-library-server \
+            server/stream-ui out stream
       - uses: actions/upload-artifact@v4
         with:
           name: MinimalLibrary-Synology-${{ github.run_number }}
@@ -249,7 +262,7 @@ jobs:
           gh release create "v$VERSION" -R "$REPO" --target "$GITHUB_SHA" --title "Minimal Library $VERSION" \
             --notes "$(printf '%s' "$NOTES" | head -n 1)" \
             "$win" "$win.sig" "MinimalLibrary_${VERSION}_x64.msi" "MinimalLibrary_${VERSION}_portable.exe" \
-            "MinimalLibrary_${VERSION}_universal.dmg" "$mac" "$mac.sig" latest.json "MinimalLibrary-${VERSION}.spk"
+            "MinimalLibrary_${VERSION}_universal.dmg" "$mac" "$mac.sig" latest.json "MinimalLibrary-${VERSION}.spk" "MinimalLibraryStream-${VERSION}.spk"
 
       - name: Auf die Website hochladen (als neue Version, noch nicht aktiv)
         if: steps.key.outputs.site == '1'

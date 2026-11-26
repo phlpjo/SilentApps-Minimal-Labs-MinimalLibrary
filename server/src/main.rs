@@ -2,6 +2,7 @@
 //! Befehle und Logik kommen unverändert aus der Desktop-App (siehe build.rs).
 #![allow(unused_imports, dead_code, unused_braces, clippy::all)]
 
+mod stream;
 mod stubs;
 mod tauri;
 mod web;
@@ -51,6 +52,9 @@ fn main() -> anyhow::Result<()> {
                 std::thread::sleep(std::time::Duration::from_secs(3600));
             }
         });
+    }
+    if stream::enabled() {
+        stream::start(&app, rt.handle().clone());
     }
     web::serve(app, rt.handle().clone(), opt)
 }

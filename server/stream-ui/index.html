@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minimal Library Stream</title>
+<style>
+  :root { --bg:#000; --ink:#fff; --dim:#d2d2d8; --faint:#a8a8b1; --panel:#101015; --line:rgba(255,255,255,.28); }
+  @media (prefers-color-scheme: light) { :root { --bg:#fff; --ink:#000; --dim:#38383f; --faint:#595962; --panel:#f3f3f6; --line:rgba(0,0,0,.28); } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:640px; margin:0 auto; padding:40px 24px 80px; }
+  h1 { font-weight:300; font-size:30px; margin:0 0 4px; letter-spacing:.5px; }
+  h2 { font-size:12px; font-weight:500; letter-spacing:2.5px; text-transform:uppercase; color:var(--faint); margin:36px 0 10px; }
+  .sub { color:var(--dim); font-size:13px; }
+  .big { font-size:40px; font-weight:300; letter-spacing:6px; }
+  .row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); }
+  .row:last-child { border-bottom:0; }
+  .muted { color:var(--faint); font-size:13px; }
+  button, .btn { background:none; border:0; color:var(--ink); font:inherit; cursor:pointer; padding:8px 0; text-align:left; }
+  button:hover { text-decoration:underline; }
+  button.dim { color:var(--dim); }
+  input { width:100%; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font:inherit; }
+  .panel { background:var(--panel); border-radius:16px; padding:16px 18px; }
+  .err { color:var(--ink); margin-top:8px; }
+  code { font-size:14px; }
+  .browse { max-height:280px; overflow:auto; margin-top:8px; }
+  .hide { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Minimal Library Stream</h1>
+  <div class="sub" id="who">Musik vom NAS aufs Handy</div>
+
+  <section id="login" class="hide">
+    <h2 id="login-title">Anmelden</h2>
+    <p class="muted" id="login-hint"></p>
+    <input id="pw" type="password" autocomplete="current-password" placeholder="Passwort">
+    <button id="login-btn">Weiter</button>
+    <div class="err" id="login-err"></div>
+  </section>
+
+  <section id="app" class="hide">
+    <h2>Bibliothek</h2>
+    <div class="panel">
+      <div class="row"><span id="count">…</span><span class="muted" id="scan"></span></div>
+      <div id="roots"></div>
+      <div class="row"><button id="rescan">Jetzt neu einlesen</button><button class="dim" id="add">Musikordner hinzufügen</button></div>
+      <div id="browser" class="hide">
+        <div class="muted" id="bpath"></div>
+        <div class="browse" id="blist"></div>
+        <div class="row"><button id="bpick">Diesen Ordner nehmen</button><button class="dim" id="bclose">Abbrechen</button></div>
+      </div>
+    </div>
+
+    <h2>Handy koppeln</h2>
+    <div class="panel">
+      <div class="muted">Code</div>
+      <div class="big" id="code">······</div>
+      <p class="muted">In Minimal Player Connected: <b>Computer verbinden → Adresse eingeben</b>. Über VPN die Adresse des NAS im Heimnetz verwenden:</p>
+      <div id="addrs"></div>
+      <p class="muted">Im selben WLAN findet die App das NAS meist auch von selbst.</p>
+      <div class="err" id="locked"></div>
+    </div>
+
+    <h2>Gekoppelte Handys</h2>
+    <div class="panel" id="phones"></div>
+
+    <h2>Lizenz</h2>
+    <div class="panel">
+      <div class="row"><span id="lic">…</span></div>
+      <input id="key" placeholder="Lizenzschlüssel einfügen">
+      <div class="row"><button id="lic-save">Lizenz eintragen</button><button class="dim hide" id="lic-remove">Lizenz entfernen</button></div>
+      <div class="err" id="lic-err"></div>
+    </div>
+
+    <h2>Name</h2>
+    <div class="panel">
+      <input id="name" placeholder="Name, den die Handys sehen">
+      <button id="name-save">Speichern</button>
+    </div>
+
+    <p class="muted" style="margin-top:40px"><span id="ver"></span> · <button class="dim" id="logout">Abmelden</button> · <a class="muted" href="https://silentapps-minimal-labs.com/de/" target="_blank" rel="noopener">SilentApps Minimal Labs</a></p>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+async function call(cmd, args = {}) {
+  const r = await fetch("/api/invoke/" + cmd, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(args) });
+  if (r.status === 401) { showLogin(); throw new Error("Bitte anmelden"); }
+  const t = await r.text();
+  let v = null; try { v = t ? JSON.parse(t) : null; } catch { v = t; }
+  if (!r.ok) throw new Error(typeof v === "string" ? v : (v && (v.error || v.message)) || ("Fehler " + r.status));
+  return v;
+}
+function when(ts) {
+  if (!ts) return "";
+  const d = Math.round(Date.now() / 1000 - ts);
+  if (d < 90) return "gerade eingelesen";
+  if (d < 5400) return "vor " + Math.round(d / 60) + " Min. eingelesen";
+  return "vor " + Math.round(d / 3600) + " Std. eingelesen";
+}
+
+// ───── Anmeldung ─────
+async function boot() {
+  const a = await (await fetch("/api/auth")).json();
+  if (a.loggedIn) return showApp();
+  showLogin(a.setup);
+}
+function showLogin(setup) {
+  $("app").classList.add("hide");
+  $("login").classList.remove("hide");
+  $("login-title").textContent = setup ? "Passwort festlegen" : "Anmelden";
+  $("login-hint").textContent = setup ? "Erster Start: Lege ein Passwort für diese Seite fest (mindestens 6 Zeichen)." : "";
+  $("pw").focus();
+}
+async function login() {
+  $("login-err").textContent = "";
+  const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: $("pw").value }) });
+  if (!r.ok) { $("login-err").textContent = (await r.json().catch(() => ({}))).error || "Anmeldung fehlgeschlagen"; return; }
+  $("pw").value = "";
+  showApp();
+}
+$("login-btn").onclick = login;
+$("pw").onkeydown = (e) => { if (e.key === "Enter") login(); };
+$("logout").onclick = async () => { await fetch("/api/logout", { method: "POST" }); location.reload(); };
+
+// ───── Seite ─────
+let timer = 0;
+function showApp() {
+  $("login").classList.add("hide");
+  $("app").classList.remove("hide");
+  refresh(); refreshLicense();
+  call("remote_info").then((i) => { $("name").value = i.ownName || ""; }).catch(() => {});
+  clearInterval(timer);
+  timer = setInterval(refresh, 3000);
+}
+async function refresh() {
+  try {
+    const [s, r] = await Promise.all([call("stream_status"), call("remote_info")]);
+    $("who").textContent = s.name;
+    $("ver").textContent = "Version " + s.version;
+    $("count").textContent = s.tracks.toLocaleString("de-DE") + " Titel · " + s.playlists + " Playlisten";
+    $("scan").textContent = s.scanning ? "liest ein …" : when(s.lastScan);
+    $("roots").innerHTML = s.roots.length
+      ? s.roots.map((x, i) => `<div class="row"><span><code>${esc(x.path)}</code><br><span class="muted">${x.ok ? x.tracks.toLocaleString("de-DE") + " Titel" : "nicht lesbar – Ordner in DSM für „MinimalLibraryStream“ freigeben"}</span></span><button class="dim" data-rm="${i}">Entfernen</button></div>`).join("")
+      : `<div class="row muted">Noch kein Musikordner.</div>`;
+    $("roots").querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => removeRoot(s.roots[+b.dataset.rm].path)));
+    $("code").textContent = r.code;
+    $("addrs").innerHTML = s.addresses.map((a) => `<div class="row"><code>${esc(a)}</code><span class="muted">Port ${s.port}</span></div>`).join("") || `<div class="muted">Adresse unbekannt – in DSM unter Systemsteuerung → Netzwerk nachsehen.</div>`;
+    $("phones").innerHTML = r.paired.length
+      ? r.paired.map((n, i) => `<div class="row"><span>${esc(n)}</span><button class="dim" data-un="${i}">Entkoppeln</button></div>`).join("")
+      : `<div class="muted">Noch kein Handy gekoppelt.</div>`;
+    $("phones").querySelectorAll("[data-un]").forEach((b) => (b.onclick = async () => { await call("remote_unpair", { name: r.paired[+b.dataset.un] }); refresh(); }));
+  } catch (e) { /* Anmeldung abgelaufen o. Ä. */ }
+}
+async function refreshLicense() {
+  try {
+    const l = await call("license_status");
+    const txt = { licensed: "Vollversion" + (l.name ? " · " + l.name : ""), trial: "Testphase · noch " + l.daysLeft + " Tage", expired: "Testphase abgelaufen", revoked: "Lizenz gesperrt" }[l.state] || l.state;
+    $("lic").textContent = txt;
+    $("lic-remove").classList.toggle("hide", l.state !== "licensed");
+    $("locked").textContent = l.state === "expired" || l.state === "revoked" ? "Ohne Lizenz kann sich kein Handy verbinden." : "";
+  } catch {}
+}
+$("lic-save").onclick = async () => {
+  $("lic-err").textContent = "";
+  try { await call("license_activate", { key: $("key").value.trim() }); $("key").value = ""; refreshLicense(); }
+  catch (e) { $("lic-err").textContent = e.message; }
+};
+$("lic-remove").onclick = async () => { await call("license_remove"); refreshLicense(); };
+$("name-save").onclick = async () => { await call("pc_name_set", { name: $("name").value }); refresh(); };
+$("rescan").onclick = async () => { await call("stream_rescan"); refresh(); };
+
+// ───── Musikordner ─────
+async function setRoots(fn) {
+  const s = await call("get_settings");
+  s.roots = fn(s.roots || []);
+  await call("set_settings", { settings: s });
+  await call("stream_rescan");
+  refresh();
+}
+const removeRoot = (p) => setRoots((r) => r.filter((x) => x !== p));
+let bcur = "";
+async function browse(path) {
+  try {
+    const b = await call("server_browse", { path });
+    bcur = b.path;
+    $("bpath").textContent = b.path || "Freigaben auf dem NAS";
+    $("bpick").classList.toggle("hide", !b.path);
+    const up = b.path ? `<div class="row"><button class="dim" data-p="${esc(b.parent ?? "")}">↑ eine Ebene hoch</button></div>` : "";
+    $("blist").innerHTML = up + b.entries.map((e) => `<div class="row"><button data-p="${esc(e.path)}">${esc(e.name)}</button></div>`).join("");
+    $("blist").querySelectorAll("[data-p]").forEach((x) => (x.onclick = () => browse(x.dataset.p)));
+  } catch (e) { $("bpath").textContent = e.message; }
+}
+$("add").onclick = () => { $("browser").classList.remove("hide"); browse(""); };
+$("bclose").onclick = () => $("browser").classList.add("hide");
+$("bpick").onclick = async () => { const p = bcur; $("browser").classList.add("hide"); await setRoots((r) => (r.includes(p) ? r : [...r, p])); };
+
+boot();
+</script>
+</body>
+</html>

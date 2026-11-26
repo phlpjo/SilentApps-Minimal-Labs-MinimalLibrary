@@ -14,6 +14,11 @@ pub(crate) async fn call(app: &AppHandle, name: &str, args: &Value) -> Result<Va
         "quit" => Ok(Value::Null),
         // Ordnerauswahl im Browser: Inhalt eines Ordners auf dem NAS
         "server_browse" => browse(app, args),
+        "stream_status" => crate::stream::status(app),
+        "stream_rescan" => {
+            crate::stream::rescan(app);
+            Ok(Value::Null)
+        }
         "server_info" => Ok(json!({ "nas": true, "music": app.0.music, "data": app.0.data, "version": app.0.version })),
         other => Err(format!("Befehl „{other}“ gibt es auf dem NAS nicht")),
     }

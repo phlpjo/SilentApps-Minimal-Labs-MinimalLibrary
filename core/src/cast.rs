@@ -399,6 +399,38 @@ pub fn discover() -> Result<Vec<Device>> {
     Ok(found)
 }
 
+/// Sonos: Titel dürfen nur an die steuernde Box einer Gruppe gehen. Schickt man sie an ein anderes
+/// Gruppenmitglied, verlässt diese Box die Gruppe (die Gruppe zerfällt in Einzelboxen).
+/// Die steuernde Box kann wechseln (Neustart, Fernseher, Sonos-App) – deshalb vor dem Abspielen neu nachsehen.
+fn sonos_coordinator(id: &str, d: Device) -> Device {
+    if d.kind != "sonos" {
+        return d;
+    }
+    let me = base_of(&d.av_control);
+    let uuid = id.trim_start_matches("uuid:").to_string();
+    let Ok(groups) = sonos_groups(&me) else { return d };
+    let Some((coord, name, base, members)) = groups
+        .into_iter()
+        .find(|(c, _, _, m)| *c == uuid || m.iter().any(|b| *b == me))
+    else {
+        return d;
+    };
+    if base == me && members == d.members {
+        return d;
+    }
+    crate::diag::log(format!("Sonos: steuernde Box der Gruppe ist jetzt {coord} ({name}), nicht mehr {uuid}"));
+    let fixed = Device {
+        name,
+        av_control: format!("{base}/MediaRenderer/AVTransport/Control"),
+        rc_control: Some(format!("{base}/MediaRenderer/GroupRenderingControl/Control")),
+        members,
+        ..d
+    };
+    // unter der bisherigen Kennung merken, damit Pause, Lautstärke usw. auch an die richtige Box gehen
+    devices().lock().unwrap().insert(id.to_string(), fixed.clone());
+    fixed
+}
+
 fn device(id: &str) -> Result<Device> {
     devices()
         .lock()
@@ -569,7 +601,7 @@ pub fn play(device_id: &str, path: &Path, meta: Meta, start: f64) -> Result<Stri
     if GEN.load(std::sync::atomic::Ordering::SeqCst) != my {
         return Ok(String::new()); // inzwischen wurde ein anderer Titel gewählt
     }
-    let d = device(device_id)?;
+    let d = sonos_coordinator(device_id, device(device_id)?);
     let srv = server()?;
     let key = token();
     srv.files
